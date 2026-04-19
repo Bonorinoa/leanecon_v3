@@ -69,26 +69,7 @@ class ProofTraceStore:
                 )
                 connection.commit()
 
-    def query_similar(self, preamble_names: list[str], limit: int = 3) -> list[ProofTrace]:
-        self.initialize()
-        if not preamble_names:
-            return []
-        like_terms = [f'%"{name}"%' for name in preamble_names]
-        score_expr = " + ".join("CASE WHEN preamble_names_json LIKE ? THEN 1 ELSE 0 END" for _ in like_terms)
-        with closing(sqlite3.connect(self.db_path)) as connection:
-            rows = connection.execute(
-                f"""
-                SELECT
-                    claim_id, claim_text, preamble_names_json, tactic_sequence_json,
-                    stage_outcomes_json, failure_class, repair_count, outcome,
-                    formalizer_model, timestamp
-                FROM proof_traces
-                WHERE ({score_expr}) > 0
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                [*like_terms, limit],
-            ).fetchall()
+    def _rows_to_traces(self, rows: list[tuple[object, ...]]) -> list[ProofTrace]:
         traces: list[ProofTrace] = []
         for row in rows:
             traces.append(
@@ -106,6 +87,63 @@ class ProofTraceStore:
                 )
             )
         return traces
+
+    def query_similar(
+        self,
+        preamble_names: list[str],
+        limit: int = 3,
+        *,
+        outcome: str | None = None,
+    ) -> list[ProofTrace]:
+        self.initialize()
+        if not preamble_names:
+            return []
+        like_terms = [f'%"{name}"%' for name in preamble_names]
+        score_expr = " + ".join("CASE WHEN preamble_names_json LIKE ? THEN 1 ELSE 0 END" for _ in like_terms)
+        filters: list[str] = [f"({score_expr}) > 0"]
+        params: list[object] = [*like_terms]
+        if outcome is not None:
+            filters.append("outcome = ?")
+            params.append(outcome)
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    claim_id, claim_text, preamble_names_json, tactic_sequence_json,
+                    stage_outcomes_json, failure_class, repair_count, outcome,
+                    formalizer_model, timestamp
+                FROM proof_traces
+                WHERE {" AND ".join(filters)}
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            ).fetchall()
+        return self._rows_to_traces(rows)
+
+    def list_recent(self, *, limit: int = 10, outcome: str | None = None) -> list[ProofTrace]:
+        self.initialize()
+        filters: list[str] = []
+        params: list[object] = []
+        if outcome is not None:
+            filters.append("outcome = ?")
+            params.append(outcome)
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    claim_id, claim_text, preamble_names_json, tactic_sequence_json,
+                    stage_outcomes_json, failure_class, repair_count, outcome,
+                    formalizer_model, timestamp
+                FROM proof_traces
+                {where_clause}
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            ).fetchall()
+        return self._rows_to_traces(rows)
 
     def counts(self) -> dict[str, int]:
         self.initialize()

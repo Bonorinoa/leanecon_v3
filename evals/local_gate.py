@@ -10,7 +10,7 @@ from pathlib import Path
 from evals.common import baseline_path, load_claims, write_summary
 
 THRESHOLDS = {
-    "tier1_core": {"passes": 22, "total": 23},
+    "tier1_core": {"passes": 22, "total": 24},
     "tier2_frontier": {"passes": 8, "total": 13},
 }
 

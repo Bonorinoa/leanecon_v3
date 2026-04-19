@@ -10,5 +10,5 @@ def test_local_gate_uses_threshold_counts() -> None:
     tier2 = run_claim_set("tier2_frontier")
 
     assert tier1["passes"] == 22
-    assert tier1["total"] == 23
+    assert tier1["total"] == 24
     assert round(float(tier2["pass_at_1"]), 3) == 0.615

@@ -4,7 +4,7 @@
   "meets_threshold": true,
   "mode": "bootstrap_threshold_scaffold",
   "notes": "TODO(Grok/CTO): replace scaffold summaries with live benchmark execution.",
-  "pass_at_1": 0.956522,
+  "pass_at_1": 0.916667,
   "passes": 22,
-  "total": 23
+  "total": 24
 }

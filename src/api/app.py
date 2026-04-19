@@ -89,14 +89,7 @@ async def plan(request: PlanRequest) -> JobStatusResponse:
     job = job_store.create(
         status="awaiting_plan_review" if not request.benchmark_mode else "completed",
         review_state=packet.review_state,
-        result={
-            "claim": packet.claim,
-            "clarifying_questions": packet.clarifying_questions,
-            "textbook_defaults": packet.textbook_defaults,
-            "plan_sketch": packet.plan_sketch,
-            "subgoals": packet.subgoals,
-            "benchmark_mode": packet.benchmark_mode,
-        },
+        result=packet.model_dump(mode="json"),
     )
     return JobStatusResponse(**job.__dict__)
 
