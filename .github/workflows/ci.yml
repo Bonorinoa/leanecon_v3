@@ -16,8 +16,19 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install Lean toolchain
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain "$(cat lean_workspace/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.elan/bin:$PATH"
+          lake --version
+
       - name: Install Python dependencies
         run: python -m pip install -e ".[dev]"
+
+      - name: Fetch mathlib cache
+        run: cd lean_workspace && lake exe cache get
 
       - name: Build Lean workspace
         run: cd lean_workspace && lake build
