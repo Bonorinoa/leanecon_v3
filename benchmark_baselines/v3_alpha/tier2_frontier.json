@@ -1,6 +1,6 @@
 {
   "claim_set": "tier2_frontier",
-  "generated_at": "2026-04-19T19:25:58.678331+00:00",
+  "generated_at": "2026-04-19T21:32:19.979130+00:00",
   "meets_threshold": true,
   "mode": "bootstrap_threshold_scaffold",
   "notes": "TODO(Grok/CTO): replace scaffold summaries with live benchmark execution.",
