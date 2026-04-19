@@ -1,0 +1,8 @@
+.DS_Store
+.venv/
+.pytest_cache/
+.coverage
+__pycache__/
+*.pyc
+lean_workspace/.lake/
+.cache/

@@ -1,0 +1,29 @@
+name: Lean Econ v3 CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Build Lean workspace
+        run: cd lean_workspace && lake build
+
+      - name: Run focused tests
+        run: python -m pytest
+
+      - name: Run local-gate scaffold
+        run: python -m evals.local_gate
