@@ -5,4 +5,5 @@
 __pycache__/
 *.pyc
 lean_workspace/.lake/
+lean_workspace/LeanEcon/*-*-*-*-*.lean
 .cache/
