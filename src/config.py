@@ -37,9 +37,13 @@ JOB_MAX_CONCURRENT = int(os.getenv("JOB_MAX_CONCURRENT", "2"))
 PLANNER_BACKEND = os.getenv("LEANECON_PLANNER_BACKEND", "minimax-m2.7")
 PLANNER_MODEL = os.getenv("LEANECON_PLANNER_MODEL", "MiniMaxAI/MiniMax-M2.7")
 EMBEDDING_MODEL = os.getenv("LEANECON_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-FORMALIZER_MODEL = os.getenv("LEANECON_FORMALIZER_MODEL", "hf:mistralai/Leanstral-2603")
+FORMALIZER_BACKEND = os.getenv("LEANECON_FORMALIZER_BACKEND", "leanstral")
+FORMALIZER_MODEL = os.getenv("LEANECON_FORMALIZER_MODEL", "labs-leanstral-2603")
 PROVER_MODEL = os.getenv("LEANECON_PROVER_MODEL", "hf:Goedel-LM/Goedel-Prover-V2-32B")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+MISTRAL_BASE_URL = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
+FORMALIZER_TIMEOUT = float(os.getenv("LEANECON_FORMALIZER_TIMEOUT", "120"))
 
 JOB_STATES = {
     "queued",

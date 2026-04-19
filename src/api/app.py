@@ -101,19 +101,12 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
         planner_packet=request.planner_packet,
         benchmark_mode=request.benchmark_mode,
     )
+    result = packet.model_dump(mode="json")
+    result["benchmark_mode"] = request.benchmark_mode
     job = job_store.create(
         status="awaiting_formalization_review" if not request.benchmark_mode else "completed",
         review_state=packet.review_state,
-        result={
-            "claim": packet.claim,
-            "theorem_with_sorry": packet.theorem_with_sorry,
-            "selected_preamble": packet.selected_preamble,
-            "selected_imports": packet.selected_imports,
-            "vacuity": packet.vacuity,
-            "faithfulness": packet.faithfulness,
-            "backend": packet.backend,
-            "benchmark_mode": request.benchmark_mode,
-        },
+        result=result,
     )
     return JobStatusResponse(**job.__dict__)
 
