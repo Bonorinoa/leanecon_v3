@@ -61,40 +61,47 @@ class VerificationHarness:
         if REPL_ENABLED and LeanREPLSession is not None:
             lean_started = telemetry.started_at
             try:
-                with LeanREPLSession(timeout=timeout) as repl:
-                    repl.start_proof(theorem_with_sorry, timeout=timeout)
-                    for step, tactic in enumerate(tactics, start=1):
-                        attempts.append({"step": step, "tactic": tactic})
-                        result = repl.apply_tactic(tactic, timeout=timeout)
-                        if hasattr(result, "has_errors") and result.has_errors():
-                            continue
-                        current_code = repl.materialize_proof()
-                        self.file_controller.write_current_code(job_id, current_code)
-                        if getattr(result, "proof_status", "") == "Completed":
-                            compile_result = repl.verify_materialized_proof(
-                                filename=f"{job_id}_repl_{step}.lean",
-                                timeout=timeout,
-                            )
-                            compile_result["classified_errors"] = [
-                                item.to_dict()
-                                for item in classify_lean_errors(
-                                    compile_result.get("output", ""),
-                                    list(compile_result.get("errors") or []),
+                try:
+                    with LeanREPLSession(timeout=timeout) as repl:
+                        repl.start_proof(theorem_with_sorry, timeout=timeout)
+                        for step, tactic in enumerate(tactics, start=1):
+                            attempts.append({"step": step, "tactic": tactic})
+                            result = repl.apply_tactic(tactic, timeout=timeout)
+                            if hasattr(result, "has_errors") and result.has_errors():
+                                continue
+                            current_code = repl.materialize_proof()
+                            self.file_controller.write_current_code(job_id, current_code)
+                            if getattr(result, "proof_status", "") == "Completed":
+                                compile_result = repl.verify_materialized_proof(
+                                    filename=f"{job_id}_repl_{step}.lean",
+                                    timeout=timeout,
                                 )
-                            ]
-                            if compile_result["success"]:
-                                payload = {
-                                    "status": "verified",
-                                    "theorem": theorem_name,
-                                    "compile": compile_result,
-                                    "attempts": attempts,
-                                    "tool_budget": self.budget_tracker.snapshot(),
-                                    "termination_reason": "verified",
-                                }
-                                return SimpleNamespace(
-                                    status="completed",
-                                    result=attach_telemetry(payload, telemetry, {"repl_used": True}),
-                                )
+                                compile_result["classified_errors"] = [
+                                    item.to_dict()
+                                    for item in classify_lean_errors(
+                                        compile_result.get("output", ""),
+                                        list(compile_result.get("errors") or []),
+                                    )
+                                ]
+                                if compile_result["success"]:
+                                    payload = {
+                                        "status": "verified",
+                                        "theorem": theorem_name,
+                                        "compile": compile_result,
+                                        "attempts": attempts,
+                                        "tool_budget": self.budget_tracker.snapshot(),
+                                        "termination_reason": "verified",
+                                    }
+                                    return SimpleNamespace(
+                                        status="completed",
+                                        result=attach_telemetry(
+                                            payload,
+                                            telemetry,
+                                            {"repl_used": True},
+                                        ),
+                                    )
+                except Exception as exc:
+                    attempts.append({"step": 0, "tactic": "repl_init", "error": f"{type(exc).__name__}: {exc}"})
             finally:
                 telemetry.record_lean(lean_started)
 

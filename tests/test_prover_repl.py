@@ -92,6 +92,28 @@ async def test_verification_harness_repl_success(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.anyio
+async def test_verification_harness_repl_init_exception_falls_back(tmp_path, monkeypatch) -> None:
+    import src.prover.harness as harness_module
+
+    monkeypatch.setattr(harness_module, "LeanREPLSession", lambda timeout=None: (_ for _ in ()).throw(RuntimeError("repl unavailable")))
+    monkeypatch.setattr(harness_module, "REPL_ENABLED", True)
+    monkeypatch.setattr(
+        harness_module,
+        "compile_check",
+        lambda code, **kwargs: {"success": True, "output": "", "errors": []},
+    )
+
+    harness = VerificationHarness(
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        budget_tracker=BudgetTracker(),
+    )
+    result = await harness.verify("theorem demo : True := by\n  trivial\n", "job_repl_init_fail")
+    assert result.status == "completed"
+    assert result.result["verification_trace"]["repl_used"] is False
+    assert result.result["attempts"][0]["tactic"] == "repl_init"
+
+
+@pytest.mark.anyio
 async def test_verification_harness_repl_continue_then_compile_failure(tmp_path, monkeypatch) -> None:
     import src.prover.harness as harness_module
 
