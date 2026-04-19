@@ -1,0 +1,23 @@
+{
+  "id": "constrained_optimization",
+  "domain": "optimization",
+  "concepts": [
+    "constrained_optimization",
+    "feasible_set",
+    "argmax_certificate"
+  ],
+  "tactic_hints": [
+    "constructor",
+    "exact hx.2 hy"
+  ],
+  "proven_lemmas": [
+    "IsConstrainedMaximum.feasible",
+    "IsConstrainedMaximum.value_le"
+  ],
+  "textbook_source": "MWG Ch. 3",
+  "status": "proven",
+  "related": [
+    "convex_preference",
+    "kuhn_tucker"
+  ]
+}

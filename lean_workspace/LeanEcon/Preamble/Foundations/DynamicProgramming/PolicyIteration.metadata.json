@@ -1,0 +1,23 @@
+{
+  "id": "policy_iteration",
+  "domain": "dynamic_programming",
+  "concepts": [
+    "policy_iteration",
+    "policy_improvement",
+    "recursive_choice"
+  ],
+  "tactic_hints": [
+    "exact le_rfl",
+    "simpa [PolicyImproves]"
+  ],
+  "proven_lemmas": [
+    "policyImproves_refl"
+  ],
+  "textbook_source": "SLP Ch. 4",
+  "status": "proven",
+  "related": [
+    "bellman_operator",
+    "value_function",
+    "nash_existence"
+  ]
+}

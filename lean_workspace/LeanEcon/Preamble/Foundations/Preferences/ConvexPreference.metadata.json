@@ -1,0 +1,22 @@
+{
+  "id": "convex_preference",
+  "domain": "preferences",
+  "concepts": [
+    "convex_preference",
+    "convex_on",
+    "mixtures"
+  ],
+  "tactic_hints": [
+    "exact hu",
+    "simpa [ConvexPreference]"
+  ],
+  "proven_lemmas": [
+    "convexPreference_convexOn_univ"
+  ],
+  "textbook_source": "MWG Ch. 3",
+  "status": "proven",
+  "related": [
+    "continuous_preference",
+    "constrained_optimization"
+  ]
+}

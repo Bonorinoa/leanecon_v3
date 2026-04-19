@@ -1,5 +1,0 @@
-import LeanEcon.Preamble.Optimization.ConvexConstraintSet
-import LeanEcon.Preamble.Optimization.EnvelopeTheorem
-import LeanEcon.Preamble.Optimization.ExtremeValueTheorem
-import LeanEcon.Preamble.Optimization.KKTConditions
-import LeanEcon.Preamble.Optimization.Lagrangian

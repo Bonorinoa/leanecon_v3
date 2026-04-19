@@ -1,0 +1,23 @@
+{
+  "id": "value_function",
+  "domain": "dynamic_programming",
+  "concepts": [
+    "value_function",
+    "fixed_point",
+    "bellman_solution"
+  ],
+  "tactic_hints": [
+    "simpa [ValueFunction] using ContractingWith.fixedPoint_isFixedPt (f := T) hT",
+    "exact ContractingWith.fixedPoint_isFixedPt (f := T) hT"
+  ],
+  "proven_lemmas": [
+    "valueFunction_isFixedPt"
+  ],
+  "textbook_source": "SLP Ch. 4",
+  "status": "proven",
+  "related": [
+    "bellman_operator",
+    "contraction_mapping",
+    "policy_iteration"
+  ]
+}

@@ -14,7 +14,9 @@ from src.tools import ToolCall, ToolResult
 def test_semantic_frame_handles_universal_and_fallback_claims() -> None:
     universal = extract_claim_frame("For all x, utility is increasing.")
     fallback = extract_claim_frame("Obscure text")
-    stub = extract_stub_frame("import LeanEcon.Preamble.Dynamic.BellmanEquation\n")
+    stub = extract_stub_frame(
+        "import LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator\n"
+    )
 
     assert universal.quantifier_shape == "universal"
     assert fallback.concepts

@@ -60,74 +60,45 @@ for entry in PREAMBLE_LIBRARY.values():
 
 _LEANECON_IDENTIFIER_TO_MODULE.update(
     {
-        "absolute_risk_aversion": "LeanEcon.Preamble.Risk.ArrowPrattARA",
-        "relative_risk_aversion": "LeanEcon.Preamble.Risk.ArrowPrattRRA",
-        "cara_ara_simplified": "LeanEcon.Preamble.Consumer.CARAUtility",
-        "crra_rra_simplified": "LeanEcon.Preamble.Consumer.CRRAUtility",
-        "marshallian_demand_good1": "LeanEcon.Preamble.Consumer.MarshallianDemand",
-        "marshallian_demand_good2": "LeanEcon.Preamble.Consumer.MarshallianDemand",
-        "indirect_utility_cd": "LeanEcon.Preamble.Consumer.IndirectUtility",
-        "price_elasticity": "LeanEcon.Preamble.Consumer.PriceElasticity",
-        "income_elasticity": "LeanEcon.Preamble.Consumer.IncomeElasticity",
-        "in_budget_set": "LeanEcon.Preamble.Consumer.BudgetSet",
-        "expected_payoff_2x2": "LeanEcon.Preamble.GameTheory.ExpectedPayoff",
-        "pareto_dominates": "LeanEcon.Preamble.Welfare.ParetoEfficiency",
-        "pareto_efficient": "LeanEcon.Preamble.Welfare.ParetoEfficiency",
-        "utilitarian_swf": "LeanEcon.Preamble.Welfare.SocialWelfareFunction",
-        "ag_walras_law": "LeanEcon.Preamble.GeneralEquilibrium.WalrasLaw",
-        "walras_law": "LeanEcon.Preamble.GeneralEquilibrium.WalrasLaw",
-        "excess_demand": "LeanEcon.Preamble.GeneralEquilibrium.ExcessDemand",
-        "solow_investment": "LeanEcon.Preamble.Macro.SolowSteadyState",
-        "solow_depreciation": "LeanEcon.Preamble.Macro.SolowSteadyState",
-        "bellman_rhs": "LeanEcon.Preamble.Dynamic.BellmanEquation",
-        "bellman_operator": "LeanEcon.Preamble.Dynamic.BellmanOperator",
-        "value_function": "LeanEcon.Preamble.Dynamic.ValueFunction",
-        "policy_function": "LeanEcon.Preamble.Dynamic.PolicyFunction",
-        "transition_law": "LeanEcon.Preamble.Dynamic.TransitionLaw",
-        "recursive_competitive_eq": "LeanEcon.Preamble.Dynamic.RecursiveCompetitiveEq",
-        "present_value_constant": "LeanEcon.Preamble.Dynamic.DiscountFactor",
-        "discount_factor": "LeanEcon.Preamble.Dynamic.DiscountFactor",
-        "geometric_partial_sum": "LeanEcon.Preamble.Dynamic.GeometricSeries",
-        "continuous_attains_max_on_compact": "LeanEcon.Preamble.Optimization.ExtremeValueTheorem",
-        "continuous_attains_min_on_compact": "LeanEcon.Preamble.Optimization.ExtremeValueTheorem",
-        "upper_hemicontinuous": "LeanEcon.Preamble.Analysis.UpperHemicontinuous",
-        "nkpc": "LeanEcon.Preamble.Macro.PhillipsCurve",
+        "economic_measure": "LeanEcon.Preamble.Foundations.Primitives.Measure",
+        "commodity_topology":
+            "LeanEcon.Preamble.Foundations.Primitives.TopologicalSpace",
+        "continuous_preference":
+            "LeanEcon.Preamble.Foundations.Preferences.ContinuousPreference",
+        "convex_preference":
+            "LeanEcon.Preamble.Foundations.Preferences.ConvexPreference",
+        "constrained_optimization":
+            "LeanEcon.Preamble.Foundations.Optimization.ConstrainedOptimization",
+        "kuhn_tucker":
+            "LeanEcon.Preamble.Foundations.Optimization.KuhnTucker",
+        "fixed_point_theorem":
+            "LeanEcon.Preamble.Foundations.Equilibrium.FixedPointTheorem",
+        "nash_existence":
+            "LeanEcon.Preamble.Foundations.Equilibrium.NashExistence",
+        "bellman_operator":
+            "LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator",
+        "contraction_mapping":
+            "LeanEcon.Preamble.Foundations.DynamicProgramming.ContractionMapping",
+        "value_function":
+            "LeanEcon.Preamble.Foundations.DynamicProgramming.ValueFunction",
+        "policy_iteration":
+            "LeanEcon.Preamble.Foundations.DynamicProgramming.PolicyIteration",
     }
 )
 _LEANECON_IDENTIFIER_TO_ENTRY.update(
     {
-        "absolute_risk_aversion": "arrow_pratt_ara",
-        "relative_risk_aversion": "arrow_pratt_rra",
-        "cara_ara_simplified": "cara_utility",
-        "crra_rra_simplified": "crra_utility",
-        "marshallian_demand_good1": "marshallian_demand",
-        "marshallian_demand_good2": "marshallian_demand",
-        "indirect_utility_cd": "indirect_utility",
-        "price_elasticity": "price_elasticity",
-        "income_elasticity": "income_elasticity",
-        "in_budget_set": "budget_set",
-        "expected_payoff_2x2": "expected_payoff",
-        "pareto_dominates": "pareto_efficiency",
-        "pareto_efficient": "pareto_efficiency",
-        "utilitarian_swf": "social_welfare_function",
-        "ag_walras_law": "general_equilibrium_walras",
-        "walras_law": "walras_law",
-        "excess_demand": "excess_demand",
-        "solow_investment": "solow_steady_state",
-        "solow_depreciation": "solow_steady_state",
-        "bellman_rhs": "bellman_equation",
+        "economic_measure": "measure",
+        "commodity_topology": "topological_space",
+        "continuous_preference": "continuous_preference",
+        "convex_preference": "convex_preference",
+        "constrained_optimization": "constrained_optimization",
+        "kuhn_tucker": "kuhn_tucker",
+        "fixed_point_theorem": "fixed_point_theorem",
+        "nash_existence": "nash_existence",
         "bellman_operator": "bellman_operator",
         "value_function": "value_function",
-        "policy_function": "policy_function",
-        "transition_law": "transition_law",
-        "recursive_competitive_eq": "recursive_competitive_eq",
-        "present_value_constant": "discount_factor",
-        "discount_factor": "discount_factor",
-        "geometric_partial_sum": "geometric_series",
-        "continuous_attains_max_on_compact": "extreme_value_theorem",
-        "continuous_attains_min_on_compact": "extreme_value_theorem",
-        "upper_hemicontinuous": "upper_hemicontinuous",
-        "nkpc": "phillips_curve",
+        "contraction_mapping": "contraction_mapping",
+        "policy_iteration": "policy_iteration",
     }
 )
 

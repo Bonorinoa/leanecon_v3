@@ -1,0 +1,22 @@
+{
+  "id": "continuous_preference",
+  "domain": "preferences",
+  "concepts": [
+    "continuous_preference",
+    "utility_representation",
+    "continuity"
+  ],
+  "tactic_hints": [
+    "exact hu.continuousOn",
+    "simpa [ContinuousPreference]"
+  ],
+  "proven_lemmas": [
+    "continuousPreference_continuousOn"
+  ],
+  "textbook_source": "MWG Ch. 1",
+  "status": "proven",
+  "related": [
+    "topological_space",
+    "convex_preference"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "fixed_point_theorem",
+  "domain": "equilibrium",
+  "concepts": [
+    "fixed_point_theorem",
+    "contraction_mapping",
+    "equilibrium_existence"
+  ],
+  "tactic_hints": [
+    "refine ⟨ContractingWith.fixedPoint (f := f) hf, ?_⟩",
+    "exact ContractingWith.fixedPoint_isFixedPt (f := f) hf"
+  ],
+  "proven_lemmas": [
+    "exists_fixedPoint_of_contractingWith",
+    "fixedPoint_isFixedPt"
+  ],
+  "textbook_source": "MWG Ch. 17",
+  "status": "proven",
+  "related": [
+    "kuhn_tucker",
+    "contraction_mapping",
+    "nash_existence"
+  ]
+}

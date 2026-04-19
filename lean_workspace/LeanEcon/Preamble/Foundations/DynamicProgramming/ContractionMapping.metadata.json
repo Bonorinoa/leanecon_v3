@@ -1,0 +1,23 @@
+{
+  "id": "contraction_mapping",
+  "domain": "dynamic_programming",
+  "concepts": [
+    "contraction_mapping",
+    "fixed_point",
+    "recursive_solution"
+  ],
+  "tactic_hints": [
+    "rcases hf with ⟨K, hK⟩",
+    "exact ContractingWith.fixedPoint_isFixedPt (f := f) hK"
+  ],
+  "proven_lemmas": [
+    "contraction_has_fixedPoint"
+  ],
+  "textbook_source": "SLP Ch. 4",
+  "status": "proven",
+  "related": [
+    "fixed_point_theorem",
+    "bellman_operator",
+    "value_function"
+  ]
+}

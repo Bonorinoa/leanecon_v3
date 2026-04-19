@@ -1,0 +1,22 @@
+{
+  "id": "nash_existence",
+  "domain": "equilibrium",
+  "concepts": [
+    "nash_existence",
+    "nash_equilibrium",
+    "witness_certificate"
+  ],
+  "tactic_hints": [
+    "exact ⟨h.witness, h.is_nash⟩",
+    "refine ⟨_, ?_⟩"
+  ],
+  "proven_lemmas": [
+    "nash_exists_of_witness"
+  ],
+  "textbook_source": "MWG Ch. 8",
+  "status": "proven",
+  "related": [
+    "fixed_point_theorem",
+    "policy_iteration"
+  ]
+}

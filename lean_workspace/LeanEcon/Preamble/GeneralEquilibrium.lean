@@ -1,2 +1,2 @@
-import LeanEcon.Preamble.GeneralEquilibrium.ExcessDemand
-import LeanEcon.Preamble.GeneralEquilibrium.WalrasLaw
+/-- Placeholder constant marking the v3 general-equilibrium namespace as active. -/
+def generalEquilibriumSkeleton : Unit := ()

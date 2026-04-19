@@ -1,0 +1,22 @@
+{
+  "id": "topological_space",
+  "domain": "primitives",
+  "concepts": [
+    "topological_space",
+    "continuity",
+    "commodity_space"
+  ],
+  "tactic_hints": [
+    "simpa using continuous_const",
+    "exact continuous_const"
+  ],
+  "proven_lemmas": [
+    "continuous_const_commodity"
+  ],
+  "textbook_source": "MWG Ch. 1",
+  "status": "proven",
+  "related": [
+    "measure",
+    "continuous_preference"
+  ]
+}

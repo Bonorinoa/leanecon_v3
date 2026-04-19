@@ -1,0 +1,22 @@
+{
+  "id": "measure",
+  "domain": "primitives",
+  "concepts": [
+    "measure",
+    "measurable_space",
+    "economic_measure"
+  ],
+  "tactic_hints": [
+    "simp",
+    "simpa using economicMeasure_empty"
+  ],
+  "proven_lemmas": [
+    "economicMeasure_empty"
+  ],
+  "textbook_source": "MWG App. M",
+  "status": "proven",
+  "related": [
+    "topological_space",
+    "continuous_preference"
+  ]
+}

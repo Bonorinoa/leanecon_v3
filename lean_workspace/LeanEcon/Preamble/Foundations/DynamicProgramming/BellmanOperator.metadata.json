@@ -1,0 +1,23 @@
+{
+  "id": "bellman_operator",
+  "domain": "dynamic_programming",
+  "concepts": [
+    "bellman_operator",
+    "dynamic_programming",
+    "monotone_operator"
+  ],
+  "tactic_hints": [
+    "have hmul := mul_le_mul_of_nonneg_left (hvw _) hβ",
+    "simpa using add_le_add_left hmul _"
+  ],
+  "proven_lemmas": [
+    "BellmanOperator.monotone"
+  ],
+  "textbook_source": "SLP Ch. 4",
+  "status": "proven",
+  "related": [
+    "contraction_mapping",
+    "value_function",
+    "policy_iteration"
+  ]
+}

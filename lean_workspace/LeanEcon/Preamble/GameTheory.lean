@@ -1,10 +1,2 @@
-import LeanEcon.Preamble.GameTheory.BestResponse
-import LeanEcon.Preamble.GameTheory.BayesianGame
-import LeanEcon.Preamble.GameTheory.BayesianNashEquilibrium
-import LeanEcon.Preamble.GameTheory.DominantStrategy
-import LeanEcon.Preamble.GameTheory.ExtensiveFormGame
-import LeanEcon.Preamble.GameTheory.ExpectedPayoff
-import LeanEcon.Preamble.GameTheory.NashEquilibriumPure
-import LeanEcon.Preamble.GameTheory.NormalFormGame
-import LeanEcon.Preamble.GameTheory.SignalingGame
-import LeanEcon.Preamble.GameTheory.SubgamePerfectEquilibrium
+/-- Placeholder constant marking the v3 game-theory namespace as active. -/
+def gameTheorySkeleton : Unit := ()

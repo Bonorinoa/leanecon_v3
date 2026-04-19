@@ -1,0 +1,22 @@
+{
+  "id": "kuhn_tucker",
+  "domain": "optimization",
+  "concepts": [
+    "kuhn_tucker",
+    "complementary_slackness",
+    "shadow_price"
+  ],
+  "tactic_hints": [
+    "exact hkt.slackness i",
+    "cases hkt"
+  ],
+  "proven_lemmas": [
+    "KuhnTuckerPoint.complementary_slackness"
+  ],
+  "textbook_source": "MWG Ch. 5",
+  "status": "proven",
+  "related": [
+    "constrained_optimization",
+    "fixed_point_theorem"
+  ]
+}

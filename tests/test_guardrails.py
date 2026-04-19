@@ -21,19 +21,23 @@ def test_vacuity_detection_for_true_scaffold() -> None:
 
 def test_claim_and_stub_frames_capture_game_content() -> None:
     claim = "A Nash equilibrium exists in a finite game."
-    stub = "import LeanEcon.Preamble.GameTheory.NashEquilibriumPure\n\ntheorem t : True := by\n  sorry\n"
+    stub = (
+        "import LeanEcon.Preamble.Foundations.Equilibrium.NashExistence\n\n"
+        "theorem t : True := by\n  sorry\n"
+    )
 
     claim_frame = extract_claim_frame(claim)
     stub_frame = extract_stub_frame(stub)
 
     assert "game" in claim_frame.concepts
-    assert "LeanEcon.Preamble.GameTheory.NashEquilibriumPure" in stub_frame.imports
+    assert "LeanEcon.Preamble.Foundations.Equilibrium.NashExistence" in stub_frame.imports
 
 
 def test_semantic_faithfulness_requires_review_in_mid_band() -> None:
     result = semantic_faithfulness_score(
         "The Bellman equation defines the value function.",
-        "import LeanEcon.Preamble.Dynamic.BellmanEquation\n\ntheorem bellman_claim : True := by\n  sorry\n",
+        "import LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator\n\n"
+        "theorem bellman_claim : True := by\n  sorry\n",
     )
 
     assert result["score"] >= 4.0
