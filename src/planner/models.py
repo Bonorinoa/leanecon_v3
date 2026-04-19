@@ -28,16 +28,19 @@ class PreambleHit(PlannerModel):
 class MemoryTraceExample(PlannerModel):
     claim_text: str = Field(min_length=1)
     preamble_names: list[str] = Field(default_factory=list)
+    shared_preamble_names: list[str] = Field(default_factory=list)
+    structure_tags: list[str] = Field(default_factory=list)
     tactic_sequence: list[str] = Field(default_factory=list)
     outcome: str
     timestamp: str
     lesson: str = Field(min_length=1)
+    subgoal_hint: str | None = None
 
 
 class PlannerContext(PlannerModel):
     claim: str = Field(min_length=1)
     selected_preamble: list[PreambleHit] = Field(default_factory=list)
-    few_shot_traces: list[MemoryTraceExample] = Field(default_factory=list, max_length=3)
+    few_shot_traces: list[MemoryTraceExample] = Field(default_factory=list, max_length=2)
     preamble_context: str = ""
     memory_context: str = ""
 
@@ -46,8 +49,9 @@ class PlannerLLMResponse(PlannerModel):
     clarifying_questions: list[str] = Field(default_factory=list, max_length=3)
     textbook_defaults: list[str] = Field(default_factory=list, min_length=1)
     plan_paragraph: str = Field(min_length=1)
-    subgoals: list[str] = Field(min_length=3, max_length=5)
+    subgoals: list[str] = Field(min_length=3, max_length=6)
     needs_review: bool = True
+    confidence: float = Field(ge=0.0, le=1.0)
 
     @field_validator("clarifying_questions")
     @classmethod
@@ -55,6 +59,9 @@ class PlannerLLMResponse(PlannerModel):
         cleaned = [question.strip() for question in questions if question.strip()]
         if len(cleaned) > 3:
             raise ValueError("Planner may emit at most 3 clarifying questions.")
+        for question in cleaned:
+            if not question.endswith("?"):
+                raise ValueError("Clarifying questions must be phrased as actionable questions.")
         return cleaned
 
     @field_validator("textbook_defaults")
@@ -79,8 +86,8 @@ class PlannerLLMResponse(PlannerModel):
     @classmethod
     def _validate_subgoals(cls, subgoals: list[str]) -> list[str]:
         cleaned = [subgoal.rstrip() for subgoal in subgoals if subgoal.strip()]
-        if not 3 <= len(cleaned) <= 5:
-            raise ValueError("Planner must emit 3 to 5 subgoals.")
+        if not 3 <= len(cleaned) <= 6:
+            raise ValueError("Planner must emit 3 to 6 subgoals.")
         for subgoal in cleaned:
             normalized = subgoal.strip()
             if "theorem " not in normalized or ":= by" not in normalized or "sorry" not in normalized:
@@ -93,7 +100,7 @@ class PlannerPacket(PlannerLLMResponse):
     backend: str
     model: str
     selected_preamble: list[PreambleHit] = Field(default_factory=list)
-    few_shot_traces: list[MemoryTraceExample] = Field(default_factory=list, max_length=3)
+    few_shot_traces: list[MemoryTraceExample] = Field(default_factory=list, max_length=2)
 
     @field_validator("review_state")
     @classmethod

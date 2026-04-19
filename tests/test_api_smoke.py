@@ -20,6 +20,7 @@ class FakePlannerDriver:
                     "theorem api_smoke_subgoal_3 : True := by\n  sorry",
                 ],
                 "needs_review": False,
+                "confidence": 0.9,
             }
         )
 
@@ -34,6 +35,8 @@ def test_plan_formalize_and_job_smoke(monkeypatch) -> None:
     assert plan.json()["status"] == "completed"
     assert plan.json()["result"]["plan_paragraph"]
     assert plan.json()["result"]["needs_review"] is False
+    assert 0.0 <= plan.json()["result"]["confidence"] <= 1.0
+    assert any("BellmanOperator" in subgoal for subgoal in plan.json()["result"]["subgoals"])
 
     formalize = client.post("/formalize", json={"claim": "A Bellman equation claim.", "benchmark_mode": True})
     assert formalize.status_code == 200

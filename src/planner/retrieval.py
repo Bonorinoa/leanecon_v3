@@ -181,18 +181,106 @@ def _trace_score(query: str, trace: ProofTrace, similarity: float) -> float:
     return float(overlap + preamble_overlap) + max(similarity, 0.0) * 3.0
 
 
-def _sanitize_trace(trace: ProofTrace) -> MemoryTraceExample:
+def infer_structure_tags(
+    claim: str,
+    *,
+    preamble_names: list[str] | None = None,
+    tactics: list[str] | None = None,
+) -> list[str]:
+    normalized = claim.lower()
+    tags: list[str] = []
+    if "bellman" in normalized or (preamble_names and "bellman_operator" in preamble_names):
+        tags.append("bellman")
+    if "contraction" in normalized or (preamble_names and "contraction_mapping" in preamble_names):
+        tags.append("contraction")
+    if "fixed point" in normalized or "fixed-point" in normalized or (preamble_names and "fixed_point_theorem" in preamble_names):
+        tags.append("fixed_point")
+    if "value function" in normalized or (preamble_names and "value_function" in preamble_names):
+        tags.append("value_function")
+    if "nash" in normalized or (preamble_names and "nash_existence" in preamble_names):
+        tags.append("nash")
+    if "equilibrium" in normalized:
+        tags.append("equilibrium")
+    if "optimiz" in normalized or (preamble_names and "constrained_optimization" in preamble_names):
+        tags.append("optimization")
+    if "kuhn" in normalized or "tucker" in normalized or (preamble_names and "kuhn_tucker" in preamble_names):
+        tags.append("kuhn_tucker")
+    if "preference" in normalized or (preamble_names and "continuous_preference" in preamble_names):
+        tags.append("preference")
+    for tactic in tactics or []:
+        lowered = tactic.lower()
+        if "fixedpoint" in lowered or "fixed_point" in lowered:
+            tags.append("fixed_point")
+        if "contraction" in lowered:
+            tags.append("contraction")
+        if "monotone" in lowered or "hvw" in lowered:
+            tags.append("monotonicity")
+    deduped: list[str] = []
+    for tag in tags:
+        if tag not in deduped:
+            deduped.append(tag)
+    return deduped
+
+
+def _trace_score(
+    query: str,
+    trace: ProofTrace,
+    similarity: float,
+    *,
+    selected_preamble_names: list[str],
+    query_structure_tags: list[str],
+) -> float:
+    query_tokens = set(_tokenize(query))
+    trace_tokens = set(_tokenize(trace.claim_text))
+    overlap = len(query_tokens & trace_tokens)
+    trace_preamble_names = set(trace.preamble_names)
+    preamble_overlap = len(trace_preamble_names & set(selected_preamble_names))
+    structure_overlap = len(
+        set(query_structure_tags)
+        & set(infer_structure_tags(trace.claim_text, preamble_names=trace.preamble_names, tactics=trace.tactic_sequence))
+    )
+    recency_bonus = 0.25 if trace.repair_count == 0 else 0.0
+    return float(overlap) + (2.5 * preamble_overlap) + (2.0 * structure_overlap) + max(similarity, 0.0) * 3.0 + recency_bonus
+
+
+def _infer_subgoal_hint(trace: ProofTrace, shared_preamble_names: list[str], structure_tags: list[str]) -> str:
+    if "bellman" in structure_tags and "contraction" in structure_tags:
+        return "Mirror a Bellman decomposition: define the operator, prove the discounted inequality, then close the fixed-point/contraction step."
+    if "nash" in structure_tags or "equilibrium" in structure_tags:
+        return "Split the proof into hypotheses on strategy spaces, an equilibrium existence step, and the witness/is_nash conclusion."
+    if "optimization" in structure_tags or "kuhn_tucker" in structure_tags:
+        return "Separate feasibility, optimality inequalities, and complementary-slackness style conditions."
+    if shared_preamble_names:
+        return f"Reuse the {', '.join(shared_preamble_names[:2])} structure before introducing claim-specific hypotheses."
+    return "Reuse the verified trace structure before specializing the hypotheses to the current claim."
+
+
+def _sanitize_trace(
+    trace: ProofTrace,
+    *,
+    selected_preamble_names: list[str],
+    query_structure_tags: list[str],
+) -> MemoryTraceExample:
     tactic_excerpt = trace.tactic_sequence[:3]
     stage_markers = [f"{stage}={status}" for stage, status in sorted(trace.stage_outcomes.items())[:3]]
     lesson_fragments = tactic_excerpt if tactic_excerpt else stage_markers
     lesson = "; ".join(lesson_fragments) if lesson_fragments else "Verified proof trace with reusable dynamic structure."
+    shared_preamble_names = [name for name in trace.preamble_names if name in selected_preamble_names][:3]
+    structure_tags = infer_structure_tags(
+        trace.claim_text,
+        preamble_names=trace.preamble_names,
+        tactics=trace.tactic_sequence,
+    )
     return MemoryTraceExample(
         claim_text=trace.claim_text,
         preamble_names=trace.preamble_names[:5],
+        shared_preamble_names=shared_preamble_names,
+        structure_tags=structure_tags,
         tactic_sequence=tactic_excerpt,
         outcome=trace.outcome,
         timestamp=trace.timestamp,
         lesson=lesson,
+        subgoal_hint=_infer_subgoal_hint(trace, shared_preamble_names, structure_tags),
     )
 
 
@@ -247,11 +335,12 @@ class PlannerRetrievalService:
         claim: str,
         *,
         selected_preamble: list[PreambleHit],
-        limit: int = 3,
+        limit: int = 2,
         candidate_limit: int = 10,
     ) -> list[MemoryTraceExample]:
         embedder = self._resolve_embedder()
         preamble_names = [hit.name for hit in selected_preamble]
+        query_structure_tags = infer_structure_tags(claim, preamble_names=preamble_names)
         candidates = self.trace_store.query_similar(
             preamble_names,
             limit=max(candidate_limit, limit),
@@ -271,7 +360,13 @@ class PlannerRetrievalService:
         query_vector = vectors[0]
         ranked = sorted(
             zip(candidates, vectors[1:], strict=True),
-            key=lambda item: _trace_score(claim, item[0], cosine_similarity(query_vector, item[1])),
+            key=lambda item: _trace_score(
+                claim,
+                item[0],
+                cosine_similarity(query_vector, item[1]),
+                selected_preamble_names=preamble_names,
+                query_structure_tags=query_structure_tags,
+            ),
             reverse=True,
         )
         sanitized: list[MemoryTraceExample] = []
@@ -280,7 +375,13 @@ class PlannerRetrievalService:
             if trace.claim_text in seen_claims:
                 continue
             seen_claims.add(trace.claim_text)
-            sanitized.append(_sanitize_trace(trace))
+            sanitized.append(
+                _sanitize_trace(
+                    trace,
+                    selected_preamble_names=preamble_names,
+                    query_structure_tags=query_structure_tags,
+                )
+            )
             if len(sanitized) >= limit:
                 break
         return sanitized
@@ -290,7 +391,7 @@ class PlannerRetrievalService:
         claim: str,
         *,
         preamble_limit: int = 5,
-        memory_limit: int = 3,
+        memory_limit: int = 2,
     ) -> PlannerContext:
         selected_preamble = self.retrieve_preamble(claim, limit=preamble_limit)
         few_shot_traces = self.retrieve_memory_traces(
@@ -319,9 +420,12 @@ class PlannerRetrievalService:
                 "\n".join(
                     [
                         f"Example {index}: {trace.claim_text}",
+                        f"  shared_preamble: {', '.join(trace.shared_preamble_names) if trace.shared_preamble_names else 'n/a'}",
+                        f"  structure_tags: {', '.join(trace.structure_tags) if trace.structure_tags else 'n/a'}",
                         f"  preamble: {', '.join(trace.preamble_names) if trace.preamble_names else 'n/a'}",
                         f"  tactics: {', '.join(trace.tactic_sequence) if trace.tactic_sequence else 'n/a'}",
                         f"  lesson: {trace.lesson}",
+                        f"  subgoal_hint: {trace.subgoal_hint or 'n/a'}",
                     ]
                 )
             )

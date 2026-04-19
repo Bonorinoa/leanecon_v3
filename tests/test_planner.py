@@ -73,6 +73,7 @@ def test_planner_builds_packet_for_bellman_claim(tmp_path: Path) -> None:
                 "theorem planner_bellman_subgoal_3 : True := by\n  sorry",
             ],
             "needs_review": False,
+            "confidence": 0.91,
         }
     )
 
@@ -84,9 +85,47 @@ def test_planner_builds_packet_for_bellman_claim(tmp_path: Path) -> None:
     assert "contraction_mapping" in selected_names
     assert any("beta" in default.lower() or "\\beta" in default for default in packet.textbook_defaults)
     assert packet.plan_paragraph
-    assert 3 <= len(packet.subgoals) <= 5
+    assert 4 <= len(packet.subgoals) <= 6
     assert packet.needs_review is True
-    assert len(packet.few_shot_traces) >= 1
+    assert 0.0 <= packet.confidence <= 1.0
+    assert 1 <= len(packet.few_shot_traces) <= 2
+    assert packet.few_shot_traces[0].shared_preamble_names
+    assert any("BellmanOperator" in subgoal for subgoal in packet.subgoals)
+
+
+def test_planner_upgrades_generic_subgoals_to_specific_targets(tmp_path: Path) -> None:
+    retrieval = PlannerRetrievalService(
+        embedder=HashingTextEmbedder(),
+        trace_store=_make_trace_store(tmp_path),
+    )
+    driver = FakePlannerDriver(
+        {
+            "clarifying_questions": [],
+            "textbook_defaults": [
+                "Assume a bounded and continuous return function with discount factor $\\beta \\in (0,1)$ as in Stokey-Lucas-Prescott."
+            ],
+            "plan_paragraph": (
+                "Use the dynamic-programming Preamble to define the Bellman operator, derive the key discounted inequality "
+                "$\\|Tv-Tw\\|_\\infty \\leq \\beta \\|v-w\\|_\\infty$, and conclude with a fixed-point/value-function step."
+            ),
+            "subgoals": [
+                "theorem planner_placeholder_1 : True := by\n  sorry",
+                "theorem planner_placeholder_2 : True := by\n  sorry",
+                "theorem planner_placeholder_3 : True := by\n  sorry",
+            ],
+            "needs_review": False,
+            "confidence": 0.88,
+        }
+    )
+
+    packet = PlannerService(driver=driver, retrieval_service=retrieval).build_plan(
+        "Prove that the Bellman operator is a contraction"
+    )
+
+    assert all(": True := by" not in subgoal for subgoal in packet.subgoals)
+    assert any("IsContraction" in subgoal for subgoal in packet.subgoals)
+    assert any("Function.IsFixedPt" in subgoal for subgoal in packet.subgoals)
+    assert any("ValueFunction" in subgoal for subgoal in packet.subgoals)
 
 
 def test_planner_ambiguous_claim_triggers_questions(tmp_path: Path) -> None:
@@ -114,6 +153,7 @@ def test_planner_ambiguous_claim_triggers_questions(tmp_path: Path) -> None:
                 "theorem planner_equilibrium_subgoal_3 : True := by\n  sorry",
             ],
             "needs_review": True,
+            "confidence": 0.63,
         }
     )
 
@@ -123,6 +163,8 @@ def test_planner_ambiguous_claim_triggers_questions(tmp_path: Path) -> None:
     assert 1 <= len(packet.clarifying_questions) <= 3
     assert packet.needs_review is True
     assert packet.review_state == "awaiting_plan_review"
+    assert packet.clarifying_questions[0].endswith("?")
+    assert 0.0 <= packet.confidence <= 1.0
 
 
 def test_planner_json_output_validation() -> None:
@@ -131,11 +173,12 @@ def test_planner_json_output_validation() -> None:
         "textbook_defaults": ["Use MWG continuity assumptions and $\\beta \\in (0,1)$."],
         "plan_paragraph": "Interpret the claim in the discounted setting, derive the key estimate $\\|Tv-Tw\\| \\leq \\beta\\|v-w\\|$, and pass the result to Lean through three theorem-shaped subgoals.",
         "subgoals": [
-            "theorem planner_validation_1 : True := by\n  sorry",
-            "theorem planner_validation_2 : True := by\n  sorry",
-            "theorem planner_validation_3 : True := by\n  sorry",
+            "theorem planner_validation_1 {S : Type*} (reward : S → ℝ) (transition : S → S) (β : ℝ) : ∃ T : (S → ℝ) → (S → ℝ), T = BellmanOperator reward transition β := by\n  sorry",
+            "theorem planner_validation_2 {V : Type*} [MetricSpace V] (T : V → V) : IsContraction T := by\n  sorry",
+            "theorem planner_validation_3 {V : Type*} [MetricSpace V] [CompleteSpace V] [Nonempty V] {K : NNReal} {T : V → V} (hT : ContractingWith K T) : ∃ x, Function.IsFixedPt T x := by\n  sorry",
         ],
         "needs_review": True,
+        "confidence": 0.74,
     }
     validated = PlannerLLMResponse.model_validate(valid_payload)
     assert validated.plan_paragraph.startswith("Interpret the claim")
@@ -156,5 +199,13 @@ def test_planner_json_output_validation() -> None:
             {
                 **valid_payload,
                 "subgoals": ["theorem only_one : True := by\n  sorry"],
+            }
+        )
+
+    with pytest.raises(Exception):
+        PlannerLLMResponse.model_validate(
+            {
+                **valid_payload,
+                "confidence": 1.4,
             }
         )
