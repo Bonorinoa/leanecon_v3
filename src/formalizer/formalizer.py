@@ -26,6 +26,7 @@ from src.formalizer.models import (
     ParseCheck,
 )
 from src.formalizer.prompts import build_system_prompt, build_user_prompt
+from src.formalizer.prompts import build_revision_user_prompt
 from src.guardrails import semantic_faithfulness_score, vacuity_report
 from src.lean import lean_run_code
 from src.planner.models import PlannerPacket
@@ -245,21 +246,19 @@ class Formalizer:
     ) -> FormalizationPacket:
         validated_packet = PlannerPacket.model_validate(planner_packet) if planner_packet else None
         built = self.context_builder.build(claim, validated_packet)
-        user_prompt = build_user_prompt(built.context)
         response = self._driver_for_backend().generate(
             backend=self.backend,
             system_prompt=self.system_prompt,
-            user_prompt=user_prompt,
+            user_prompt=build_user_prompt(built.context),
             context=built.context,
+        )
+        response, lean_code, faithfulness = self._revise_if_needed(
+            claim=claim,
+            context=built.context,
+            generation=response,
         )
         theorem_name = self._canonical_theorem_name(response.theorem_name, claim)
-        lean_code = self.render_lean_code(
-            theorem_name=theorem_name,
-            generation=response,
-            context=built.context,
-        )
         vacuity = vacuity_report(lean_code)
-        faithfulness = self._assess_faithfulness(claim, lean_code)
         parse_result = lean_run_code(lean_code, filename=f"{theorem_name}.lean")
         parse_check = ParseCheck(
             success=bool(parse_result.get("success")),
@@ -289,6 +288,41 @@ class Formalizer:
             model=self._model_name(),
         )
 
+    def _revise_if_needed(
+        self,
+        *,
+        claim: str,
+        context: FormalizerContext,
+        generation: FormalizerGenerationResponse,
+    ) -> tuple[FormalizerGenerationResponse, str, FaithfulnessAssessment]:
+        lean_code = self.render_lean_code(
+            theorem_name=self._canonical_theorem_name(generation.theorem_name, claim),
+            generation=generation,
+            context=context,
+        )
+        faithfulness = self._assess_faithfulness(claim, lean_code)
+        if not self._needs_revision(context=context, generation=generation, faithfulness=faithfulness):
+            return generation, lean_code, faithfulness
+
+        revised = self._driver_for_backend().generate(
+            backend=self.backend,
+            system_prompt=self.system_prompt,
+            user_prompt=build_revision_user_prompt(
+                context,
+                previous_score=faithfulness.score,
+                feedback=faithfulness.feedback,
+                prior_lean_code=lean_code,
+            ),
+            context=context,
+        )
+        revised_code = self.render_lean_code(
+            theorem_name=self._canonical_theorem_name(revised.theorem_name, claim),
+            generation=revised,
+            context=context,
+        )
+        revised_faithfulness = self._assess_faithfulness(claim, revised_code)
+        return revised, revised_code, revised_faithfulness
+
     def _driver_for_backend(self) -> FormalizerDriver:
         return self._drivers[self.backend.provider]
 
@@ -315,6 +349,47 @@ class Formalizer:
             seen.add(stripped)
         return canonical
 
+    def _placeholder_statement(self, statement: str) -> bool:
+        normalized = " ".join(statement.split())
+        return normalized in {"True", "False", "Prop", "1 = 1"}
+
+    def _expected_identifier_tokens(self, context: FormalizerContext) -> set[str]:
+        tokens: set[str] = set()
+        for entry in context.preamble_entries:
+            for identifier in [*entry.definitions, *entry.proven_lemmas, *entry.related]:
+                cleaned = str(identifier).strip()
+                if cleaned:
+                    tokens.add(cleaned)
+                    tokens.update(part for part in re.split(r"[^A-Za-z0-9_.']+", cleaned) if part)
+        return tokens
+
+    def _is_complex_claim(self, context: FormalizerContext) -> bool:
+        claim_text = " ".join([context.claim, context.plan_paragraph]).lower()
+        markers = ("contraction", "fixed point", "value function", "bellman", "equilibrium")
+        return len(context.preamble_entries) >= 3 or sum(marker in claim_text for marker in markers) >= 2
+
+    def _subgoals_are_specific(self, context: FormalizerContext, generation: FormalizerGenerationResponse) -> bool:
+        expected = self._expected_identifier_tokens(context)
+        specific_count = 0
+        for subgoal in generation.subgoals:
+            if self._placeholder_statement(subgoal.statement):
+                continue
+            if any(token in subgoal.statement for token in expected):
+                specific_count += 1
+        minimum = 4 if self._is_complex_claim(context) else 1
+        return specific_count >= minimum and len(generation.subgoals) >= minimum
+
+    def _needs_revision(
+        self,
+        *,
+        context: FormalizerContext,
+        generation: FormalizerGenerationResponse,
+        faithfulness: FaithfulnessAssessment,
+    ) -> bool:
+        if faithfulness.score < 4.5:
+            return True
+        return not self._subgoals_are_specific(context, generation)
+
     def render_lean_code(
         self,
         *,
@@ -332,8 +407,8 @@ class Formalizer:
                 theorem_lines.append(f"  -- {subgoal.rationale}")
             theorem_lines.append(f"  have {subgoal.name} : {subgoal.statement} := by")
             theorem_lines.append("    sorry")
-        if generation.final_expression and generation.final_expression.strip() == "sorry":
-            theorem_lines.append("  sorry")
+        if generation.final_expression and generation.final_expression.strip():
+            theorem_lines.append(f"  {generation.final_expression.strip()}")
         else:
             theorem_lines.append("  sorry")
         parts: list[str] = []

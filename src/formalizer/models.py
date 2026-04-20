@@ -18,6 +18,11 @@ class FormalizerSubgoal(FormalizerModel):
     statement: str = Field(min_length=1)
     rationale: str | None = None
 
+    @field_validator("statement")
+    @classmethod
+    def _normalize_statement(cls, value: str) -> str:
+        return value.strip()
+
 
 class PreambleContextEntry(FormalizerModel):
     name: str
@@ -56,6 +61,13 @@ class FormalizerGenerationResponse(FormalizerModel):
     @classmethod
     def _normalize_open_statements(cls, values: list[str]) -> list[str]:
         return [value.strip() for value in values if value.strip()]
+
+    @field_validator("subgoals")
+    @classmethod
+    def _validate_subgoals(cls, values: list[FormalizerSubgoal]) -> list[FormalizerSubgoal]:
+        if not values:
+            raise ValueError("Formalizer must emit at least one subgoal.")
+        return values
 
 
 class FaithfulnessAssessment(FormalizerModel):

@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_'-]+")
 _IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z0-9_.]+)\s*$", re.MULTILINE)
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_HAVE_RE = re.compile(r"\bhave\s+[A-Za-z0-9_']+\s*:\s*(.+?)\s*:=\s*by", re.DOTALL)
 
 FRAME_KEYWORDS = {
     "bellman": {"bellman", "value", "function", "operator", "dynamic"},
@@ -31,9 +32,13 @@ def _tokenize(text: str) -> set[str]:
 
 def _quantifier_shape(text: str) -> str:
     lowered = text.lower()
-    if "there exists" in lowered or "∃" in text:
+    existential_positions = [position for position in (lowered.find("there exists"), text.find("∃")) if position != -1]
+    universal_positions = [position for position in (lowered.find("for all"), text.find("∀")) if position != -1]
+    if existential_positions and universal_positions:
+        return "existential" if min(existential_positions) < min(universal_positions) else "universal"
+    if existential_positions:
         return "existential"
-    if "for all" in lowered or "∀" in text:
+    if universal_positions:
         return "universal"
     return "implicit"
 
@@ -73,6 +78,26 @@ def extract_stub_frame(lean_stub: str) -> SemanticFrame:
     )
 
 
+def _structural_match_score(claim_shape: str, stub_shape: str) -> float:
+    if claim_shape == stub_shape:
+        return 1.0
+    if claim_shape == "implicit" and stub_shape == "universal":
+        return 1.0
+    if {claim_shape, stub_shape} == {"implicit", "existential"}:
+        return 0.75
+    return 0.5
+
+
+def _tactic_alignment_score(lean_stub: str) -> float:
+    matches = [match.strip() for match in _HAVE_RE.findall(lean_stub)]
+    if not matches:
+        return 0.5
+    nontrivial = [match for match in matches if " ".join(match.split()) not in {"True", "False", "Prop", "1 = 1"}]
+    if not nontrivial:
+        return 0.5
+    return 1.0
+
+
 def semantic_faithfulness_score(
     claim: str,
     lean_stub: str,
@@ -85,9 +110,9 @@ def semantic_faithfulness_score(
     stub_concepts = set(stub_frame.concepts)
     concept_overlap = len(claim_concepts & stub_concepts)
     coverage = concept_overlap / max(len(claim_concepts), 1)
-    structural = 1.0 if claim_frame.quantifier_shape == stub_frame.quantifier_shape else 0.5
+    structural = _structural_match_score(claim_frame.quantifier_shape, stub_frame.quantifier_shape)
     primitive = 1.0 if stub_frame.imports else 0.3
-    tactic_alignment = 0.5
+    tactic_alignment = _tactic_alignment_score(lean_stub)
     weighted = (
         coverage * 0.30
         + structural * 0.25
