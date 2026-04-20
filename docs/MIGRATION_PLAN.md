@@ -21,7 +21,7 @@ Bootstrap the v3 clean-slate repository from the v2 reference while preserving t
 
 ## v3 Bootstrap Layers
 
-- `src/api`: `/plan`, `/formalize`, `/verify`, `/jobs/{id}`, `/health`, `/metrics`
+- `src/api`: `/plan`, `/formalize`, `/prove`, `/jobs/{id}`, `/health`, `/metrics`
 - `src/planner`: HILBERT planner packet skeleton and TODO prompt spec hooks
 - `src/formalizer`: backend registry, preamble selection, vacuity + faithfulness hooks
 - `src/prover`: APOLLO-oriented verification harness, REPL path, tool registry integration

@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, ParseCheck
+from src.memory.store import ProofTraceStore
+from src.prover import Prover, ProverAction
+from src.prover.file_controller import ProofFileController
+
+
+def _packet(
+    *,
+    theorem_name: str,
+    claim: str,
+    lean_code: str,
+    subgoals: list[dict[str, str]] | None = None,
+) -> FormalizationPacket:
+    return FormalizationPacket.model_validate(
+        {
+            "claim": claim,
+            "lean_code": lean_code,
+            "theorem_with_sorry": lean_code,
+            "theorem_name": theorem_name,
+            "imports": ["Mathlib"],
+            "selected_imports": ["Mathlib"],
+            "open_statements": [],
+            "subgoals": subgoals or [],
+            "selected_preamble": ["bellman_operator"],
+            "vacuity": {"is_vacuous": False},
+            "faithfulness": FaithfulnessAssessment(
+                score=5.0,
+                coverage=1.0,
+                structural_isomorphism=1.0,
+                primitive_faithfulness=1.0,
+                claim_frame={},
+                stub_frame={},
+                needs_human_review=False,
+                passes_gate=True,
+                feedback=[],
+            ),
+            "parse_check": ParseCheck(success=True, exit_code=0, stdout="", stderr=""),
+            "review_state": "approved",
+            "backend": "leanstral",
+            "provider": "mistral",
+            "model": "labs-leanstral-2603",
+        }
+    )
+
+
+class ScriptedDriver:
+    def __init__(self, scripts: dict[str, list[dict[str, object]]]) -> None:
+        self.scripts = {name: list(entries) for name, entries in scripts.items()}
+
+    def next_action(self, *, backend, prompt: str) -> ProverAction:
+        payload = json.loads(prompt)
+        target_name = str(payload["target"]["name"])
+        if target_name not in self.scripts or not self.scripts[target_name]:
+            raise AssertionError(f"No scripted action left for {target_name}")
+        return ProverAction.model_validate(self.scripts[target_name].pop(0))
+
+
+class FakeLeanError:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+class FakeReplSession:
+    def __init__(self, *, timeout: int | None = None) -> None:
+        self.timeout = timeout
+        self.code = ""
+        self.theorem_name = ""
+        self.tactics: list[str] = []
+
+    def start_proof(self, theorem_with_sorry: str, timeout=None):
+        self.code = theorem_with_sorry
+        self.theorem_name = _theorem_name(theorem_with_sorry)
+        self.tactics = []
+        return SimpleNamespace(state_id=1, goals=[f"goal:{self.theorem_name}"], is_solved=False)
+
+    def apply_tactic(self, tactic: str, timeout=None):
+        if tactic == "bad_tactic":
+            return FakeErrorResponse("unknown tactic `bad_tactic`")
+        self.tactics.append(tactic)
+        completed = tactic in {"ring", "norm_num", "trivial"}
+        goals = [] if completed else [f"goal:{self.theorem_name}:after:{tactic}"]
+        return SimpleNamespace(
+            has_errors=lambda: False,
+            goals=goals,
+            proof_status="Completed" if completed else "InProgress",
+            proof_state=len(self.tactics) + 1,
+        )
+
+    def materialize_proof(self):
+        replacement = "\n".join(f"  {tactic}" for tactic in self.tactics) or "  sorry"
+        return self.code.replace("  sorry", replacement, 1)
+
+    def kill(self) -> None:
+        return None
+
+
+class FakeErrorResponse:
+    def __init__(self, message: str) -> None:
+        self._message = message
+
+    def has_errors(self) -> bool:
+        return True
+
+    def get_errors(self):
+        return [SimpleNamespace(data=self._message)]
+
+
+def _theorem_name(code: str) -> str:
+    for line in code.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("theorem "):
+            return stripped.split()[1]
+    return "anonymous"
+
+
+def _fake_compile(code: str, **_: object) -> dict[str, object]:
+    has_sorry = "sorry" in code
+    success = False
+    errors: list[str] = []
+    if has_sorry:
+        errors = ["Proof contains `sorry`."]
+    elif "field_simp" in code and "ring" in code:
+        success = True
+    elif "norm_num" in code:
+        success = True
+    elif "trivial" in code:
+        success = True
+    elif "exact apollo_" in code:
+        success = True
+    elif "exact proved_" in code:
+        success = True
+    else:
+        errors = ["unsolved proof"]
+    return {
+        "success": success,
+        "has_sorry": has_sorry,
+        "axiom_warnings": [],
+        "output": "\n".join(errors),
+        "errors": errors,
+        "warnings": [],
+        "stdout": "",
+        "stderr": "\n".join(errors),
+        "exit_code": 0 if success else 1,
+    }
+
+
+@pytest.mark.anyio
+async def test_prover_closes_simple_algebra_with_field_simp_and_ring(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Clear denominators first.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "field_simp"}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Finish the normalized ring goal.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "ring"}},
+                    },
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="field_ring_claim",
+            claim="A simple algebraic claim closed by field_simp and ring.",
+            lean_code="import Mathlib\n\ntheorem field_ring_claim : 1 / 1 = 1 := by\n  sorry\n",
+        ),
+        "job_field_ring",
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "field_simp" in result.verified_code
+    assert "ring" in result.verified_code
+    assert result.trace[-1].tool_arguments["tactic"] == "ring"
+
+
+@pytest.mark.anyio
+async def test_prover_self_corrects_after_lean_feedback(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    store = ProofTraceStore(tmp_path / "memory.db")
+    prover = Prover(
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Try a tactic that will fail.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "bad_tactic"}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Lean feedback says to normalize arithmetic directly.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "norm_num"}},
+                    },
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=store,
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="self_correct_claim",
+            claim="A claim that requires one failed tactic before norm_num succeeds.",
+            lean_code="import Mathlib\n\ntheorem self_correct_claim : 1 + 1 = 2 := by\n  sorry\n",
+        ),
+        "job_self_correct",
+    )
+
+    assert result.status == "verified"
+    assert len(result.trace) >= 2
+    assert result.trace[0].success is False
+    assert "unknown tactic" in result.trace[0].tool_result
+    assert result.trace[1].tool_arguments["tactic"] == "norm_num"
+
+    recorded = store.list_recent(limit=1)[0]
+    assert recorded.outcome == "verified"
+    assert recorded.full_trace is not None
+    assert recorded.lesson_summary is not None
+
+
+@pytest.mark.anyio
+async def test_prover_uses_apollo_decomposition_for_stalled_target(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "decompose",
+                        "rationale": "Extract the body as a helper lemma first.",
+                        "decomposition_statement": "True",
+                        "decomposition_name": "apollo_decompose_claim_1",
+                    }
+                ],
+                "apollo_decompose_claim_1": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "The extracted helper closes with trivial.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                    }
+                ],
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="decompose_claim",
+            claim="A claim that benefits from APOLLO-style decomposition.",
+            lean_code="import Mathlib\n\ntheorem decompose_claim : True := by\n  sorry\n",
+        ),
+        "job_decompose",
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "apollo_decompose_claim_1" in result.verified_code
+    assert any(step.action_type == "decompose" for step in result.trace)
+

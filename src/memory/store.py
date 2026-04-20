@@ -38,6 +38,16 @@ class ProofTraceStore:
                     )
                     """
                 )
+                existing = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(proof_traces)").fetchall()
+                }
+                for name, column_type in ProofTraceSchema:
+                    if name in existing:
+                        continue
+                    connection.execute(
+                        f"ALTER TABLE proof_traces ADD COLUMN {name} {column_type}"
+                    )
                 connection.commit()
             self._initialized = True
 
@@ -50,9 +60,10 @@ class ProofTraceStore:
                     INSERT INTO proof_traces (
                         claim_id, claim_text, preamble_names_json, tactic_sequence_json,
                         stage_outcomes_json, failure_class, repair_count, outcome,
-                        formalizer_model, timestamp
+                        formalizer_model, timestamp, lesson_summary, full_trace_json,
+                        prover_backend, trace_metadata_json
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         trace.claim_id,
@@ -65,6 +76,12 @@ class ProofTraceStore:
                         trace.outcome,
                         trace.formalizer_model,
                         trace.timestamp,
+                        trace.lesson_summary,
+                        json.dumps(trace.full_trace) if trace.full_trace is not None else None,
+                        trace.prover_backend,
+                        json.dumps(trace.trace_metadata)
+                        if trace.trace_metadata is not None
+                        else None,
                     ),
                 )
                 connection.commit()
@@ -84,6 +101,10 @@ class ProofTraceStore:
                     outcome=str(row[7]),
                     formalizer_model=str(row[8]),
                     timestamp=str(row[9]),
+                    lesson_summary=str(row[10]) if row[10] else None,
+                    full_trace=json.loads(str(row[11])) if row[11] else None,
+                    prover_backend=str(row[12]) if row[12] else None,
+                    trace_metadata=json.loads(str(row[13])) if row[13] else None,
                 )
             )
         return traces
@@ -111,7 +132,8 @@ class ProofTraceStore:
                 SELECT
                     claim_id, claim_text, preamble_names_json, tactic_sequence_json,
                     stage_outcomes_json, failure_class, repair_count, outcome,
-                    formalizer_model, timestamp
+                    formalizer_model, timestamp, lesson_summary, full_trace_json,
+                    prover_backend, trace_metadata_json
                 FROM proof_traces
                 WHERE {" AND ".join(filters)}
                 ORDER BY timestamp DESC
@@ -135,7 +157,8 @@ class ProofTraceStore:
                 SELECT
                     claim_id, claim_text, preamble_names_json, tactic_sequence_json,
                     stage_outcomes_json, failure_class, repair_count, outcome,
-                    formalizer_model, timestamp
+                    formalizer_model, timestamp, lesson_summary, full_trace_json,
+                    prover_backend, trace_metadata_json
                 FROM proof_traces
                 {where_clause}
                 ORDER BY timestamp DESC

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from src.formalizer import FormalizerGenerationResponse, FormalizerService, FormalizerSubgoal
 from src.planner import PlannerLLMResponse, PlannerPacket, PlannerService
+from src.prover.models import ProverResult
 
 
 class FakePlannerDriver:
@@ -32,21 +33,29 @@ class FakeMistralFormalizerDriver:
             theorem_name="bellman_contraction_stub",
             theorem_docstring="Bellman contraction skeleton grounded in the dynamic-programming preamble.",
             theorem_statement=(
-                "∀ {S : Type*} (reward : S → ℝ) (transition : S → S) (β : ℝ), "
+                "∀ {S : Type} (reward : S → ℝ) (transition : S → S) (β : ℝ), "
                 "0 ≤ β → ∀ {v w : S → ℝ}, (∀ s, v s ≤ w s) → "
                 "∀ s, BellmanOperator reward transition β v s ≤ BellmanOperator reward transition β w s"
             ),
             open_statements=[],
             subgoals=[
                 FormalizerSubgoal(
-                    name="h_subgoal_1",
+                    name="h_bellman_monotone",
                     statement=(
-                        "∀ {S : Type*} (reward : S → ℝ) (transition : S → S) (β : ℝ), "
+                        "∀ {S : Type} (reward : S → ℝ) (transition : S → S) (β : ℝ), "
                         "0 ≤ β → ∀ {v w : S → ℝ}, (∀ s, v s ≤ w s) → "
                         "∀ s, BellmanOperator reward transition β v s ≤ BellmanOperator reward transition β w s"
                     ),
                     rationale="Local monotonicity estimate from the Bellman operator preamble theorem.",
-                )
+                ),
+                FormalizerSubgoal(
+                    name="h_contraction_fixed_point",
+                    statement=(
+                        "∀ {α : Type} [MetricSpace α] [CompleteSpace α] [Nonempty α] {f : α → α}, "
+                        "IsContraction f → ∃ x, Function.IsFixedPt f x"
+                    ),
+                    rationale="Expose the contraction-mapping fixed-point result for the prover.",
+                ),
             ],
             final_expression=None,
         )
@@ -137,15 +146,69 @@ def test_plan_formalize_and_job_smoke(monkeypatch) -> None:
     assert "lean_code" in payload
     assert "theorem_with_sorry" in payload
     assert "LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator" in payload["imports"]
+    assert any("BellmanOperator" in subgoal["statement"] for subgoal in payload["subgoals"])
 
 
-def test_verify_job_lifecycle() -> None:
+def test_prove_job_lifecycle(monkeypatch) -> None:
     api_module = importlib.import_module("src.api.app")
+    formalization_packet = {
+        "claim": "Smoke proof claim.",
+        "lean_code": "theorem smoke : True := by\n  sorry\n",
+        "theorem_with_sorry": "theorem smoke : True := by\n  sorry\n",
+        "theorem_name": "smoke",
+        "imports": ["Mathlib"],
+        "selected_imports": ["Mathlib"],
+        "open_statements": [],
+        "subgoals": [],
+        "selected_preamble": ["bellman_operator"],
+        "vacuity": {"is_vacuous": False},
+        "faithfulness": {
+            "score": 5.0,
+            "coverage": 1.0,
+            "structural_isomorphism": 1.0,
+            "primitive_faithfulness": 1.0,
+            "claim_frame": {},
+            "stub_frame": {},
+            "needs_human_review": False,
+            "passes_gate": True,
+            "feedback": [],
+        },
+        "parse_check": {"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
+        "review_state": "approved",
+        "backend": "leanstral",
+        "provider": "mistral",
+        "model": "labs-leanstral-2603",
+    }
+
+    class FakeProver:
+        async def prove(self, packet, job_id, *, max_turns, timeout, allow_decomposition):
+            return ProverResult(
+                status="verified",
+                theorem_name=packet.theorem_name,
+                claim=packet.claim,
+                verified_code=packet.lean_code.replace("sorry", "trivial"),
+                current_code=packet.lean_code.replace("sorry", "trivial"),
+                trace=[],
+                targets=[],
+                failure=None,
+                termination_reason="verified",
+                repair_count=0,
+                preamble_names=list(packet.selected_preamble),
+                backend_used="goedel-prover-v2",
+                attempted_backends=["goedel-prover-v2"],
+                tool_budget={},
+                telemetry={},
+            )
+
+    monkeypatch.setattr(api_module, "prover", FakeProver())
     client = TestClient(api_module.app)
 
-    verify = client.post("/verify", json={"theorem_with_sorry": "theorem demo : True := by\n  sorry\n"})
-    assert verify.status_code == 200
-    job_id = verify.json()["job_id"]
+    prove = client.post(
+        "/prove",
+        json={"formalization_packet": formalization_packet, "benchmark_mode": True},
+    )
+    assert prove.status_code == 200
+    job_id = prove.json()["job_id"]
 
     poll = client.get(f"/jobs/{job_id}")
     assert poll.status_code == 200

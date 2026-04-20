@@ -47,6 +47,7 @@ def build_default_registry() -> ToolRegistry:
     return ToolRegistry(
         [
             ToolSpec("read_current_code", "Read the current proof file.", lean_specific=True),
+            ToolSpec("lean_run_code", "Compile a Lean code snippet.", lean_specific=True),
             ToolSpec("compile_current_code", "Compile the current proof file.", lean_specific=True),
             ToolSpec("get_goals", "Read the current Lean goals.", lean_specific=True),
             ToolSpec(
@@ -61,8 +62,17 @@ def build_default_registry() -> ToolRegistry:
                 {"tactic": {"type": "string"}},
                 lean_specific=True,
             ),
-            ToolSpec("lean_lsp_goal", "Query lean-lsp-mcp goals.", lean_specific=True),
-            ToolSpec("lean_lsp_hover", "Query lean-lsp-mcp hover info.", lean_specific=True),
+            ToolSpec("lean_goal", "Query Lean goals via LSP when available.", lean_specific=True),
+            ToolSpec(
+                "lean_code_actions",
+                "Query Lean code actions via LSP when available.",
+                lean_specific=True,
+            ),
+            ToolSpec(
+                "lean_hover_info",
+                "Query Lean hover/type information via LSP when available.",
+                lean_specific=True,
+            ),
             ToolSpec("memory_retrieve", "Retrieve similar episodic proof traces."),
         ]
     )

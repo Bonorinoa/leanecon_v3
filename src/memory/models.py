@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 ProofTraceSchema = (
     ("claim_id", "TEXT NOT NULL"),
@@ -15,6 +16,10 @@ ProofTraceSchema = (
     ("outcome", "TEXT NOT NULL"),
     ("formalizer_model", "TEXT NOT NULL"),
     ("timestamp", "TEXT NOT NULL"),
+    ("lesson_summary", "TEXT"),
+    ("full_trace_json", "TEXT"),
+    ("prover_backend", "TEXT"),
+    ("trace_metadata_json", "TEXT"),
 )
 
 
@@ -30,3 +35,7 @@ class ProofTrace:
     outcome: str
     formalizer_model: str
     timestamp: str
+    lesson_summary: str | None = None
+    full_trace: dict[str, Any] | None = None
+    prover_backend: str | None = None
+    trace_metadata: dict[str, Any] | None = None

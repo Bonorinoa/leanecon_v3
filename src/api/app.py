@@ -19,16 +19,15 @@ from src.api.models import (
     JobStatusResponse,
     MetricsResponse,
     PlanRequest,
-    VerifyRequest,
+    ProveRequest,
 )
 from src.config import API_PORT, APP_VERSION, CORS_ORIGINS, EVAL_CLAIMS_DIR
 from src.formalizer import DEFAULT_FORMALIZER
 from src.lean import lean_workspace_probe
 from src.memory import trace_store
-from src.observability import BudgetTracker, encode_sse
+from src.observability import encode_sse
 from src.planner import PlannerService
-from src.prover import VerificationHarness
-from src.prover.file_controller import ProofFileController
+from src.prover import DEFAULT_PROVER
 
 
 def _claim_set_counts() -> dict[str, int]:
@@ -61,6 +60,7 @@ app.add_middleware(
 
 planner = PlannerService()
 formalizer = DEFAULT_FORMALIZER
+prover = DEFAULT_PROVER
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -111,42 +111,41 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
     return JobStatusResponse(**job.__dict__)
 
 
-async def _run_verify_job(job_id: str, request: VerifyRequest) -> None:
+async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
     job_store.update(job_id, status="running_prover", review_state="in_progress")
-    harness = VerificationHarness(
-        file_controller=ProofFileController(),
-        budget_tracker=BudgetTracker(),
-    )
-    result = await harness.verify(
-        request.theorem_with_sorry,
+    result = await prover.prove(
+        request.formalization_packet,
         job_id,
-        max_steps=request.max_steps,
+        max_turns=request.max_turns,
         timeout=request.timeout,
+        allow_decomposition=request.allow_decomposition,
     )
-    if result.status == "completed":
-        job_store.update(job_id, status="completed", review_state="complete", result=result.result)
+    payload = result.model_dump(mode="json")
+    if result.status == "verified":
+        job_store.update(job_id, status="completed", review_state="complete", result=payload)
     else:
         job_store.update(
             job_id,
             status="failed",
             review_state="failed",
-            result=result.result,
-            error=getattr(result, "error", "Verification failed."),
+            result=payload,
+            error=result.failure.message if result.failure is not None else "Proof failed.",
         )
 
 
-@app.post("/verify", response_model=JobAcceptedResponse)
-async def verify(request: VerifyRequest) -> JobAcceptedResponse:
+@app.post("/prove", response_model=JobAcceptedResponse)
+async def prove(request: ProveRequest) -> JobAcceptedResponse:
     job = job_store.create(
         status="queued",
         review_state="auto_approved" if request.benchmark_mode else "queued",
         result={
             "benchmark_mode": request.benchmark_mode,
-            "theorem_with_sorry": request.theorem_with_sorry,
+            "theorem_name": request.formalization_packet.theorem_name,
+            "claim": request.formalization_packet.claim,
         },
     )
-    asyncio.create_task(_run_verify_job(job.id, request))
-    return JobAcceptedResponse(job_id=job.id, status=job.status, message="Verification job queued.")
+    asyncio.create_task(_run_prove_job(job.id, request))
+    return JobAcceptedResponse(job_id=job.id, status=job.status, message="Proof job queued.")
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)

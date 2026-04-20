@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.formalizer.models import FormalizationPacket
+
 
 class LeanEconModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -23,11 +25,11 @@ class FormalizeRequest(LeanEconModel):
     benchmark_mode: bool = False
 
 
-class VerifyRequest(LeanEconModel):
-    theorem_with_sorry: str = Field(min_length=1)
-    formalization_packet: dict[str, Any] | None = None
-    max_steps: int = Field(default=32, ge=1, le=128)
+class ProveRequest(LeanEconModel):
+    formalization_packet: FormalizationPacket
+    max_turns: int = Field(default=8, ge=1, le=32)
     timeout: int = Field(default=300, ge=1, le=1800)
+    allow_decomposition: bool = True
     benchmark_mode: bool = False
 
 
