@@ -36,12 +36,18 @@ class ProverAction(ProverModel):
         return value
 
 
+class ProverTargetTimeouts(ProverModel):
+    theorem_body: int | None = Field(default=None, ge=1, le=1800)
+    subgoal: int | None = Field(default=None, ge=1, le=1800)
+    apollo_lemma: int | None = Field(default=None, ge=1, le=1800)
+
+
 class ProverTarget(ProverModel):
     name: str = Field(min_length=1)
     statement: str = Field(min_length=1)
     kind: Literal["subgoal", "theorem_body", "apollo_lemma"]
     status: Literal["pending", "in_progress", "proved", "failed"] = "pending"
-    recursion_depth: int = Field(default=0, ge=0, le=2)
+    recursion_depth: int = Field(default=0, ge=0, le=3)
     helper_theorem_name: str | None = None
 
 
@@ -77,6 +83,7 @@ class ProverResult(ProverModel):
     status: Literal["verified", "failed"]
     theorem_name: str = Field(min_length=1)
     claim: str = Field(min_length=1)
+    benchmark_mode: bool = False
     verified_code: str | None = None
     current_code: str = Field(min_length=1)
     trace: list[ProverTraceStep] = Field(default_factory=list)
@@ -91,4 +98,5 @@ class ProverResult(ProverModel):
     telemetry: dict[str, float] = Field(default_factory=dict)
     usage_by_stage: dict[str, Any] = Field(default_factory=dict)
     timing_breakdown: dict[str, Any] = Field(default_factory=dict)
+    target_timeouts: ProverTargetTimeouts = Field(default_factory=ProverTargetTimeouts)
     audit_summary: dict[str, Any] = Field(default_factory=dict)

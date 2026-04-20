@@ -1,7 +1,7 @@
 """Prover exports."""
 
 from .memory_writer import ProverMemoryWriter
-from .models import ProverAction, ProverFailure, ProverResult, ProverTarget, ProverTraceStep
+from .models import ProverAction, ProverFailure, ProverResult, ProverTarget, ProverTargetTimeouts, ProverTraceStep
 from .prover import (
     DEFAULT_PROVER,
     DriverRegistry,
@@ -28,6 +28,7 @@ __all__ = [
     "ProverMemoryWriter",
     "ProverResult",
     "ProverTarget",
+    "ProverTargetTimeouts",
     "ProverTraceStep",
     "direct_hypothesis_name",
     "suggest_fast_path_tactics",

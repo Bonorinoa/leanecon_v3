@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -173,12 +174,34 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
                 provider="huggingface",
                 model="Goedel-LM/Goedel-Prover-V2-32B",
             )
+            self.calls: list[dict[str, object]] = []
 
-        async def prove(self, packet, job_id, *, max_turns, timeout, allow_decomposition):
+        async def prove(
+            self,
+            packet,
+            job_id,
+            *,
+            max_turns,
+            timeout,
+            target_timeouts,
+            allow_decomposition,
+            benchmark_mode,
+        ):
+            self.calls.append(
+                {
+                    "job_id": job_id,
+                    "max_turns": max_turns,
+                    "timeout": timeout,
+                    "target_timeouts": target_timeouts.model_dump(mode="json") if target_timeouts is not None else None,
+                    "allow_decomposition": allow_decomposition,
+                    "benchmark_mode": benchmark_mode,
+                }
+            )
             return ProverResult(
                 status="verified",
                 theorem_name=packet.theorem_name,
                 claim=packet.claim,
+                benchmark_mode=benchmark_mode,
                 verified_code=packet.lean_code.replace("sorry", "trivial"),
                 current_code=packet.lean_code.replace("sorry", "trivial"),
                 trace=[],
@@ -206,23 +229,42 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
                     }
                 },
                 timing_breakdown={"prover_ms": 10.0, "total_ms": 10.0},
+                target_timeouts=target_timeouts,
                 audit_summary={"event_count": 1, "events": []},
             )
 
-    monkeypatch.setattr(api_module, "prover", FakeProver())
+    fake_prover = FakeProver()
+    monkeypatch.setattr(api_module, "prover", fake_prover)
     client = TestClient(api_module.app)
 
     prove = client.post(
         "/prove",
-        json={"formalization_packet": formalization_packet, "benchmark_mode": True},
+        json={
+            "formalization_packet": formalization_packet,
+            "benchmark_mode": True,
+            "target_timeouts": {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120},
+        },
     )
     assert prove.status_code == 200
     job_id = prove.json()["job_id"]
 
-    poll = client.get(f"/jobs/{job_id}")
-    assert poll.status_code == 200
-    payload = poll.json()
-    assert payload["status"] in {"queued", "running_prover", "completed", "failed"}
+    deadline = time.monotonic() + 2.0
+    payload = None
+    while time.monotonic() < deadline:
+        poll = client.get(f"/jobs/{job_id}")
+        assert poll.status_code == 200
+        payload = poll.json()
+        if payload["status"] not in {"queued", "running_prover"}:
+            break
+        time.sleep(0.05)
+
+    assert payload is not None
+    assert payload["status"] == "completed"
+    assert payload["result"]["benchmark_mode"] is True
+    assert payload["result"]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
+    assert fake_prover.calls
+    assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
+    assert fake_prover.calls[0]["benchmark_mode"] is True
 
 
 def test_health_metrics_and_prometheus(monkeypatch, tmp_path) -> None:

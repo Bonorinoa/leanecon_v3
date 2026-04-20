@@ -47,12 +47,24 @@ class FakeFormalizerDriver:
 class FakeProver:
     def __init__(self) -> None:
         self.primary_backend = SimpleNamespace(name="goedel-prover-v2", provider="huggingface", model="Goedel-LM/Goedel-Prover-V2-32B")
+        self.calls: list[dict[str, object]] = []
 
-    async def prove(self, packet, job_id, *, max_turns, timeout, allow_decomposition):
+    async def prove(self, packet, job_id, *, max_turns, timeout, target_timeouts, allow_decomposition, benchmark_mode):
+        self.calls.append(
+            {
+                "job_id": job_id,
+                "max_turns": max_turns,
+                "timeout": timeout,
+                "target_timeouts": target_timeouts.model_dump(mode="json") if target_timeouts is not None else None,
+                "allow_decomposition": allow_decomposition,
+                "benchmark_mode": benchmark_mode,
+            }
+        )
         return ProverResult(
             status="verified",
             theorem_name=packet.theorem_name,
             claim=packet.claim,
+            benchmark_mode=benchmark_mode,
             verified_code=packet.lean_code.replace("sorry", "trivial"),
             current_code=packet.lean_code.replace("sorry", "trivial"),
             trace=[],
@@ -80,24 +92,32 @@ class FakeProver:
                 }
             },
             timing_breakdown={"prover_ms": 25.0, "total_ms": 25.0},
+            target_timeouts=target_timeouts,
             audit_summary={"event_count": 1, "events": []},
         )
 
 
 def test_local_gate_runs_live_pipeline_with_usage_summary() -> None:
+    fake_prover = FakeProver()
     summary = run_claim_set(
         "tier0_smoke",
         planner_service=PlannerService(driver=FakePlannerDriver()),
         formalizer_service=FormalizerService(mistral_driver=FakeFormalizerDriver()),
-        prover_instance=FakeProver(),
+        prover_instance=fake_prover,
         enforce_readiness=False,
     )
 
     assert summary["executed"] is True
+    assert summary["benchmark_mode"] is True
     assert summary["claims_total"] == 3
     assert summary["claims_passed"] == 3
     assert summary["claims_failed"] == 0
+    assert summary["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
     assert summary["tokens_by_stage"]["prover"]["input_tokens"] == 360
     assert summary["cost_by_stage"]["prover"] == 0.36
     assert summary["cost_by_model"]["huggingface:Goedel-LM/Goedel-Prover-V2-32B"]["estimated_cost_usd"] == 0.36
     assert all(item["theorem_stub_reference"] is not None for item in summary["results"])
+    assert all(item["benchmark_mode"] is True for item in summary["results"])
+    assert fake_prover.calls
+    assert fake_prover.calls[0]["benchmark_mode"] is True
+    assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}

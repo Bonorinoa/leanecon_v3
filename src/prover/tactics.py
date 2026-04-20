@@ -109,7 +109,7 @@ def should_decompose(
 ) -> bool:
     if not allow_decomposition:
         return False
-    if current_depth >= 2 or total_extracted >= 3:
+    if current_depth >= 3 or total_extracted >= 3:
         return False
     if action is not None and action.action_type == "decompose":
         return True

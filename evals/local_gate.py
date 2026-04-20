@@ -16,9 +16,10 @@ from src.formalizer import DEFAULT_FORMALIZER, FormalizerService
 from src.observability import StageExecutionError, classify_exception, lookup_pricing
 from src.planner import PlannerService
 from src.providers import is_provider_pinned, normalize_huggingface_provider
-from src.prover import DEFAULT_PROVER, Prover
+from src.prover import DEFAULT_PROVER, Prover, ProverTargetTimeouts
 
 CLAIM_SETS = ("tier0_smoke", "tier1_core", "tier2_frontier")
+BENCHMARK_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=300, subgoal=180, apollo_lemma=120)
 
 
 def _timestamp() -> str:
@@ -116,6 +117,8 @@ async def _run_claim_set_async(
         return {
             "claim_set": claim_set,
             "mode": "live_pipeline",
+            "benchmark_mode": True,
+            "target_timeouts": BENCHMARK_TARGET_TIMEOUTS.model_dump(mode="json"),
             "generated_at": _timestamp(),
             "claims_total": len(claims),
             "claims_passed": 0,
@@ -167,7 +170,9 @@ async def _run_claim_set_async(
                 f"local_gate_{_sanitize_job_id(claim_id)}",
                 max_turns=8,
                 timeout=300,
+                target_timeouts=BENCHMARK_TARGET_TIMEOUTS,
                 allow_decomposition=True,
+                benchmark_mode=True,
             )
             theorem_name = prove_result.theorem_name
             termination_reason = prove_result.termination_reason
@@ -214,6 +219,8 @@ async def _run_claim_set_async(
                 "failure_code": failure_code,
                 "theorem_name": theorem_name,
                 "raw_claim": raw_claim,
+                "benchmark_mode": True,
+                "target_timeouts": BENCHMARK_TARGET_TIMEOUTS.model_dump(mode="json"),
                 "theorem_stub_reference": theorem_stub,
                 "timing_breakdown": stage_timings,
                 "usage_by_stage": {
@@ -233,6 +240,8 @@ async def _run_claim_set_async(
     return {
         "claim_set": claim_set,
         "mode": "live_pipeline",
+        "benchmark_mode": True,
+        "target_timeouts": BENCHMARK_TARGET_TIMEOUTS.model_dump(mode="json"),
         "generated_at": _timestamp(),
         "claims_total": claims_total,
         "claims_passed": claims_passed,
@@ -299,6 +308,8 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "claim_set": "local_gate",
         "mode": "live_pipeline",
+        "benchmark_mode": True,
+        "target_timeouts": BENCHMARK_TARGET_TIMEOUTS.model_dump(mode="json"),
         "generated_at": _timestamp(),
         "claims_total": claims_total,
         "claims_passed": claims_passed,

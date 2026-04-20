@@ -36,6 +36,7 @@ from src.prover.models import (
     ProverFailure,
     ProverResult,
     ProverTarget,
+    ProverTargetTimeouts,
     ProverToolInvocation,
     ProverTraceStep,
 )
@@ -310,6 +311,18 @@ def _replace_last_sorry(code: str, replacement: str) -> str:
     raise ValueError("No standalone `sorry` found.")
 
 
+def _replace_named_theorem_body(code: str, theorem_name: str, replacement: str) -> str:
+    declaration = re.search(rf"(?m)^(theorem|lemma)\s+{re.escape(theorem_name)}\b", code)
+    if declaration is None:
+        raise ValueError(f"Could not locate theorem `{theorem_name}`.")
+    header = re.search(r":=\s*by\s*\n", code[declaration.start() :], re.DOTALL)
+    if header is None:
+        raise ValueError(f"Could not locate proof body for `{theorem_name}`.")
+    body_start = declaration.start() + header.end()
+    replacement_block = "\n".join(f"  {part}" for part in replacement.splitlines())
+    return f"{code[:body_start]}{replacement_block}\n"
+
+
 def _extract_theorem_block(code: str) -> str:
     for marker in ("/--", "theorem ", "lemma "):
         match = re.search(rf"(?m)^{re.escape(marker)}", code)
@@ -529,7 +542,9 @@ class Prover:
         *,
         max_turns: int = 8,
         timeout: int = 300,
+        target_timeouts: ProverTargetTimeouts | None = None,
         allow_decomposition: bool = True,
+        benchmark_mode: bool = False,
     ) -> ProverResult:
         telemetry = SpanRecorder()
         trace: list[ProverTraceStep] = []
@@ -538,26 +553,58 @@ class Prover:
         targets = self._build_targets(packet)
         attempted_backends: list[str] = []
         working_code = packet.lean_code
+        resolved_target_timeouts = self._resolve_target_timeouts(timeout=timeout, target_timeouts=target_timeouts)
+        final_compile_timeout = self._final_compile_timeout(resolved_target_timeouts)
         self._extracted_lemmas = 0
+        self._reset_budget_tracker()
         self.file_controller.initialize(job_id, working_code)
 
-        failure: ProverFailure | None = None
+        try:
+            failure: ProverFailure | None = None
 
-        for index, target in enumerate(targets, start=1):
-            target.status = "in_progress"
-            if target.kind == "subgoal":
-                helper_name = f"proved_{packet.theorem_name}_{index}"
-                target.helper_theorem_name = helper_name
-                target_code = _standalone_theorem_code(packet, helper_name, target.statement)
+            for index, target in enumerate(targets, start=1):
+                target.status = "in_progress"
+                target_timeout = self._timeout_for_target(target, resolved_target_timeouts)
+                if target.kind == "subgoal":
+                    helper_name = f"proved_{packet.theorem_name}_{index}"
+                    target.helper_theorem_name = helper_name
+                    target_code = _standalone_theorem_code(packet, helper_name, target.statement)
+                    proved, produced_code, target_failure = await self._prove_target(
+                        packet=packet,
+                        target=target,
+                        current_code=target_code,
+                        trace=trace,
+                        job_id=job_id,
+                        attempted_backends=attempted_backends,
+                        max_turns=max_turns,
+                        timeout=target_timeout,
+                        target_timeouts=resolved_target_timeouts,
+                        allow_decomposition=allow_decomposition,
+                        telemetry=telemetry,
+                        provider_usage=provider_usage,
+                        audit_events=audit_events,
+                    )
+                    if not proved:
+                        target.status = "failed"
+                        failure = target_failure
+                        break
+                    theorem_block = _extract_theorem_block(produced_code)
+                    working_code = _inject_theorem_before_main(working_code, theorem_block)
+                    working_code = _replace_subgoal_with_helper(working_code, target.name, helper_name)
+                    self.file_controller.write_current_code(job_id, working_code)
+                    target.status = "proved"
+                    continue
+
                 proved, produced_code, target_failure = await self._prove_target(
                     packet=packet,
                     target=target,
-                    current_code=target_code,
+                    current_code=working_code,
                     trace=trace,
                     job_id=job_id,
                     attempted_backends=attempted_backends,
                     max_turns=max_turns,
-                    timeout=timeout,
+                    timeout=target_timeout,
+                    target_timeouts=resolved_target_timeouts,
                     allow_decomposition=allow_decomposition,
                     telemetry=telemetry,
                     provider_usage=provider_usage,
@@ -566,71 +613,115 @@ class Prover:
                 if not proved:
                     target.status = "failed"
                     failure = target_failure
+                    working_code = produced_code
                     break
-                theorem_block = _extract_theorem_block(produced_code)
-                working_code = _inject_theorem_before_main(working_code, theorem_block)
-                working_code = _replace_subgoal_with_helper(working_code, target.name, helper_name)
+                working_code = produced_code
                 self.file_controller.write_current_code(job_id, working_code)
                 target.status = "proved"
-                continue
 
-            proved, produced_code, target_failure = await self._prove_target(
-                packet=packet,
-                target=target,
-                current_code=working_code,
-                trace=trace,
-                job_id=job_id,
-                attempted_backends=attempted_backends,
-                max_turns=max_turns,
-                timeout=timeout,
-                allow_decomposition=allow_decomposition,
-                telemetry=telemetry,
-                provider_usage=provider_usage,
-                audit_events=audit_events,
+            compile_started_at = time.perf_counter()
+            final_compile = compile_check(
+                working_code,
+                timeout=final_compile_timeout,
+                filename=f"{job_id}_final.lean",
             )
-            if not proved:
-                target.status = "failed"
-                failure = target_failure
-                working_code = produced_code
-                break
-            working_code = produced_code
-            self.file_controller.write_current_code(job_id, working_code)
-            target.status = "proved"
+            telemetry.record_lean(compile_started_at)
+            stage_usage = self._aggregate_stage_usage(provider_usage)
+            timing_breakdown = {
+                "prover_ms": telemetry.snapshot()["wall_clock_ms"],
+                "total_ms": telemetry.snapshot()["wall_clock_ms"],
+            }
 
-        compile_started_at = telemetry.started_at
-        final_compile = compile_check(
-            working_code,
-            timeout=timeout,
-            filename=f"{job_id}_final.lean",
-        )
-        telemetry.record_lean(compile_started_at)
-        stage_usage = self._aggregate_stage_usage(provider_usage)
-        timing_breakdown = {
-            "prover_ms": telemetry.snapshot()["wall_clock_ms"],
-            "total_ms": telemetry.snapshot()["wall_clock_ms"],
-        }
+            if failure is None and final_compile["success"]:
+                audit_events.append(
+                    AuditEvent(
+                        stage="prover",
+                        event_type="stage_completed",
+                        provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
+                        model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
+                        success=True,
+                        metadata={
+                            "termination_reason": "verified",
+                            "attempted_backends": attempted_backends,
+                            "benchmark_mode": benchmark_mode,
+                            "target_timeouts": resolved_target_timeouts.model_dump(mode="json"),
+                        },
+                    )
+                )
+                result = ProverResult(
+                    status="verified",
+                    theorem_name=packet.theorem_name,
+                    claim=packet.claim,
+                    benchmark_mode=benchmark_mode,
+                    verified_code=working_code,
+                    current_code=working_code,
+                    trace=trace,
+                    targets=targets,
+                    failure=None,
+                    termination_reason="verified",
+                    repair_count=sum(1 for step in trace if not step.success),
+                    preamble_names=list(packet.selected_preamble),
+                    backend_used=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
+                    attempted_backends=attempted_backends,
+                    tool_budget=self.budget_tracker.snapshot(),
+                    telemetry=telemetry.snapshot(),
+                    usage_by_stage={"prover": stage_usage.to_dict()} if stage_usage is not None else {},
+                    timing_breakdown=timing_breakdown,
+                    target_timeouts=resolved_target_timeouts,
+                    audit_summary=self._audit_summary(audit_events),
+                )
+                log_event(
+                    "prover.stage_completed",
+                    stage="prover",
+                    provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
+                    model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
+                    latency_ms=timing_breakdown["prover_ms"],
+                    input_tokens=stage_usage.input_tokens if stage_usage is not None else None,
+                    output_tokens=stage_usage.output_tokens if stage_usage is not None else None,
+                    estimated_cost_usd=stage_usage.estimated_cost_usd if stage_usage is not None else None,
+                )
+                if not benchmark_mode:
+                    self.memory_writer.record(packet, result)
+                return result
 
-        if failure is None and final_compile["success"]:
+            if failure is None:
+                failure = ProverFailure(
+                    reason="final_compile_failed",
+                    error_code="compile_failed",
+                    message="Proof search ended, but the final code did not compile cleanly.",
+                    target_name="theorem_body",
+                    backend=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
+                    lean_feedback=failure_feedback_messages(final_compile),
+                )
             audit_events.append(
                 AuditEvent(
                     stage="prover",
-                    event_type="stage_completed",
+                    event_type="stage_failed",
                     provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
                     model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
-                    success=True,
-                    metadata={"termination_reason": "verified", "attempted_backends": attempted_backends},
+                    success=False,
+                    error_code=failure.error_code or failure.reason,
+                    error_message=failure.message,
+                    metadata={
+                        "termination_reason": failure.reason,
+                        "attempted_backends": attempted_backends,
+                        "benchmark_mode": benchmark_mode,
+                        "target_timeouts": resolved_target_timeouts.model_dump(mode="json"),
+                    },
                 )
             )
+
             result = ProverResult(
-                status="verified",
+                status="failed",
                 theorem_name=packet.theorem_name,
                 claim=packet.claim,
-                verified_code=working_code,
+                benchmark_mode=benchmark_mode,
+                verified_code=None,
                 current_code=working_code,
                 trace=trace,
                 targets=targets,
-                failure=None,
-                termination_reason="verified",
+                failure=failure,
+                termination_reason=failure.reason,
                 repair_count=sum(1 for step in trace if not step.success),
                 preamble_names=list(packet.selected_preamble),
                 backend_used=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
@@ -639,76 +730,26 @@ class Prover:
                 telemetry=telemetry.snapshot(),
                 usage_by_stage={"prover": stage_usage.to_dict()} if stage_usage is not None else {},
                 timing_breakdown=timing_breakdown,
+                target_timeouts=resolved_target_timeouts,
                 audit_summary=self._audit_summary(audit_events),
             )
             log_event(
-                "prover.stage_completed",
+                "prover.stage_failed",
                 stage="prover",
                 provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
                 model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
                 latency_ms=timing_breakdown["prover_ms"],
+                error_code=failure.error_code or failure.reason,
                 input_tokens=stage_usage.input_tokens if stage_usage is not None else None,
                 output_tokens=stage_usage.output_tokens if stage_usage is not None else None,
                 estimated_cost_usd=stage_usage.estimated_cost_usd if stage_usage is not None else None,
             )
-            self.memory_writer.record(packet, result)
+            if not benchmark_mode:
+                self.memory_writer.record(packet, result)
             return result
-
-        if failure is None:
-            failure = ProverFailure(
-                reason="final_compile_failed",
-                error_code="compile_failed",
-                message="Proof search ended, but the final code did not compile cleanly.",
-                target_name="theorem_body",
-                backend=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
-                lean_feedback=failure_feedback_messages(final_compile),
-            )
-        audit_events.append(
-            AuditEvent(
-                stage="prover",
-                event_type="stage_failed",
-                provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
-                model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
-                success=False,
-                error_code=failure.error_code or failure.reason,
-                error_message=failure.message,
-                metadata={"termination_reason": failure.reason, "attempted_backends": attempted_backends},
-            )
-        )
-
-        result = ProverResult(
-            status="failed",
-            theorem_name=packet.theorem_name,
-            claim=packet.claim,
-            verified_code=None,
-            current_code=working_code,
-            trace=trace,
-            targets=targets,
-            failure=failure,
-            termination_reason=failure.reason,
-            repair_count=sum(1 for step in trace if not step.success),
-            preamble_names=list(packet.selected_preamble),
-            backend_used=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
-            attempted_backends=attempted_backends,
-            tool_budget=self.budget_tracker.snapshot(),
-            telemetry=telemetry.snapshot(),
-            usage_by_stage={"prover": stage_usage.to_dict()} if stage_usage is not None else {},
-            timing_breakdown=timing_breakdown,
-            audit_summary=self._audit_summary(audit_events),
-        )
-        log_event(
-            "prover.stage_failed",
-            stage="prover",
-            provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
-            model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
-            latency_ms=timing_breakdown["prover_ms"],
-            error_code=failure.error_code or failure.reason,
-            input_tokens=stage_usage.input_tokens if stage_usage is not None else None,
-            output_tokens=stage_usage.output_tokens if stage_usage is not None else None,
-            estimated_cost_usd=stage_usage.estimated_cost_usd if stage_usage is not None else None,
-        )
-        self.memory_writer.record(packet, result)
-        return result
+        finally:
+            if benchmark_mode:
+                self.file_controller.cleanup(job_id)
 
     async def _prove_target(
         self,
@@ -721,6 +762,7 @@ class Prover:
         attempted_backends: list[str],
         max_turns: int,
         timeout: int,
+        target_timeouts: ProverTargetTimeouts,
         allow_decomposition: bool,
         telemetry: SpanRecorder,
         provider_usage: list[TokenUsage],
@@ -928,7 +970,7 @@ class Prover:
                         trace=trace,
                         attempted_backends=attempted_backends,
                         turn=turn,
-                        timeout=timeout,
+                        target_timeouts=target_timeouts,
                         max_turns=max_turns,
                         action=action,
                         job_id=job_id,
@@ -1026,7 +1068,7 @@ class Prover:
         trace: list[ProverTraceStep],
         attempted_backends: list[str],
         turn: int,
-        timeout: int,
+        target_timeouts: ProverTargetTimeouts,
         max_turns: int,
         action: ProverAction,
         job_id: str,
@@ -1034,7 +1076,7 @@ class Prover:
         provider_usage: list[TokenUsage],
         audit_events: list[AuditEvent],
     ) -> tuple[bool, str]:
-        if self._extracted_lemmas >= 3 or target.recursion_depth >= 2:
+        if self._extracted_lemmas >= 3 or target.recursion_depth >= 3:
             return False, session.read_code()
 
         lemma_name = action.decomposition_name or f"apollo_{packet.theorem_name}_{self._extracted_lemmas + 1}"
@@ -1047,6 +1089,7 @@ class Prover:
             recursion_depth=target.recursion_depth + 1,
             helper_theorem_name=lemma_name,
         )
+        lemma_timeout = self._timeout_for_target(lemma_target, target_timeouts)
         lemma_code = _standalone_theorem_code(packet, lemma_name, lemma_statement)
         proved, produced_code, _failure = await self._prove_target(
             packet=packet,
@@ -1056,7 +1099,8 @@ class Prover:
             job_id=job_id,
             attempted_backends=attempted_backends,
             max_turns=max_turns,
-            timeout=timeout,
+            timeout=lemma_timeout,
+            target_timeouts=target_timeouts,
             allow_decomposition=True,
             telemetry=telemetry,
             provider_usage=provider_usage,
@@ -1067,28 +1111,9 @@ class Prover:
 
         theorem_block = _extract_theorem_block(produced_code)
         target_code = session.read_code()
-        if target.kind == "theorem_body":
-            rewritten = _inject_theorem_before_main(target_code, theorem_block)
-            rewritten = _replace_last_sorry(rewritten, f"exact {lemma_name}")
-            session.write_code(rewritten)
-            trace.append(
-                ProverTraceStep(
-                    turn=turn,
-                    backend=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
-                    target_name=target.name,
-                    action_type="decompose",
-                    success=True,
-                    rationale=action.rationale,
-                    tool_result=f"Introduced {lemma_name} and reassembled the target via exact.",
-                    goals=session.get_goals(),
-                    code_snapshot=session.read_code(),
-                    decomposition_theorem=lemma_name,
-                )
-            )
-            return True, session.read_code()
-
         rewritten = _inject_theorem_before_main(target_code, theorem_block)
-        rewritten = _replace_last_sorry(rewritten, f"exact {lemma_name}")
+        target_theorem_name = packet.theorem_name if target.kind == "theorem_body" else target.helper_theorem_name or target.name
+        rewritten = _replace_named_theorem_body(rewritten, target_theorem_name, f"exact {lemma_name}")
         session.write_code(rewritten)
         trace.append(
             ProverTraceStep(
@@ -1132,6 +1157,43 @@ class Prover:
             ProverTarget(name="theorem_body", statement=packet.theorem_name, kind="theorem_body")
         )
         return targets
+
+    def _resolve_target_timeouts(
+        self,
+        *,
+        timeout: int,
+        target_timeouts: ProverTargetTimeouts | None,
+    ) -> ProverTargetTimeouts:
+        overrides = target_timeouts or ProverTargetTimeouts()
+        return ProverTargetTimeouts(
+            theorem_body=overrides.theorem_body or timeout,
+            subgoal=overrides.subgoal or timeout,
+            apollo_lemma=overrides.apollo_lemma or timeout,
+        )
+
+    def _timeout_for_target(self, target: ProverTarget, target_timeouts: ProverTargetTimeouts) -> int:
+        value = getattr(target_timeouts, target.kind)
+        assert value is not None
+        return int(value)
+
+    def _final_compile_timeout(self, target_timeouts: ProverTargetTimeouts) -> int:
+        values = [
+            int(value)
+            for value in (
+                target_timeouts.theorem_body,
+                target_timeouts.subgoal,
+                target_timeouts.apollo_lemma,
+            )
+            if value is not None
+        ]
+        return max(values) if values else 300
+
+    def _reset_budget_tracker(self) -> None:
+        self.budget_tracker.search_tool_calls = 0
+        self.budget_tracker.total_tool_calls = 0
+        self.budget_tracker.sub_agent_calls = 0
+        self.budget_tracker.tool_history.clear()
+        self.budget_tracker.sub_agent_history.clear()
 
     def _aggregate_stage_usage(self, provider_usage: list[TokenUsage]) -> TokenUsage | None:
         if not provider_usage:

@@ -4,11 +4,14 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, ParseCheck
 from src.memory.store import ProofTraceStore
-from src.prover import Prover, ProverAction
+from src.prover import Prover, ProverAction, ProverTargetTimeouts
 from src.prover.file_controller import ProofFileController
+from src.prover.models import ProverTarget
+from src.prover.tactics import should_decompose
 
 
 def _packet(
@@ -260,6 +263,125 @@ async def test_prover_self_corrects_after_lean_feedback(tmp_path, monkeypatch) -
 
 
 @pytest.mark.anyio
+async def test_prover_benchmark_mode_skips_memory_and_cleans_artifacts(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    workspace_root = tmp_path / "proofs"
+    store = ProofTraceStore(tmp_path / "memory.db")
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Close the arithmetic goal directly.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "norm_num"}},
+                    }
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=workspace_root),
+        trace_store=store,
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="benchmark_claim",
+            claim="A benchmark proof that should not persist memory or artifacts.",
+            lean_code="import Mathlib\n\ntheorem benchmark_claim : 1 + 1 = 2 := by\n  sorry\n",
+        ),
+        "job_benchmark_cleanup",
+        target_timeouts=ProverTargetTimeouts(theorem_body=300, subgoal=180, apollo_lemma=120),
+        benchmark_mode=True,
+    )
+
+    assert result.status == "verified"
+    assert result.benchmark_mode is True
+    assert result.target_timeouts.model_dump(mode="json") == {
+        "theorem_body": 300,
+        "subgoal": 180,
+        "apollo_lemma": 120,
+    }
+    assert store.list_recent(limit=1) == []
+    assert not prover.file_controller.proof_path("job_benchmark_cleanup").exists()
+    assert list((workspace_root / "checkpoints").glob("job_benchmark_cleanup_*.lean")) == []
+
+
+def test_prover_resolves_per_target_timeouts_with_request_fallback(tmp_path) -> None:
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver({}),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    resolved = prover._resolve_target_timeouts(
+        timeout=300,
+        target_timeouts=ProverTargetTimeouts(subgoal=180),
+    )
+
+    assert resolved.model_dump(mode="json") == {
+        "theorem_body": 300,
+        "subgoal": 180,
+        "apollo_lemma": 300,
+    }
+    assert prover._timeout_for_target(
+        ProverTarget(name="main", statement="True", kind="theorem_body"),
+        resolved,
+    ) == 300
+    assert prover._timeout_for_target(
+        ProverTarget(name="sub", statement="True", kind="subgoal"),
+        resolved,
+    ) == 180
+    assert prover._timeout_for_target(
+        ProverTarget(name="lemma", statement="True", kind="apollo_lemma"),
+        resolved,
+    ) == 300
+    assert prover._final_compile_timeout(resolved) == 300
+
+
+def test_prover_recursion_depth_allows_three_and_rejects_four() -> None:
+    action = ProverAction.model_validate(
+        {
+            "action_type": "decompose",
+            "rationale": "Extract a helper lemma.",
+            "decomposition_statement": "True",
+        }
+    )
+
+    allowed = ProverTarget(name="depth_three", statement="True", kind="apollo_lemma", recursion_depth=3)
+    assert allowed.recursion_depth == 3
+    assert should_decompose(
+        failed_turns_for_target=2,
+        action=action,
+        allow_decomposition=True,
+        current_depth=2,
+        total_extracted=0,
+    )
+    assert not should_decompose(
+        failed_turns_for_target=2,
+        action=action,
+        allow_decomposition=True,
+        current_depth=3,
+        total_extracted=0,
+    )
+
+    with pytest.raises(ValidationError):
+        ProverTarget(name="depth_four", statement="True", kind="apollo_lemma", recursion_depth=4)
+
+
+@pytest.mark.anyio
 async def test_prover_uses_apollo_decomposition_for_stalled_target(tmp_path, monkeypatch) -> None:
     import src.prover.prover as prover_module
 
@@ -310,6 +432,71 @@ async def test_prover_uses_apollo_decomposition_for_stalled_target(tmp_path, mon
     assert result.verified_code is not None
     assert "apollo_decompose_claim_1" in result.verified_code
     assert any(step.action_type == "decompose" for step in result.trace)
+
+
+@pytest.mark.anyio
+async def test_prover_decomposition_rewrites_subgoal_after_repl_materialization(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "h_sub": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Try a simple tactic before decomposing.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "simp"}},
+                    },
+                    {
+                        "action_type": "decompose",
+                        "rationale": "Extract a helper lemma once the direct path stalls.",
+                        "decomposition_statement": "True",
+                        "decomposition_name": "apollo_subgoal_claim_1",
+                    },
+                ],
+                "apollo_subgoal_claim_1": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "The extracted helper closes with trivial.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                    }
+                ],
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="subgoal_claim",
+            claim="A claim whose subgoal is decomposed after REPL materialization.",
+            lean_code=(
+                "import Mathlib\n\n"
+                "theorem subgoal_claim : True := by\n"
+                "  have h_sub : True := by\n"
+                "    sorry\n"
+                "  exact h_sub\n"
+            ),
+            subgoals=[{"name": "h_sub", "statement": "True"}],
+        ),
+        "job_subgoal_decompose",
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "exact apollo_subgoal_claim_1" in result.verified_code
+    assert any(step.decomposition_theorem == "apollo_subgoal_claim_1" for step in result.trace)
 
 
 @pytest.mark.anyio

@@ -25,10 +25,17 @@ class FormalizeRequest(LeanEconModel):
     benchmark_mode: bool = False
 
 
+class ProverTargetTimeoutsRequest(LeanEconModel):
+    theorem_body: int | None = Field(default=None, ge=1, le=1800)
+    subgoal: int | None = Field(default=None, ge=1, le=1800)
+    apollo_lemma: int | None = Field(default=None, ge=1, le=1800)
+
+
 class ProveRequest(LeanEconModel):
     formalization_packet: FormalizationPacket
     max_turns: int = Field(default=8, ge=1, le=32)
     timeout: int = Field(default=300, ge=1, le=1800)
+    target_timeouts: ProverTargetTimeoutsRequest | None = None
     allow_decomposition: bool = True
     benchmark_mode: bool = False
 

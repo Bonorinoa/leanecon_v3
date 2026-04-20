@@ -53,7 +53,7 @@ from src.observability import (
 )
 from src.planner import PlannerService
 from src.providers import is_provider_pinned
-from src.prover import DEFAULT_PROVER
+from src.prover import DEFAULT_PROVER, ProverTargetTimeouts
 
 
 def _claim_set_counts() -> dict[str, int]:
@@ -361,13 +361,20 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
 async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
     started_at = time.perf_counter()
     job_store.update(job_id, status="running_prover", review_state="in_progress")
+    target_timeouts = (
+        ProverTargetTimeouts.model_validate(request.target_timeouts.model_dump(mode="json"))
+        if request.target_timeouts is not None
+        else None
+    )
     try:
         result = await prover.prove(
             request.formalization_packet,
             job_id,
             max_turns=request.max_turns,
             timeout=request.timeout,
+            target_timeouts=target_timeouts,
             allow_decomposition=request.allow_decomposition,
+            benchmark_mode=request.benchmark_mode,
         )
         payload = result.model_dump(mode="json")
         prover_usage = payload.get("usage_by_stage", {}).get("prover")
@@ -391,7 +398,11 @@ async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
             success=result.status == "verified",
             error_code=result.failure.error_code if result.failure is not None else None,
             error_message=result.failure.message if result.failure is not None else None,
-            metadata={"termination_reason": result.termination_reason},
+            metadata={
+                "termination_reason": result.termination_reason,
+                "benchmark_mode": result.benchmark_mode,
+                "target_timeouts": result.target_timeouts.model_dump(mode="json"),
+            },
         )
         job_store.record_audit_event(job_id, terminal_event)
         if result.status == "verified":
@@ -427,14 +438,22 @@ async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
                 success=False,
                 error_code=error_code,
                 error_message=str(exc),
-                metadata={"termination_reason": "exception"},
+                metadata={
+                    "termination_reason": "exception",
+                    "benchmark_mode": request.benchmark_mode,
+                    "target_timeouts": request.target_timeouts.model_dump(mode="json") if request.target_timeouts else None,
+                },
             ),
         )
         job_store.update(
             job_id,
             status="failed",
             review_state="failed",
-            result={"benchmark_mode": request.benchmark_mode, "stage": "prover"},
+            result={
+                "benchmark_mode": request.benchmark_mode,
+                "target_timeouts": request.target_timeouts.model_dump(mode="json") if request.target_timeouts else None,
+                "stage": "prover",
+            },
             error=str(exc),
         )
         log_event("api.prove_job_failed", stage="prover", error_code=error_code, message=str(exc))
@@ -447,6 +466,7 @@ async def prove(request: ProveRequest) -> JobAcceptedResponse:
         review_state="auto_approved" if request.benchmark_mode else "queued",
         result={
             "benchmark_mode": request.benchmark_mode,
+            "target_timeouts": request.target_timeouts.model_dump(mode="json") if request.target_timeouts else None,
             "theorem_name": request.formalization_packet.theorem_name,
             "claim": request.formalization_packet.claim,
         },
