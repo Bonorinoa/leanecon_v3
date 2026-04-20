@@ -52,6 +52,7 @@ from src.observability import (
     lookup_pricing,
 )
 from src.planner import PlannerService
+from src.providers import is_provider_pinned
 from src.prover import DEFAULT_PROVER
 
 
@@ -73,11 +74,11 @@ def _credential_status(platform: str) -> bool:
 
 
 def _backend_entry(name: str, *, backend_name: str, platform: str, provider: str, model: str) -> dict[str, Any]:
-    provider_pinned = provider != "auto"
-    price_key = provider if platform == "huggingface" else platform
+    provider_pinned = is_provider_pinned(platform, provider)
+    price_key = "huggingface" if platform == "huggingface" else platform
     price_known = lookup_pricing(price_key, model) is not None
     credentials_present = _credential_status(platform)
-    available = credentials_present and (provider_pinned or platform != "huggingface")
+    available = credentials_present
     benchmark_ready = available and (price_known or not BENCHMARK_REQUIRE_PRICING)
     return {
         "name": name,

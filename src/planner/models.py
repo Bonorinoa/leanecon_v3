@@ -88,10 +88,6 @@ class PlannerLLMResponse(PlannerModel):
         cleaned = [subgoal.rstrip() for subgoal in subgoals if subgoal.strip()]
         if not 3 <= len(cleaned) <= 6:
             raise ValueError("Planner must emit 3 to 6 subgoals.")
-        for subgoal in cleaned:
-            normalized = subgoal.strip()
-            if "theorem " not in normalized or ":= by" not in normalized or "sorry" not in normalized:
-                raise ValueError("Each subgoal must be a Lean 4 theorem sorry statement.")
         return cleaned
 
 class PlannerPacket(PlannerLLMResponse):

@@ -32,6 +32,7 @@ from src.guardrails import semantic_faithfulness_score, vacuity_report
 from src.lean import lean_run_code
 from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerPacket
+from src.providers import normalize_huggingface_provider
 
 
 class FormalizerDriverError(RuntimeError):
@@ -217,7 +218,7 @@ class MistralFormalizerDriver:
 
 
 class HuggingFaceFormalizerDriver:
-    """HF text-generation driver for non-Leanstral formalizer backends."""
+    """HF hosted-inference driver for non-Leanstral formalizer backends."""
 
     def __init__(
         self,
@@ -229,6 +230,82 @@ class HuggingFaceFormalizerDriver:
         self.token = token
         self.timeout = timeout
         self.provider = provider
+
+    @property
+    def inference_provider(self) -> str:
+        return normalize_huggingface_provider(self.provider)
+
+    def _chat_completion(
+        self,
+        *,
+        client,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[FormalizerGenerationResponse, ProviderCallMetadata]:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        raw = client.chat_completion(
+            messages,
+            max_tokens=1600,
+            temperature=0.1,
+        )
+        content = raw.choices[0].message.content
+        if isinstance(content, list):
+            content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+        if not isinstance(content, str):
+            raise FormalizerDriverError("Formalizer chat-completion response did not contain text content.")
+        usage = getattr(raw, "usage", None)
+        metadata = ProviderCallMetadata(
+            input_tokens=int(usage.prompt_tokens) if getattr(usage, "prompt_tokens", None) is not None else None,
+            output_tokens=int(usage.completion_tokens) if getattr(usage, "completion_tokens", None) is not None else None,
+            usage_source="provider" if usage is not None else "estimated_chars",
+            prompt_text=json.dumps(messages, ensure_ascii=True),
+            response_text=content,
+        )
+        return FormalizerGenerationResponse.model_validate(_extract_json_payload(content)), metadata
+
+    def _text_generation(
+        self,
+        *,
+        client,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[FormalizerGenerationResponse, ProviderCallMetadata]:
+        prompt = "\n\n".join(
+            [
+                "<system>",
+                system_prompt,
+                "</system>",
+                "<user>",
+                user_prompt,
+                "</user>",
+            ]
+        )
+        raw_text = client.text_generation(
+            prompt,
+            max_new_tokens=1600,
+            temperature=0.1,
+            return_full_text=False,
+            details=True,
+            decoder_input_details=True,
+        )
+        generated_text = getattr(raw_text, "generated_text", None)
+        details = getattr(raw_text, "details", None)
+        response_text = str(generated_text if generated_text is not None else raw_text)
+        metadata = ProviderCallMetadata(
+            input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
+            output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
+            usage_source="provider" if details is not None else "estimated_chars",
+            prompt_text=prompt,
+            response_text=response_text,
+        )
+        return FormalizerGenerationResponse.model_validate(_extract_json_payload(response_text)), metadata
+
+    def _should_fallback_to_text_generation(self, error: Exception) -> bool:
+        message = str(error).lower()
+        return "supported task: text-generation" in message or "supported task: text generation" in message
 
     def generate(
         self,
@@ -243,46 +320,31 @@ class HuggingFaceFormalizerDriver:
         except Exception as error:
             raise FormalizerDriverError("huggingface_hub is required for Hugging Face formalizer backends.") from error
 
-        prompt = "\n\n".join(
-            [
-                "<system>",
-                system_prompt,
-                "</system>",
-                "<user>",
-                user_prompt,
-                "</user>",
-            ]
-        )
         try:
             client = InferenceClient(
                 model=backend.model,
                 token=self.token,
                 timeout=self.timeout,
-                provider=self.provider,
+                provider=self.inference_provider,
             )
-            raw_text = client.text_generation(
-                prompt,
-                max_new_tokens=1600,
-                temperature=0.1,
-                return_full_text=False,
-                details=True,
-                decoder_input_details=True,
-            )
+            try:
+                return self._chat_completion(
+                    client=client,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+            except Exception as error:
+                if not self._should_fallback_to_text_generation(error):
+                    raise
+                return self._text_generation(
+                    client=client,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
         except Exception as error:
             raise FormalizerDriverError(
                 f"Formalizer backend invocation failed for {backend.model}: {error}"
             ) from error
-        generated_text = getattr(raw_text, "generated_text", None)
-        details = getattr(raw_text, "details", None)
-        response_text = str(generated_text if generated_text is not None else raw_text)
-        metadata = ProviderCallMetadata(
-            input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
-            output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
-            usage_source="provider" if details is not None else "estimated_chars",
-            prompt_text=prompt,
-            response_text=response_text,
-        )
-        return FormalizerGenerationResponse.model_validate(_extract_json_payload(response_text)), metadata
 
 
 class Formalizer:

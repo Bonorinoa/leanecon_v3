@@ -23,4 +23,4 @@ uvicorn src.api:app --host 0.0.0.0 --port 8000
 
 ## Benchmark Note
 
-`python -m evals.local_gate` currently scaffolds the local-gate workflow and target baselines for `tier1_core` and `tier2_frontier`. The TODO for Grok/CTO review is replacing the bootstrap threshold summaries with live end-to-end benchmark execution once the v3 planner/formalizer/prover stack is fully wired to production models.
+`python -m evals.local_gate` runs the live local-gate workflow across `tier0_smoke`, `tier1_core`, and `tier2_frontier`. The hosted path now expects Hugging Face planner calls to go through routed chat-completion providers, while the default prover backend is Leanstral unless you explicitly provision a benchmark-ready Goedel endpoint.

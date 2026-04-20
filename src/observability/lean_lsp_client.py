@@ -9,7 +9,7 @@ import subprocess
 import threading
 from typing import Any
 
-from src.config import LEAN_WORKSPACE, PROJECT_ROOT
+from src.config import CACHE_DIR, LEAN_WORKSPACE, PROJECT_ROOT
 
 
 class LeanLSPUnavailableError(RuntimeError):
@@ -17,28 +17,24 @@ class LeanLSPUnavailableError(RuntimeError):
 
 
 class LeanLSPClient:
-    def __init__(self, *, lean_project_path: Path = LEAN_WORKSPACE) -> None:
+    def __init__(self, *, lean_project_path: Path = LEAN_WORKSPACE, read_timeout_seconds: float = 15.0) -> None:
         self.lean_project_path = lean_project_path
+        self.read_timeout_seconds = read_timeout_seconds
         self._process: subprocess.Popen[bytes] | None = None
         self._lock = threading.Lock()
         self._request_id = 0
         self._started = False
+        self._unavailable_reason: str | None = None
 
     def close(self) -> None:
         with self._lock:
             process = self._process
             self._process = None
             self._started = False
+            self._unavailable_reason = None
         if process is None:
             return
-        try:
-            process.terminate()
-            process.wait(timeout=2)
-        except Exception:
-            try:
-                process.kill()
-            except Exception:
-                pass
+        self._terminate_process(process)
 
     def lean_goal(self, file_path: Path, *, line: int, column: int | None = None) -> Any:
         arguments: dict[str, Any] = {"file_path": self._normalize_file_path(file_path), "line": int(line)}
@@ -63,13 +59,20 @@ class LeanLSPClient:
         )
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-        with self._lock:
-            process = self._ensure_started()
-            response = self._send_request(
-                process,
-                "tools/call",
-                {"name": name, "arguments": arguments},
-            )
+        try:
+            with self._lock:
+                process = self._ensure_started()
+                response = self._send_request(
+                    process,
+                    "tools/call",
+                    {"name": name, "arguments": arguments},
+                )
+        except LeanLSPUnavailableError as exc:
+            with self._lock:
+                self._process = None
+                self._started = False
+                self._unavailable_reason = str(exc)
+            raise
         if "error" in response:
             message = response["error"].get("message", "Lean LSP MCP tool call failed.")
             raise LeanLSPUnavailableError(str(message))
@@ -89,13 +92,28 @@ class LeanLSPClient:
         return result
 
     def _ensure_started(self) -> subprocess.Popen[bytes]:
+        if self._unavailable_reason is not None and self._process is None:
+            raise LeanLSPUnavailableError(self._unavailable_reason)
         if self._process is not None and self._process.poll() is None and self._started:
             return self._process
 
         env = os.environ.copy()
         env.setdefault("LEAN_PROJECT_PATH", str(self.lean_project_path))
+        uv_cache_dir = CACHE_DIR / "uv"
+        uv_cache_dir.mkdir(parents=True, exist_ok=True)
+        uv_data_dir = CACHE_DIR / "uv-data"
+        uv_data_dir.mkdir(parents=True, exist_ok=True)
+        env.setdefault("UV_CACHE_DIR", str(uv_cache_dir))
+        env.setdefault("XDG_CACHE_HOME", str(CACHE_DIR))
+        env.setdefault("XDG_DATA_HOME", str(uv_data_dir))
+        local_binary = PROJECT_ROOT / ".venv" / "bin" / "lean-lsp-mcp"
+        command = (
+            [str(local_binary)]
+            if local_binary.exists()
+            else ["uvx", "lean-lsp-mcp"]
+        )
         process = subprocess.Popen(
-            ["uvx", "lean-lsp-mcp", "--transport", "stdio", "--lean-project-path", str(self.lean_project_path)],
+            [*command, "--transport", "stdio", "--lean-project-path", str(self.lean_project_path)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -117,9 +135,13 @@ class LeanLSPClient:
             )
             self._send_notification(process, "notifications/initialized", {})
         except Exception as exc:
-            self.close()
-            raise LeanLSPUnavailableError(f"Failed to initialize lean-lsp-mcp: {exc}") from exc
+            self._terminate_process(process)
+            self._process = None
+            self._started = False
+            self._unavailable_reason = f"Failed to initialize lean-lsp-mcp: {exc}"
+            raise LeanLSPUnavailableError(self._unavailable_reason) from exc
         self._started = True
+        self._unavailable_reason = None
         return process
 
     def _send_notification(
@@ -146,32 +168,56 @@ class LeanLSPClient:
                 return payload
 
     def _write_message(self, process: subprocess.Popen[bytes], payload: dict[str, Any]) -> None:
-        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-        data = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
         assert process.stdin is not None
-        process.stdin.write(data)
+        process.stdin.write((json.dumps(payload, ensure_ascii=True) + "\n").encode("utf-8"))
         process.stdin.flush()
 
     def _read_message(self, process: subprocess.Popen[bytes]) -> dict[str, Any]:
+        payload: dict[str, Any] | None = None
+        error: BaseException | None = None
+
+        def _reader() -> None:
+            nonlocal payload, error
+            try:
+                payload = self._read_message_blocking(process)
+            except BaseException as exc:  # pragma: no cover - defensive timeout wrapper
+                error = exc
+
+        thread = threading.Thread(target=_reader, daemon=True)
+        thread.start()
+        thread.join(timeout=self.read_timeout_seconds)
+        if thread.is_alive():
+            self._terminate_process(process)
+            raise LeanLSPUnavailableError(
+                f"Timed out waiting for lean-lsp-mcp after {self.read_timeout_seconds:.0f}s."
+            )
+        if error is not None:
+            raise error
+        if payload is None:
+            raise LeanLSPUnavailableError("lean-lsp-mcp returned no payload.")
+        return payload
+
+    def _read_message_blocking(self, process: subprocess.Popen[bytes]) -> dict[str, Any]:
         assert process.stdout is not None
-        headers: dict[str, str] = {}
         while True:
             line = process.stdout.readline()
             if not line:
                 raise LeanLSPUnavailableError("lean-lsp-mcp terminated unexpectedly.")
-            if line in {b"\r\n", b"\n"}:
-                break
-            header = line.decode("utf-8").strip()
-            if ":" in header:
-                key, value = header.split(":", 1)
-                headers[key.strip().lower()] = value.strip()
-        if "content-length" not in headers:
-            raise LeanLSPUnavailableError("Missing Content-Length in lean-lsp-mcp response.")
-        length = int(headers["content-length"])
-        body = process.stdout.read(length)
-        if not body:
-            raise LeanLSPUnavailableError("Empty lean-lsp-mcp response body.")
-        return json.loads(body.decode("utf-8"))
+            decoded = line.decode("utf-8").strip()
+            if not decoded:
+                continue
+            return json.loads(decoded)
+
+    @staticmethod
+    def _terminate_process(process: subprocess.Popen[bytes]) -> None:
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     @staticmethod
     def _extract_text(result: dict[str, Any]) -> str | None:

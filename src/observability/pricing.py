@@ -47,8 +47,10 @@ def normalize_price_overrides(raw: Any) -> dict[str, dict[str, dict[str, float]]
             if not isinstance(model, str) or not isinstance(payload, dict):
                 continue
             try:
-                input_price = float(payload["input_per_million"])
-                output_price = float(payload["output_per_million"])
+                # Accept either explicit per-million keys or the shorter input/output aliases
+                # used in the repo's env examples.
+                input_price = float(payload.get("input_per_million", payload["input"]))
+                output_price = float(payload.get("output_per_million", payload["output"]))
             except (KeyError, TypeError, ValueError):
                 continue
             provider_bucket[model.strip()] = {
@@ -128,4 +130,3 @@ def complete_usage(
 
 def dump_pricing_registry() -> dict[str, dict[str, dict[str, float]]]:
     return json.loads(json.dumps({**_BUILTIN_PRICING, **PRICE_REGISTRY}))
-

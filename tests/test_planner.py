@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
 from src.memory.models import ProofTrace
 from src.memory.store import ProofTraceStore
-from src.planner import PlannerLLMResponse, PlannerService
+from src.planner import HuggingFacePlannerDriver, PlannerBackend, PlannerLLMResponse, PlannerService
 from src.planner.retrieval import HashingTextEmbedder, PlannerRetrievalService
 
 
@@ -209,3 +211,55 @@ def test_planner_json_output_validation() -> None:
                 "confidence": 1.4,
             }
         )
+
+
+def test_hf_planner_driver_uses_chat_completion_and_normalizes_legacy_provider(monkeypatch) -> None:
+    payload = {
+        "clarifying_questions": [],
+        "textbook_defaults": ["Assume standard benchmark conditions."],
+        "plan_paragraph": "Map the claim to the Bellman operator preamble and emit Lean-shaped subgoals around $x = x$.",
+        "subgoals": [
+            "theorem planner_chat_1 : True := by\n  sorry",
+            "theorem planner_chat_2 : True := by\n  sorry",
+            "theorem planner_chat_3 : True := by\n  sorry",
+        ],
+        "needs_review": False,
+        "confidence": 0.9,
+    }
+    captured: dict[str, object] = {}
+
+    class FakeInferenceClient:
+        def __init__(self, *, model: str, token: str, timeout: float, provider: str) -> None:
+            captured["model"] = model
+            captured["provider"] = provider
+
+        def chat_completion(self, messages, max_tokens: int, temperature: float):
+            captured["messages"] = messages
+            captured["max_tokens"] = max_tokens
+            captured["temperature"] = temperature
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))],
+                usage=SimpleNamespace(prompt_tokens=111, completion_tokens=37),
+            )
+
+    monkeypatch.setattr("huggingface_hub.InferenceClient", FakeInferenceClient)
+
+    backend = PlannerBackend(
+        name="minimax-m2.7",
+        model="MiniMaxAI/MiniMax-M2.7",
+        provider="huggingface",
+        notes="test backend",
+    )
+    response, metadata = HuggingFacePlannerDriver(provider="huggingface").generate(
+        backend=backend,
+        system_prompt="Return only JSON.",
+        user_prompt="Claim: 1 + 1 = 2",
+    )
+
+    assert response.plan_paragraph.startswith("Map the claim")
+    assert captured["provider"] == "auto"
+    assert metadata is not None
+    assert metadata.input_tokens == 111
+    assert metadata.output_tokens == 37
+    assert captured["messages"][0]["role"] == "system"
+    assert captured["messages"][1]["role"] == "user"

@@ -164,6 +164,7 @@ async def test_prover_closes_simple_algebra_with_field_simp_and_ring(tmp_path, m
     )
 
     prover = Prover(
+        backend="goedel-prover-v2",
         huggingface_driver=ScriptedDriver(
             {
                 "theorem_body": [
@@ -215,6 +216,7 @@ async def test_prover_self_corrects_after_lean_feedback(tmp_path, monkeypatch) -
 
     store = ProofTraceStore(tmp_path / "memory.db")
     prover = Prover(
+        backend="goedel-prover-v2",
         huggingface_driver=ScriptedDriver(
             {
                 "theorem_body": [
@@ -270,6 +272,7 @@ async def test_prover_uses_apollo_decomposition_for_stalled_target(tmp_path, mon
     )
 
     prover = Prover(
+        backend="goedel-prover-v2",
         huggingface_driver=ScriptedDriver(
             {
                 "theorem_body": [
@@ -332,6 +335,7 @@ async def test_prover_supports_lsp_tools_via_client(tmp_path, monkeypatch) -> No
             return {"file": str(file_path), "line": line, "column": column, "type": "True"}
 
     prover = Prover(
+        backend="goedel-prover-v2",
         huggingface_driver=ScriptedDriver(
             {
                 "theorem_body": [

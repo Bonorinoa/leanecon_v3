@@ -11,6 +11,7 @@ from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerContext, PlannerLLMResponse, PlannerPacket, slugify_claim
 from src.planner.prompts import build_system_prompt, build_user_prompt
 from src.planner.retrieval import PlannerRetrievalService, TextEmbedder, infer_structure_tags
+from src.providers import normalize_huggingface_provider
 
 
 class PlannerDriverError(RuntimeError):
@@ -103,6 +104,94 @@ class HuggingFacePlannerDriver:
         self.timeout = timeout
         self.provider = provider
 
+    @property
+    def inference_provider(self) -> str:
+        return normalize_huggingface_provider(self.provider)
+
+    def _chat_completion(
+        self,
+        *,
+        client,
+        backend: PlannerBackend,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[PlannerLLMResponse, ProviderCallMetadata]:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        raw = client.chat_completion(
+            messages,
+            max_tokens=1200,
+            temperature=0.2,
+        )
+        content = raw.choices[0].message.content
+        if isinstance(content, list):
+            content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+        if not isinstance(content, str):
+            raise PlannerDriverError("Planner chat-completion response did not contain text content.")
+        payload = _extract_json_payload(content)
+        try:
+            response = PlannerLLMResponse.model_validate(payload)
+        except Exception as error:
+            raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
+        usage = getattr(raw, "usage", None)
+        metadata = ProviderCallMetadata(
+            input_tokens=int(usage.prompt_tokens) if getattr(usage, "prompt_tokens", None) is not None else None,
+            output_tokens=int(usage.completion_tokens) if getattr(usage, "completion_tokens", None) is not None else None,
+            usage_source="provider" if usage is not None else "estimated_chars",
+            prompt_text=json.dumps(messages, ensure_ascii=True),
+            response_text=content,
+        )
+        return response, metadata
+
+    def _text_generation(
+        self,
+        *,
+        client,
+        backend: PlannerBackend,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[PlannerLLMResponse, ProviderCallMetadata]:
+        prompt = "\n\n".join(
+            [
+                "<system>",
+                system_prompt,
+                "</system>",
+                "<user>",
+                user_prompt,
+                "</user>",
+            ]
+        )
+        raw_text = client.text_generation(
+            prompt,
+            max_new_tokens=1200,
+            temperature=0.2,
+            return_full_text=False,
+            details=True,
+            decoder_input_details=True,
+        )
+        generated_text = getattr(raw_text, "generated_text", None)
+        details = getattr(raw_text, "details", None)
+        response_text = str(generated_text if generated_text is not None else raw_text)
+        payload = _extract_json_payload(response_text)
+        try:
+            response = PlannerLLMResponse.model_validate(payload)
+        except Exception as error:
+            raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
+        metadata = ProviderCallMetadata(
+            input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
+            output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
+            usage_source="provider" if details is not None else "estimated_chars",
+            prompt_text=prompt,
+            response_text=response_text,
+        )
+        return response, metadata
+
+    def _should_fallback_to_text_generation(self, error: Exception) -> bool:
+        message = str(error).lower()
+        return "supported task: text-generation" in message or "supported task: text generation" in message
+
     def generate(
         self,
         *,
@@ -115,48 +204,31 @@ class HuggingFacePlannerDriver:
         except Exception as error:
             raise PlannerDriverError("huggingface_hub is required for the planner backend.") from error
 
-        prompt = "\n\n".join(
-            [
-                "<system>",
-                system_prompt,
-                "</system>",
-                "<user>",
-                user_prompt,
-                "</user>",
-            ]
-        )
         try:
             client = InferenceClient(
                 model=backend.model,
                 token=self.token,
                 timeout=self.timeout,
-                provider=self.provider,
+                provider=self.inference_provider,
             )
-            raw_text = client.text_generation(
-                prompt,
-                max_new_tokens=1200,
-                temperature=0.2,
-                return_full_text=False,
-                details=True,
-                decoder_input_details=True,
-            )
+            try:
+                return self._chat_completion(
+                    client=client,
+                    backend=backend,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+            except Exception as error:
+                if not self._should_fallback_to_text_generation(error):
+                    raise
+                return self._text_generation(
+                    client=client,
+                    backend=backend,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
         except Exception as error:
             raise PlannerDriverError(f"Planner backend invocation failed for {backend.model}: {error}") from error
-
-        generated_text = getattr(raw_text, "generated_text", None)
-        details = getattr(raw_text, "details", None)
-        payload = _extract_json_payload(str(generated_text if generated_text is not None else raw_text))
-        try:
-            response = PlannerLLMResponse.model_validate(payload)
-        except Exception as error:
-            raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
-        return response, ProviderCallMetadata(
-            input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
-            output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
-            usage_source="provider" if details is not None else "estimated_chars",
-            prompt_text=prompt,
-            response_text=str(generated_text if generated_text is not None else raw_text),
-        )
 
 
 def _is_generic_subgoal(subgoal: str) -> bool:
@@ -434,7 +506,13 @@ def _synthesize_subgoals(claim: str, context: PlannerContext) -> list[str]:
 def _subgoals_need_upgrade(subgoals: list[str]) -> bool:
     if len(subgoals) < 4:
         return True
-    return any(_is_generic_subgoal(subgoal) for subgoal in subgoals)
+    return any(
+        _is_generic_subgoal(subgoal)
+        or "theorem " not in subgoal
+        or ":= by" not in subgoal
+        or "sorry" not in subgoal
+        for subgoal in subgoals
+    )
 
 
 def _calibrate_confidence(

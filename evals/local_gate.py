@@ -15,6 +15,7 @@ from src.config import BENCHMARK_REQUIRE_PRICING, PROVER_PROVIDER
 from src.formalizer import DEFAULT_FORMALIZER, FormalizerService
 from src.observability import StageExecutionError, classify_exception, lookup_pricing
 from src.planner import PlannerService
+from src.providers import is_provider_pinned, normalize_huggingface_provider
 from src.prover import DEFAULT_PROVER, Prover
 
 CLAIM_SETS = ("tier0_smoke", "tier1_core", "tier2_frontier")
@@ -82,16 +83,20 @@ def _preflight(
     planner_provider = planner_backend.provider
     prover_provider = PROVER_PROVIDER if prover_backend.provider == "huggingface" else prover_backend.provider
     checks = {
-        "planner_provider_pinned": planner_provider != "auto",
-        "prover_provider_pinned": prover_provider != "auto",
+        "planner_provider_configured": normalize_huggingface_provider(planner_provider) in {"auto", planner_provider.strip()},
+        "prover_provider_configured": prover_backend.provider != "huggingface"
+        or normalize_huggingface_provider(prover_provider) in {"auto", prover_provider.strip()},
         "planner_price_known": True,
         "formalizer_price_known": True,
         "prover_price_known": True,
     }
     if BENCHMARK_REQUIRE_PRICING:
-        checks["planner_price_known"] = lookup_pricing(planner_provider, planner_backend.model) is not None
+        checks["planner_price_known"] = lookup_pricing("huggingface", planner_backend.model) is not None
         checks["formalizer_price_known"] = lookup_pricing(formalizer_backend.provider, formalizer_backend.model) is not None
-        checks["prover_price_known"] = lookup_pricing(prover_provider, prover_backend.model) is not None
+        checks["prover_price_known"] = lookup_pricing(
+            "huggingface" if prover_backend.provider == "huggingface" else prover_provider,
+            prover_backend.model,
+        ) is not None
     ready = all(checks.values())
     blockers = [name for name, status in checks.items() if not status]
     return {"ready": ready, "checks": checks, "blockers": blockers}

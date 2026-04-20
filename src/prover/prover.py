@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Protocol
 
-from src.config import FORMALIZER_TIMEOUT, HF_TOKEN, MISTRAL_API_KEY, MISTRAL_BASE_URL, PROVER_PROVIDER
+from src.config import FORMALIZER_TIMEOUT, HF_TOKEN, MISTRAL_API_KEY, MISTRAL_BASE_URL, PROVER_BACKEND, PROVER_PROVIDER
 from src.formalizer.models import FormalizationPacket
 from src.lean import LeanREPLSession, compile_check, lean_run_code
 from src.memory import ProofTraceStore, trace_store as default_trace_store
@@ -46,6 +46,7 @@ from src.prover.tactics import (
     suggest_fast_path_tactics,
     validate_action,
 )
+from src.providers import normalize_huggingface_provider
 from src.tools import ToolCall, ToolRegistry, ToolResult, build_default_registry
 
 
@@ -110,7 +111,7 @@ def _extract_json_payload(raw_text: str) -> dict[str, object]:
 
 
 class HuggingFaceProverDriver:
-    """HF text-generation driver for structured prover actions."""
+    """HF hosted-inference driver for structured prover actions."""
 
     def __init__(
         self,
@@ -122,6 +123,68 @@ class HuggingFaceProverDriver:
         self.token = token
         self.timeout = timeout
         self.provider = provider
+
+    @property
+    def inference_provider(self) -> str:
+        return normalize_huggingface_provider(self.provider)
+
+    def _chat_completion(
+        self,
+        *,
+        client,
+        prompt: str,
+    ) -> tuple[ProverAction, ProviderCallMetadata]:
+        messages = [
+            {"role": "system", "content": "You are a Lean theorem prover. Return only JSON."},
+            {"role": "user", "content": prompt},
+        ]
+        raw = client.chat_completion(
+            messages,
+            max_tokens=800,
+            temperature=0.1,
+        )
+        content = raw.choices[0].message.content
+        if isinstance(content, list):
+            content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+        if not isinstance(content, str):
+            raise ProverDriverError("Prover chat-completion response did not contain text content.")
+        usage = getattr(raw, "usage", None)
+        return ProverAction.model_validate(_extract_json_payload(content)), ProviderCallMetadata(
+            input_tokens=int(usage.prompt_tokens) if getattr(usage, "prompt_tokens", None) is not None else None,
+            output_tokens=int(usage.completion_tokens) if getattr(usage, "completion_tokens", None) is not None else None,
+            usage_source="provider" if usage is not None else "estimated_chars",
+            prompt_text=json.dumps(messages, ensure_ascii=True),
+            response_text=content,
+        )
+
+    def _text_generation(
+        self,
+        *,
+        client,
+        prompt: str,
+    ) -> tuple[ProverAction, ProviderCallMetadata]:
+        raw_text = client.text_generation(
+            prompt,
+            max_new_tokens=800,
+            temperature=0.1,
+            return_full_text=False,
+            details=True,
+            decoder_input_details=True,
+        )
+        generated_text = getattr(raw_text, "generated_text", None)
+        details = getattr(raw_text, "details", None)
+        response_text = str(generated_text if generated_text is not None else raw_text)
+        return ProverAction.model_validate(_extract_json_payload(response_text)), ProviderCallMetadata(
+            input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
+            output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
+            usage_source="provider" if details is not None else "estimated_chars",
+            prompt_text=prompt,
+            response_text=response_text,
+        )
+
+    def _should_fallback_to_text_generation(self, error: Exception) -> bool:
+        message = str(error).lower()
+        return "supported task: text-generation" in message or "supported task: text generation" in message
 
     def next_action(
         self,
@@ -139,30 +202,18 @@ class HuggingFaceProverDriver:
                 model=backend.model,
                 token=self.token,
                 timeout=self.timeout,
-                provider=self.provider,
+                provider=self.inference_provider,
             )
-            raw_text = client.text_generation(
-                prompt,
-                max_new_tokens=800,
-                temperature=0.1,
-                return_full_text=False,
-                details=True,
-                decoder_input_details=True,
-            )
+            try:
+                return self._chat_completion(client=client, prompt=prompt)
+            except Exception as error:
+                if not self._should_fallback_to_text_generation(error):
+                    raise
+                return self._text_generation(client=client, prompt=prompt)
         except Exception as error:
             raise ProverDriverError(
                 f"Prover backend invocation failed for {backend.model}: {error}"
             ) from error
-        generated_text = getattr(raw_text, "generated_text", None)
-        details = getattr(raw_text, "details", None)
-        response_text = str(generated_text if generated_text is not None else raw_text)
-        return ProverAction.model_validate(_extract_json_payload(response_text)), ProviderCallMetadata(
-            input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
-            output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
-            usage_source="provider" if details is not None else "estimated_chars",
-            prompt_text=prompt,
-            response_text=response_text,
-        )
 
 
 class MistralProverDriver:
@@ -447,7 +498,7 @@ class Prover:
     def __init__(
         self,
         *,
-        backend: str = "goedel-prover-v2",
+        backend: str = PROVER_BACKEND,
         huggingface_driver: ProverDriver | None = None,
         mistral_driver: ProverDriver | None = None,
         registry: ToolRegistry | None = None,
