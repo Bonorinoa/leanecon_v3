@@ -308,3 +308,62 @@ async def test_prover_uses_apollo_decomposition_for_stalled_target(tmp_path, mon
     assert "apollo_decompose_claim_1" in result.verified_code
     assert any(step.action_type == "decompose" for step in result.trace)
 
+
+@pytest.mark.anyio
+async def test_prover_supports_lsp_tools_via_client(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    class FakeLSPClient:
+        def lean_goal(self, file_path, *, line, column=None):
+            return {"file": str(file_path), "line": line, "column": column, "goals": ["⊢ True"]}
+
+        def lean_code_actions(self, file_path, *, line):
+            return {"file": str(file_path), "line": line, "actions": ["exact?"]}
+
+        def lean_hover_info(self, file_path, *, line, column):
+            return {"file": str(file_path), "line": line, "column": column, "type": "True"}
+
+    prover = Prover(
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Inspect the live goal before closing it.",
+                        "tool": {"name": "lean_goal", "arguments": {"line": 3, "column": 3}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "The goal is trivial after inspection.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                    },
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="lsp_claim",
+            claim="A claim that first inspects goals through the LSP adapter.",
+            lean_code="import Mathlib\n\ntheorem lsp_claim : True := by\n  sorry\n",
+        ),
+        "job_lsp",
+    )
+
+    assert result.status == "verified"
+    assert result.trace[0].tool_name == "lean_goal"
+    assert '"goals": ["\\u22a2 True"]' in result.trace[0].tool_result
+    assert result.usage_by_stage["prover"]["stage"] == "prover"

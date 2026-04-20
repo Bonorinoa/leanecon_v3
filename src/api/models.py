@@ -60,3 +60,9 @@ class MetricsResponse(LeanEconModel):
     jobs: dict[str, int]
     memory: dict[str, int]
     benchmark_claim_sets: dict[str, int]
+    usage_totals: dict[str, Any] = Field(default_factory=dict)
+    usage_by_stage: dict[str, Any] = Field(default_factory=dict)
+    usage_by_model: dict[str, Any] = Field(default_factory=dict)
+    failure_counts: dict[str, int] = Field(default_factory=dict)
+    backend_status: dict[str, Any] = Field(default_factory=dict)
+    recent: dict[str, Any] = Field(default_factory=dict)

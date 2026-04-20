@@ -6,7 +6,8 @@ from dataclasses import dataclass
 import json
 from typing import Protocol
 
-from src.config import HF_TOKEN, PLANNER_BACKEND, PLANNER_MODEL
+from src.config import HF_TOKEN, PLANNER_BACKEND, PLANNER_MODEL, PLANNER_PROVIDER
+from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerContext, PlannerLLMResponse, PlannerPacket, slugify_claim
 from src.planner.prompts import build_system_prompt, build_user_prompt
 from src.planner.retrieval import PlannerRetrievalService, TextEmbedder, infer_structure_tags
@@ -20,6 +21,7 @@ class PlannerDriverError(RuntimeError):
 class PlannerBackend:
     name: str
     model: str
+    provider: str
     notes: str
 
 
@@ -30,7 +32,7 @@ class PlannerDriver(Protocol):
         backend: PlannerBackend,
         system_prompt: str,
         user_prompt: str,
-    ) -> PlannerLLMResponse:
+    ) -> PlannerLLMResponse | tuple[PlannerLLMResponse, ProviderCallMetadata]:
         """Return a validated planner response."""
 
 
@@ -40,16 +42,19 @@ class DriverRegistry:
             "minimax-m2.7": PlannerBackend(
                 "minimax-m2.7",
                 "MiniMaxAI/MiniMax-M2.7",
+                PLANNER_PROVIDER,
                 "Primary HILBERT planner backend.",
             ),
             "trinity-large-thinking": PlannerBackend(
                 "trinity-large-thinking",
                 "arcee-ai/Trinity-Large-Thinking",
+                PLANNER_PROVIDER,
                 "Alternative reasoning-heavy planner backend.",
             ),
             "gemma-4-31b-it": PlannerBackend(
                 "gemma-4-31b-it",
                 "google/gemma-4-31B-it",
+                PLANNER_PROVIDER,
                 "Fallback open planner backend.",
             ),
         }
@@ -76,12 +81,27 @@ def _extract_json_payload(raw_text: str) -> dict[str, object]:
     return payload
 
 
+def _unwrap_driver_response(
+    value: PlannerLLMResponse | tuple[PlannerLLMResponse, ProviderCallMetadata],
+) -> tuple[PlannerLLMResponse, ProviderCallMetadata | None]:
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[1], ProviderCallMetadata):
+        return value[0], value[1]
+    return value, None
+
+
 class HuggingFacePlannerDriver:
     """HF text-generation backed planner driver."""
 
-    def __init__(self, *, token: str = HF_TOKEN, timeout: float = 120.0) -> None:
+    def __init__(
+        self,
+        *,
+        token: str = HF_TOKEN,
+        timeout: float = 120.0,
+        provider: str = PLANNER_PROVIDER,
+    ) -> None:
         self.token = token
         self.timeout = timeout
+        self.provider = provider
 
     def generate(
         self,
@@ -89,7 +109,7 @@ class HuggingFacePlannerDriver:
         backend: PlannerBackend,
         system_prompt: str,
         user_prompt: str,
-    ) -> PlannerLLMResponse:
+    ) -> PlannerLLMResponse | tuple[PlannerLLMResponse, ProviderCallMetadata]:
         try:
             from huggingface_hub import InferenceClient
         except Exception as error:
@@ -106,21 +126,37 @@ class HuggingFacePlannerDriver:
             ]
         )
         try:
-            client = InferenceClient(model=backend.model, token=self.token, timeout=self.timeout)
+            client = InferenceClient(
+                model=backend.model,
+                token=self.token,
+                timeout=self.timeout,
+                provider=self.provider,
+            )
             raw_text = client.text_generation(
                 prompt,
                 max_new_tokens=1200,
                 temperature=0.2,
                 return_full_text=False,
+                details=True,
+                decoder_input_details=True,
             )
         except Exception as error:
             raise PlannerDriverError(f"Planner backend invocation failed for {backend.model}: {error}") from error
 
-        payload = _extract_json_payload(str(raw_text))
+        generated_text = getattr(raw_text, "generated_text", None)
+        details = getattr(raw_text, "details", None)
+        payload = _extract_json_payload(str(generated_text if generated_text is not None else raw_text))
         try:
-            return PlannerLLMResponse.model_validate(payload)
+            response = PlannerLLMResponse.model_validate(payload)
         except Exception as error:
             raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
+        return response, ProviderCallMetadata(
+            input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
+            output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
+            usage_source="provider" if details is not None else "estimated_chars",
+            prompt_text=prompt,
+            response_text=str(generated_text if generated_text is not None else raw_text),
+        )
 
 
 def _is_generic_subgoal(subgoal: str) -> bool:
@@ -440,28 +476,42 @@ class Planner:
         self.retrieval_service = retrieval_service or PlannerRetrievalService(embedder=embedder)
         self.system_prompt = build_system_prompt()
 
-    def build_plan(self, claim: str, *, benchmark_mode: bool = False) -> PlannerPacket:
+    def build_plan_with_metadata(
+        self,
+        claim: str,
+        *,
+        benchmark_mode: bool = False,
+    ) -> tuple[PlannerPacket, ProviderCallMetadata | None]:
         context = self.retrieval_service.build_context(claim)
-        response = self.driver.generate(
-            backend=self.backend,
-            system_prompt=self.system_prompt,
-            user_prompt=build_user_prompt(claim, context),
+        response, metadata = _unwrap_driver_response(
+            self.driver.generate(
+                backend=self.backend,
+                system_prompt=self.system_prompt,
+                user_prompt=build_user_prompt(claim, context),
+            )
         )
         upgraded_subgoals = _subgoals_need_upgrade(response.subgoals)
         subgoals = _dedupe_subgoals(
             _synthesize_subgoals(claim, context) if upgraded_subgoals else response.subgoals
         )[:6]
-        return PlannerPacket(
-            claim=claim,
-            clarifying_questions=response.clarifying_questions,
-            textbook_defaults=response.textbook_defaults,
-            plan_paragraph=response.plan_paragraph,
-            subgoals=subgoals,
-            needs_review=(not benchmark_mode) or response.needs_review,
-            confidence=_calibrate_confidence(response, context, upgraded_subgoals=upgraded_subgoals),
-            review_state="approved" if benchmark_mode else "awaiting_plan_review",
-            backend=self.backend.name,
-            model=self.backend.model or PLANNER_MODEL,
-            selected_preamble=context.selected_preamble,
-            few_shot_traces=context.few_shot_traces,
+        return (
+            PlannerPacket(
+                claim=claim,
+                clarifying_questions=response.clarifying_questions,
+                textbook_defaults=response.textbook_defaults,
+                plan_paragraph=response.plan_paragraph,
+                subgoals=subgoals,
+                needs_review=(not benchmark_mode) or response.needs_review,
+                confidence=_calibrate_confidence(response, context, upgraded_subgoals=upgraded_subgoals),
+                review_state="approved" if benchmark_mode else "awaiting_plan_review",
+                backend=self.backend.name,
+                model=self.backend.model or PLANNER_MODEL,
+                selected_preamble=context.selected_preamble,
+                few_shot_traces=context.few_shot_traces,
+            ),
+            metadata,
         )
+
+    def build_plan(self, claim: str, *, benchmark_mode: bool = False) -> PlannerPacket:
+        packet, _ = self.build_plan_with_metadata(claim, benchmark_mode=benchmark_mode)
+        return packet

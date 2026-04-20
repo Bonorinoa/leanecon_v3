@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 
 APP_VERSION = "3.0.0-alpha"
@@ -36,14 +37,24 @@ JOB_MAX_CONCURRENT = int(os.getenv("JOB_MAX_CONCURRENT", "2"))
 
 PLANNER_BACKEND = os.getenv("LEANECON_PLANNER_BACKEND", "minimax-m2.7")
 PLANNER_MODEL = os.getenv("LEANECON_PLANNER_MODEL", "MiniMaxAI/MiniMax-M2.7")
+PLANNER_PROVIDER = os.getenv("LEANECON_PLANNER_PROVIDER", "auto").strip() or "auto"
 EMBEDDING_MODEL = os.getenv("LEANECON_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 FORMALIZER_BACKEND = os.getenv("LEANECON_FORMALIZER_BACKEND", "leanstral")
 FORMALIZER_MODEL = os.getenv("LEANECON_FORMALIZER_MODEL", "labs-leanstral-2603")
 PROVER_MODEL = os.getenv("LEANECON_PROVER_MODEL", "hf:Goedel-LM/Goedel-Prover-V2-32B")
+PROVER_PROVIDER = os.getenv("LEANECON_PROVER_PROVIDER", "auto").strip() or "auto"
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_BASE_URL = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
 FORMALIZER_TIMEOUT = float(os.getenv("LEANECON_FORMALIZER_TIMEOUT", "120"))
+COST_TRACKING_ENABLED = os.getenv("LEANECON_COST_TRACKING_ENABLED", "true").lower() == "true"
+BENCHMARK_REQUIRE_PRICING = os.getenv("LEANECON_BENCHMARK_REQUIRE_PRICING", "true").lower() == "true"
+LIVE_MODEL_TESTS_ENABLED = os.getenv("LEANECON_LIVE_MODEL_TESTS", "false").lower() == "true"
+PRICE_OVERRIDES_JSON_RAW = os.getenv("LEANECON_PRICE_OVERRIDES_JSON", "{}")
+try:
+    PRICE_OVERRIDES = json.loads(PRICE_OVERRIDES_JSON_RAW) if PRICE_OVERRIDES_JSON_RAW.strip() else {}
+except json.JSONDecodeError:
+    PRICE_OVERRIDES = {}
 
 JOB_STATES = {
     "queued",

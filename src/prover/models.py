@@ -59,11 +59,13 @@ class ProverTraceStep(ProverModel):
     goals: list[str] = Field(default_factory=list)
     code_snapshot: str = ""
     decomposition_theorem: str | None = None
+    error_code: str | None = None
 
 
 class ProverFailure(ProverModel):
     reason: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    error_code: str | None = None
     target_name: str | None = None
     turn: int | None = Field(default=None, ge=1)
     backend: str | None = None
@@ -87,4 +89,6 @@ class ProverResult(ProverModel):
     attempted_backends: list[str] = Field(default_factory=list)
     tool_budget: dict[str, Any] = Field(default_factory=dict)
     telemetry: dict[str, float] = Field(default_factory=dict)
-
+    usage_by_stage: dict[str, Any] = Field(default_factory=dict)
+    timing_breakdown: dict[str, Any] = Field(default_factory=dict)
+    audit_summary: dict[str, Any] = Field(default_factory=dict)

@@ -16,6 +16,7 @@ from src.config import (
     HF_TOKEN,
     MISTRAL_API_KEY,
     MISTRAL_BASE_URL,
+    PROVER_PROVIDER,
 )
 from src.formalizer.context_builder import FormalizerContextBuilder
 from src.formalizer.models import (
@@ -29,6 +30,7 @@ from src.formalizer.prompts import build_system_prompt, build_user_prompt
 from src.formalizer.prompts import build_revision_user_prompt
 from src.guardrails import semantic_faithfulness_score, vacuity_report
 from src.lean import lean_run_code
+from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerPacket
 
 
@@ -52,7 +54,7 @@ class FormalizerDriver(Protocol):
         system_prompt: str,
         user_prompt: str,
         context: FormalizerContext,
-    ) -> FormalizerGenerationResponse:
+    ) -> FormalizerGenerationResponse | tuple[FormalizerGenerationResponse, ProviderCallMetadata]:
         """Return a validated formalizer response."""
 
 
@@ -97,6 +99,36 @@ def _extract_json_payload(raw_text: str) -> dict[str, object]:
     return payload
 
 
+def _unwrap_driver_response(
+    value: FormalizerGenerationResponse | tuple[FormalizerGenerationResponse, ProviderCallMetadata],
+) -> tuple[FormalizerGenerationResponse, ProviderCallMetadata | None]:
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[1], ProviderCallMetadata):
+        return value[0], value[1]
+    return value, None
+
+
+def _merge_provider_metadata(
+    primary: ProviderCallMetadata | None,
+    secondary: ProviderCallMetadata | None,
+) -> ProviderCallMetadata | None:
+    if primary is None:
+        return secondary
+    if secondary is None:
+        return primary
+    return ProviderCallMetadata(
+        input_tokens=(primary.input_tokens or 0) + (secondary.input_tokens or 0),
+        output_tokens=(primary.output_tokens or 0) + (secondary.output_tokens or 0),
+        usage_source=(
+            primary.usage_source
+            if primary.usage_source == secondary.usage_source
+            else "mixed"
+        ),
+        prompt_text="\n\n".join(part for part in [primary.prompt_text, secondary.prompt_text] if part),
+        response_text="\n\n".join(part for part in [primary.response_text, secondary.response_text] if part),
+        metadata={**primary.metadata, **secondary.metadata},
+    )
+
+
 class MistralFormalizerDriver:
     """Mistral chat-completions driver for Leanstral."""
 
@@ -118,7 +150,7 @@ class MistralFormalizerDriver:
         system_prompt: str,
         user_prompt: str,
         context: FormalizerContext,
-    ) -> FormalizerGenerationResponse:
+    ) -> FormalizerGenerationResponse | tuple[FormalizerGenerationResponse, ProviderCallMetadata]:
         if not self.api_key:
             raise FormalizerDriverError("Mistral API key is required for the Leanstral formalizer backend.")
         payload = json.dumps(
@@ -160,15 +192,43 @@ class MistralFormalizerDriver:
             )
         if not isinstance(content, str):
             raise FormalizerDriverError("Mistral formalizer response did not contain text content.")
-        return FormalizerGenerationResponse.model_validate(_extract_json_payload(content))
+        metadata = ProviderCallMetadata(
+            input_tokens=(
+                int(raw.get("usage", {}).get("prompt_tokens"))
+                if isinstance(raw.get("usage"), dict) and raw.get("usage", {}).get("prompt_tokens") is not None
+                else None
+            ),
+            output_tokens=(
+                int(raw.get("usage", {}).get("completion_tokens"))
+                if isinstance(raw.get("usage"), dict) and raw.get("usage", {}).get("completion_tokens") is not None
+                else None
+            ),
+            usage_source="provider" if isinstance(raw.get("usage"), dict) else "estimated_chars",
+            prompt_text=json.dumps(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                ensure_ascii=True,
+            ),
+            response_text=content,
+        )
+        return FormalizerGenerationResponse.model_validate(_extract_json_payload(content)), metadata
 
 
 class HuggingFaceFormalizerDriver:
     """HF text-generation driver for non-Leanstral formalizer backends."""
 
-    def __init__(self, *, token: str = HF_TOKEN, timeout: float = FORMALIZER_TIMEOUT) -> None:
+    def __init__(
+        self,
+        *,
+        token: str = HF_TOKEN,
+        timeout: float = FORMALIZER_TIMEOUT,
+        provider: str = PROVER_PROVIDER,
+    ) -> None:
         self.token = token
         self.timeout = timeout
+        self.provider = provider
 
     def generate(
         self,
@@ -177,7 +237,7 @@ class HuggingFaceFormalizerDriver:
         system_prompt: str,
         user_prompt: str,
         context: FormalizerContext,
-    ) -> FormalizerGenerationResponse:
+    ) -> FormalizerGenerationResponse | tuple[FormalizerGenerationResponse, ProviderCallMetadata]:
         try:
             from huggingface_hub import InferenceClient
         except Exception as error:
@@ -194,18 +254,35 @@ class HuggingFaceFormalizerDriver:
             ]
         )
         try:
-            client = InferenceClient(model=backend.model, token=self.token, timeout=self.timeout)
+            client = InferenceClient(
+                model=backend.model,
+                token=self.token,
+                timeout=self.timeout,
+                provider=self.provider,
+            )
             raw_text = client.text_generation(
                 prompt,
                 max_new_tokens=1600,
                 temperature=0.1,
                 return_full_text=False,
+                details=True,
+                decoder_input_details=True,
             )
         except Exception as error:
             raise FormalizerDriverError(
                 f"Formalizer backend invocation failed for {backend.model}: {error}"
             ) from error
-        return FormalizerGenerationResponse.model_validate(_extract_json_payload(str(raw_text)))
+        generated_text = getattr(raw_text, "generated_text", None)
+        details = getattr(raw_text, "details", None)
+        response_text = str(generated_text if generated_text is not None else raw_text)
+        metadata = ProviderCallMetadata(
+            input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
+            output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
+            usage_source="provider" if details is not None else "estimated_chars",
+            prompt_text=prompt,
+            response_text=response_text,
+        )
+        return FormalizerGenerationResponse.model_validate(_extract_json_payload(response_text)), metadata
 
 
 class Formalizer:
@@ -237,25 +314,28 @@ class Formalizer:
             "huggingface": huggingface_driver or HuggingFaceFormalizerDriver(),
         }
 
-    def formalize(
+    def formalize_with_metadata(
         self,
         claim: str,
         *,
         planner_packet: dict[str, Any] | None = None,
         benchmark_mode: bool = False,
-    ) -> FormalizationPacket:
+    ) -> tuple[FormalizationPacket, ProviderCallMetadata | None]:
         validated_packet = PlannerPacket.model_validate(planner_packet) if planner_packet else None
         built = self.context_builder.build(claim, validated_packet)
-        response = self._driver_for_backend().generate(
-            backend=self.backend,
-            system_prompt=self.system_prompt,
-            user_prompt=build_user_prompt(built.context),
-            context=built.context,
+        response, metadata = _unwrap_driver_response(
+            self._driver_for_backend().generate(
+                backend=self.backend,
+                system_prompt=self.system_prompt,
+                user_prompt=build_user_prompt(built.context),
+                context=built.context,
+            )
         )
-        response, lean_code, faithfulness = self._revise_if_needed(
+        response, lean_code, faithfulness, metadata = self._revise_if_needed(
             claim=claim,
             context=built.context,
             generation=response,
+            metadata=metadata,
         )
         theorem_name = self._canonical_theorem_name(response.theorem_name, claim)
         vacuity = vacuity_report(lean_code)
@@ -267,26 +347,43 @@ class Formalizer:
             stderr=str(parse_result.get("stderr", "")),
         )
         review_state = "approved" if benchmark_mode else "awaiting_formalization_review"
-        return FormalizationPacket(
-            claim=claim,
-            lean_code=lean_code,
-            theorem_with_sorry=lean_code,
-            theorem_name=theorem_name,
-            imports=list(built.context.imports),
-            selected_imports=list(built.context.imports),
-            open_statements=self._canonical_open_statements(
-                built.context.open_statements + response.open_statements
+        return (
+            FormalizationPacket(
+                claim=claim,
+                lean_code=lean_code,
+                theorem_with_sorry=lean_code,
+                theorem_name=theorem_name,
+                imports=list(built.context.imports),
+                selected_imports=list(built.context.imports),
+                open_statements=self._canonical_open_statements(
+                    built.context.open_statements + response.open_statements
+                ),
+                subgoals=response.subgoals,
+                selected_preamble=list(built.context.selected_preamble),
+                vacuity=vacuity,
+                faithfulness=faithfulness,
+                parse_check=parse_check,
+                review_state=review_state,
+                backend=self.backend.name,
+                provider=self.backend.provider,
+                model=self._model_name(),
             ),
-            subgoals=response.subgoals,
-            selected_preamble=list(built.context.selected_preamble),
-            vacuity=vacuity,
-            faithfulness=faithfulness,
-            parse_check=parse_check,
-            review_state=review_state,
-            backend=self.backend.name,
-            provider=self.backend.provider,
-            model=self._model_name(),
+            metadata,
         )
+
+    def formalize(
+        self,
+        claim: str,
+        *,
+        planner_packet: dict[str, Any] | None = None,
+        benchmark_mode: bool = False,
+    ) -> FormalizationPacket:
+        packet, _ = self.formalize_with_metadata(
+            claim,
+            planner_packet=planner_packet,
+            benchmark_mode=benchmark_mode,
+        )
+        return packet
 
     def _revise_if_needed(
         self,
@@ -294,7 +391,8 @@ class Formalizer:
         claim: str,
         context: FormalizerContext,
         generation: FormalizerGenerationResponse,
-    ) -> tuple[FormalizerGenerationResponse, str, FaithfulnessAssessment]:
+        metadata: ProviderCallMetadata | None,
+    ) -> tuple[FormalizerGenerationResponse, str, FaithfulnessAssessment, ProviderCallMetadata | None]:
         lean_code = self.render_lean_code(
             theorem_name=self._canonical_theorem_name(generation.theorem_name, claim),
             generation=generation,
@@ -302,18 +400,20 @@ class Formalizer:
         )
         faithfulness = self._assess_faithfulness(claim, lean_code)
         if not self._needs_revision(context=context, generation=generation, faithfulness=faithfulness):
-            return generation, lean_code, faithfulness
+            return generation, lean_code, faithfulness, metadata
 
-        revised = self._driver_for_backend().generate(
-            backend=self.backend,
-            system_prompt=self.system_prompt,
-            user_prompt=build_revision_user_prompt(
-                context,
-                previous_score=faithfulness.score,
-                feedback=faithfulness.feedback,
-                prior_lean_code=lean_code,
-            ),
-            context=context,
+        revised, revised_metadata = _unwrap_driver_response(
+            self._driver_for_backend().generate(
+                backend=self.backend,
+                system_prompt=self.system_prompt,
+                user_prompt=build_revision_user_prompt(
+                    context,
+                    previous_score=faithfulness.score,
+                    feedback=faithfulness.feedback,
+                    prior_lean_code=lean_code,
+                ),
+                context=context,
+            )
         )
         revised_code = self.render_lean_code(
             theorem_name=self._canonical_theorem_name(revised.theorem_name, claim),
@@ -321,7 +421,7 @@ class Formalizer:
             context=context,
         )
         revised_faithfulness = self._assess_faithfulness(claim, revised_code)
-        return revised, revised_code, revised_faithfulness
+        return revised, revised_code, revised_faithfulness, _merge_provider_metadata(metadata, revised_metadata)
 
     def _driver_for_backend(self) -> FormalizerDriver:
         return self._drivers[self.backend.provider]
