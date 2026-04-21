@@ -569,19 +569,24 @@ class Prover:
         working_code = packet.lean_code
         resolved_target_timeouts = self._resolve_target_timeouts(timeout=timeout, target_timeouts=target_timeouts)
         final_compile_timeout = self._final_compile_timeout(resolved_target_timeouts)
+        max_recursion_depth = 1 if benchmark_mode else 3
         self._extracted_lemmas = 0
         self._reset_budget_tracker()
         self.file_controller.initialize(job_id, working_code)
 
         try:
             failure: ProverFailure | None = None
+            verified_via = "full_pipeline"
 
-            shortcut = self._try_trivial_shortcut(
-                packet=packet,
-                current_code=working_code,
-                timeout=self._timeout_for_target(targets[-1], resolved_target_timeouts),
-            )
+            shortcut = None
+            if not benchmark_mode:
+                shortcut = self._try_trivial_shortcut(
+                    packet=packet,
+                    current_code=working_code,
+                    timeout=self._timeout_for_target(targets[-1], resolved_target_timeouts),
+                )
             if shortcut is not None:
+                verified_via = "trivial_shortcut"
                 working_code = shortcut["code"]
                 for target in targets:
                     target.status = "proved"
@@ -640,6 +645,7 @@ class Prover:
                         timeout=target_timeout,
                         target_timeouts=resolved_target_timeouts,
                         allow_decomposition=allow_decomposition,
+                        max_recursion_depth=max_recursion_depth,
                         telemetry=telemetry,
                         provider_usage=provider_usage,
                         audit_events=audit_events,
@@ -666,6 +672,7 @@ class Prover:
                     timeout=target_timeout,
                     target_timeouts=resolved_target_timeouts,
                     allow_decomposition=allow_decomposition,
+                    max_recursion_depth=max_recursion_depth,
                     telemetry=telemetry,
                     provider_usage=provider_usage,
                     audit_events=audit_events,
@@ -713,6 +720,7 @@ class Prover:
                     theorem_name=packet.theorem_name,
                     claim=packet.claim,
                     benchmark_mode=benchmark_mode,
+                    verified_via=verified_via,
                     verified_code=working_code,
                     current_code=working_code,
                     trace=trace,
@@ -776,6 +784,7 @@ class Prover:
                 theorem_name=packet.theorem_name,
                 claim=packet.claim,
                 benchmark_mode=benchmark_mode,
+                verified_via="full_pipeline",
                 verified_code=None,
                 current_code=working_code,
                 trace=trace,
@@ -824,6 +833,7 @@ class Prover:
         timeout: int,
         target_timeouts: ProverTargetTimeouts,
         allow_decomposition: bool,
+        max_recursion_depth: int,
         telemetry: SpanRecorder,
         provider_usage: list[TokenUsage],
         audit_events: list[AuditEvent],
@@ -1033,6 +1043,7 @@ class Prover:
                     allow_decomposition=allow_decomposition,
                     current_depth=target.recursion_depth,
                     total_extracted=self._extracted_lemmas,
+                    max_recursion_depth=max_recursion_depth,
                 ):
                     decomposed, new_code = await self._run_decomposition(
                         packet=packet,
@@ -1045,6 +1056,7 @@ class Prover:
                         max_turns=max_turns,
                         action=action,
                         job_id=job_id,
+                        max_recursion_depth=max_recursion_depth,
                         telemetry=telemetry,
                         provider_usage=provider_usage,
                         audit_events=audit_events,
@@ -1148,11 +1160,12 @@ class Prover:
         max_turns: int,
         action: ProverAction,
         job_id: str,
+        max_recursion_depth: int,
         telemetry: SpanRecorder,
         provider_usage: list[TokenUsage],
         audit_events: list[AuditEvent],
     ) -> tuple[bool, str]:
-        if self._extracted_lemmas >= 3 or target.recursion_depth >= 3:
+        if self._extracted_lemmas >= 3 or target.recursion_depth >= max_recursion_depth:
             return False, session.read_code()
 
         lemma_name = action.decomposition_name or f"apollo_{packet.theorem_name}_{self._extracted_lemmas + 1}"
@@ -1178,6 +1191,7 @@ class Prover:
             timeout=lemma_timeout,
             target_timeouts=target_timeouts,
             allow_decomposition=True,
+            max_recursion_depth=max_recursion_depth,
             telemetry=telemetry,
             provider_usage=provider_usage,
             audit_events=audit_events,

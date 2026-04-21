@@ -11,6 +11,20 @@ from src.config import COST_TRACKING_ENABLED, PRICE_OVERRIDES
 from src.observability.models import ProviderCallMetadata, TokenUsage
 
 _BUILTIN_PRICING: dict[str, dict[str, dict[str, float]]] = {
+    "huggingface": {
+        "OBLITERATUS/gemma-4-E4B-it-OBLITERATED": {
+            "input_per_million": 0.0005,
+            "output_per_million": 0.0005,
+        },
+        "MiniMaxAI/MiniMax-M2.7": {
+            "input_per_million": 0.0005,
+            "output_per_million": 0.0005,
+        },
+        "Goedel-LM/Goedel-Prover-V2-32B": {
+            "input_per_million": 0.0004,
+            "output_per_million": 0.0004,
+        },
+    },
     "mistral": {
         "labs-leanstral-2603": {
             "input_per_million": 0.0,

@@ -85,6 +85,7 @@ class ProverResult(ProverModel):
     theorem_name: str = Field(min_length=1)
     claim: str = Field(min_length=1)
     benchmark_mode: bool = False
+    verified_via: Literal["full_pipeline", "trivial_shortcut"] = "full_pipeline"
     verified_code: str | None = None
     current_code: str = Field(min_length=1)
     trace: list[ProverTraceStep] = Field(default_factory=list)

@@ -9,6 +9,7 @@ dependencies = [
   "uvicorn[standard]>=0.30",
   "lean-interact>=0.4",
   "pydantic>=2.9",
+  "python-dotenv>=1.0",
   "sqlite-utils>=3.36",
   "huggingface_hub>=0.24",
   "sentence-transformers>=3.0",

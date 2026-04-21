@@ -337,6 +337,7 @@ async def test_prover_benchmark_mode_skips_memory_and_cleans_artifacts(tmp_path,
 
     assert result.status == "verified"
     assert result.benchmark_mode is True
+    assert result.verified_via == "full_pipeline"
     assert result.target_timeouts.model_dump(mode="json") == {
         "theorem_body": 300,
         "subgoal": 180,
@@ -405,6 +406,22 @@ def test_prover_recursion_depth_allows_three_and_rejects_four() -> None:
         allow_decomposition=True,
         current_depth=3,
         total_extracted=0,
+    )
+    assert should_decompose(
+        failed_turns_for_target=2,
+        action=action,
+        allow_decomposition=True,
+        current_depth=0,
+        total_extracted=0,
+        max_recursion_depth=1,
+    )
+    assert not should_decompose(
+        failed_turns_for_target=2,
+        action=action,
+        allow_decomposition=True,
+        current_depth=1,
+        total_extracted=0,
+        max_recursion_depth=1,
     )
 
     with pytest.raises(ValidationError):
@@ -653,6 +670,7 @@ async def test_prover_uses_trivial_shortcut_when_goal_matches_hypothesis(
     assert result.status == "verified"
     assert result.verified_code is not None
     assert "exact hspend" in result.verified_code
+    assert result.verified_via == "trivial_shortcut"
     assert any(step.action_type == "trivial_shortcut" for step in result.trace)
     assert all(step.action_type == "trivial_shortcut" for step in result.trace)
 

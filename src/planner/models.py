@@ -49,7 +49,7 @@ class PlannerLLMResponse(PlannerModel):
     clarifying_questions: list[str] = Field(default_factory=list, max_length=3)
     textbook_defaults: list[str] = Field(default_factory=list, min_length=1)
     plan_paragraph: str = Field(min_length=1)
-    subgoals: list[str] = Field(min_length=3, max_length=6)
+    subgoals: list[str] = Field(min_length=1, max_length=6)
     needs_review: bool = True
     confidence: float = Field(ge=0.0, le=1.0)
 
@@ -86,8 +86,8 @@ class PlannerLLMResponse(PlannerModel):
     @classmethod
     def _validate_subgoals(cls, subgoals: list[str]) -> list[str]:
         cleaned = [subgoal.rstrip() for subgoal in subgoals if subgoal.strip()]
-        if not 3 <= len(cleaned) <= 6:
-            raise ValueError("Planner must emit 3 to 6 subgoals.")
+        if not 1 <= len(cleaned) <= 6:
+            raise ValueError("Planner must emit 1 to 6 subgoals.")
         return cleaned
 
 class PlannerPacket(PlannerLLMResponse):

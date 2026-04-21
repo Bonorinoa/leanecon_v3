@@ -16,13 +16,14 @@ from src.formalizer import DEFAULT_FORMALIZER, FormalizerService
 from src.lean import compile_check
 from src.observability import StageExecutionError, classify_exception, lookup_pricing
 from src.planner import PlannerService
-from src.providers import is_provider_pinned, normalize_huggingface_provider
+from src.providers import normalize_huggingface_provider
 from src.prover import DEFAULT_PROVER, Prover, ProverTargetTimeouts
 from src.prover.prover import _replace_named_theorem_body
 from src.prover.tactics import direct_hypothesis_name
 
 CLAIM_SETS = ("tier0_smoke", "tier1_core", "tier2_frontier")
-BENCHMARK_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=300, subgoal=180, apollo_lemma=120)
+LIVE_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=300, subgoal=180, apollo_lemma=120)
+BENCHMARK_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=120, subgoal=120, apollo_lemma=120)
 
 
 def _timestamp() -> str:
@@ -147,15 +148,17 @@ async def _run_claim_set_async(
     formalizer_service: FormalizerService,
     prover_instance: Prover,
     enforce_readiness: bool,
+    benchmark_mode: bool,
 ) -> dict[str, Any]:
     claims = load_claims(claim_set)
     readiness = _preflight(planner_service, formalizer_service, prover_instance)
+    target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
     if enforce_readiness and not readiness["ready"]:
         return {
             "claim_set": claim_set,
             "mode": "live_pipeline",
-            "benchmark_mode": True,
-            "target_timeouts": BENCHMARK_TARGET_TIMEOUTS.model_dump(mode="json"),
+            "benchmark_mode": benchmark_mode,
+            "target_timeouts": target_timeouts.model_dump(mode="json"),
             "generated_at": _timestamp(),
             "claims_total": len(claims),
             "claims_passed": 0,
@@ -190,12 +193,14 @@ async def _run_claim_set_async(
         stage_timings = {"planner_ms": 0.0, "formalizer_ms": 0.0, "prover_ms": 0.0, "total_ms": 0.0}
         result_status = "failed"
         theorem_name: str | None = None
+        verified_via = "full_pipeline"
 
-        shortcut = _try_claim_trivial_shortcut(theorem_stub)
+        shortcut = None if benchmark_mode else _try_claim_trivial_shortcut(theorem_stub)
         if shortcut is not None:
             theorem_name = shortcut["theorem_name"]
             result_status = "verified"
             termination_reason = "trivial_shortcut"
+            verified_via = "trivial_shortcut"
             failure_code = None
             _accumulate_failure(failure_code, failure_counts)
             results.append(
@@ -206,8 +211,9 @@ async def _run_claim_set_async(
                     "failure_code": failure_code,
                     "theorem_name": theorem_name,
                     "raw_claim": raw_claim,
-                    "benchmark_mode": True,
-                    "target_timeouts": BENCHMARK_TARGET_TIMEOUTS.model_dump(mode="json"),
+                    "benchmark_mode": benchmark_mode,
+                    "verified_via": "trivial_shortcut",
+                    "target_timeouts": target_timeouts.model_dump(mode="json"),
                     "theorem_stub_reference": theorem_stub,
                     "timing_breakdown": stage_timings,
                     "usage_by_stage": {},
@@ -224,7 +230,7 @@ async def _run_claim_set_async(
                 raw_claim,
                 theorem_stub=theorem_stub,
                 preamble_names=preamble_names,
-                benchmark_mode=True,
+                benchmark_mode=benchmark_mode,
             )
             planner_usage = _usage_dict(plan_result.usage)
             stage_timings["planner_ms"] = float(plan_result.usage.latency_ms or 0.0)
@@ -234,7 +240,7 @@ async def _run_claim_set_async(
                 planner_packet=plan_result.payload.model_dump(mode="json"),
                 theorem_stub=theorem_stub,
                 preamble_names=preamble_names,
-                benchmark_mode=True,
+                benchmark_mode=benchmark_mode,
             )
             formalizer_usage = _usage_dict(formalize_result.usage)
             stage_timings["formalizer_ms"] = float(formalize_result.usage.latency_ms or 0.0)
@@ -243,13 +249,14 @@ async def _run_claim_set_async(
                 formalize_result.payload,
                 f"local_gate_{_sanitize_job_id(claim_id)}",
                 max_turns=8,
-                timeout=300,
-                target_timeouts=BENCHMARK_TARGET_TIMEOUTS,
+                timeout=120 if benchmark_mode else 300,
+                target_timeouts=target_timeouts,
                 allow_decomposition=True,
-                benchmark_mode=True,
+                benchmark_mode=benchmark_mode,
             )
             theorem_name = prove_result.theorem_name
             termination_reason = prove_result.termination_reason
+            verified_via = prove_result.verified_via
             stage_timings["prover_ms"] = float(prove_result.timing_breakdown.get("prover_ms") or 0.0)
             stage_timings["total_ms"] = (
                 stage_timings["planner_ms"] + stage_timings["formalizer_ms"] + stage_timings["prover_ms"]
@@ -293,8 +300,9 @@ async def _run_claim_set_async(
                 "failure_code": failure_code,
                 "theorem_name": theorem_name,
                 "raw_claim": raw_claim,
-                "benchmark_mode": True,
-                "target_timeouts": BENCHMARK_TARGET_TIMEOUTS.model_dump(mode="json"),
+                "benchmark_mode": benchmark_mode,
+                "verified_via": verified_via,
+                "target_timeouts": target_timeouts.model_dump(mode="json"),
                 "theorem_stub_reference": theorem_stub,
                 "timing_breakdown": stage_timings,
                 "usage_by_stage": {
@@ -314,8 +322,8 @@ async def _run_claim_set_async(
     return {
         "claim_set": claim_set,
         "mode": "live_pipeline",
-        "benchmark_mode": True,
-        "target_timeouts": BENCHMARK_TARGET_TIMEOUTS.model_dump(mode="json"),
+        "benchmark_mode": benchmark_mode,
+        "target_timeouts": target_timeouts.model_dump(mode="json"),
         "generated_at": _timestamp(),
         "claims_total": claims_total,
         "claims_passed": claims_passed,
@@ -338,6 +346,7 @@ def run_claim_set(
     formalizer_service: FormalizerService | None = None,
     prover_instance: Prover | None = None,
     enforce_readiness: bool = True,
+    benchmark_mode: bool = False,
 ) -> dict[str, Any]:
     return asyncio.run(
         _run_claim_set_async(
@@ -346,6 +355,7 @@ def run_claim_set(
             formalizer_service=formalizer_service or DEFAULT_FORMALIZER,
             prover_instance=prover_instance or DEFAULT_PROVER,
             enforce_readiness=enforce_readiness,
+            benchmark_mode=benchmark_mode,
         )
     )
 
@@ -379,11 +389,13 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             failure_counts[error_code] = failure_counts.get(error_code, 0) + int(count)
     claims_total = sum(int(summary.get("claims_total") or 0) for summary in summaries)
     claims_passed = sum(int(summary.get("claims_passed") or 0) for summary in summaries)
+    benchmark_mode = any(bool(summary.get("benchmark_mode")) for summary in summaries)
+    target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
     return {
         "claim_set": "local_gate",
         "mode": "live_pipeline",
-        "benchmark_mode": True,
-        "target_timeouts": BENCHMARK_TARGET_TIMEOUTS.model_dump(mode="json"),
+        "benchmark_mode": benchmark_mode,
+        "target_timeouts": target_timeouts.model_dump(mode="json"),
         "generated_at": _timestamp(),
         "claims_total": claims_total,
         "claims_passed": claims_passed,
@@ -406,11 +418,16 @@ def main() -> int:
     parser.add_argument("--claim-set", choices=CLAIM_SETS, action="append")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--allow-unready", action="store_true")
+    parser.add_argument("--benchmark-mode", action="store_true")
     args = parser.parse_args()
 
     selected = tuple(args.claim_set or CLAIM_SETS)
     summaries = [
-        run_claim_set(claim_set, enforce_readiness=not args.allow_unready)
+        run_claim_set(
+            claim_set,
+            enforce_readiness=not args.allow_unready,
+            benchmark_mode=args.benchmark_mode,
+        )
         for claim_set in selected
     ]
     for summary in summaries:

@@ -88,7 +88,7 @@ def test_planner_builds_packet_for_bellman_claim(tmp_path: Path) -> None:
     assert "contraction_mapping" in selected_names
     assert any("beta" in default.lower() or "\\beta" in default for default in packet.textbook_defaults)
     assert packet.plan_paragraph
-    assert 4 <= len(packet.subgoals) <= 6
+    assert 1 <= len(packet.subgoals) <= 6
     assert packet.needs_review is True
     assert 0.0 <= packet.confidence <= 1.0
     assert 1 <= len(packet.few_shot_traces) <= 2
@@ -197,13 +197,13 @@ def test_planner_json_output_validation() -> None:
             }
         )
 
-    with pytest.raises(Exception):
-        PlannerLLMResponse.model_validate(
-            {
-                **valid_payload,
-                "subgoals": ["theorem only_one : True := by\n  sorry"],
-            }
-        )
+    one_subgoal = PlannerLLMResponse.model_validate(
+        {
+            **valid_payload,
+            "subgoals": ["theorem only_one : True := by\n  sorry"],
+        }
+    )
+    assert one_subgoal.subgoals == ["theorem only_one : True := by\n  sorry"]
 
     with pytest.raises(Exception):
         PlannerLLMResponse.model_validate(
@@ -290,8 +290,6 @@ def test_planner_user_prompt_includes_authoritative_theorem_stub(tmp_path: Path)
         ),
         "subgoals": [
             "theorem planner_stub_1 {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) : μ ∅ = 0 := by\n  sorry",
-            "theorem planner_stub_2 {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) : μ ∅ = 0 := by\n  sorry",
-            "theorem planner_stub_3 {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) : μ ∅ = 0 := by\n  sorry",
         ],
         "needs_review": False,
         "confidence": 0.9,
@@ -352,10 +350,11 @@ def test_hf_planner_driver_uses_chat_completion_and_normalizes_legacy_provider(m
             captured["model"] = model
             captured["provider"] = provider
 
-        def chat_completion(self, messages, max_tokens: int, temperature: float):
+        def chat_completion(self, messages, max_tokens: int, temperature: float, response_format):
             captured["messages"] = messages
             captured["max_tokens"] = max_tokens
             captured["temperature"] = temperature
+            captured["response_format"] = response_format
             return SimpleNamespace(
                 choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))],
                 usage=SimpleNamespace(prompt_tokens=111, completion_tokens=37),
@@ -382,3 +381,4 @@ def test_hf_planner_driver_uses_chat_completion_and_normalizes_legacy_provider(m
     assert metadata.output_tokens == 37
     assert captured["messages"][0]["role"] == "system"
     assert captured["messages"][1]["role"] == "user"
+    assert captured["response_format"]["type"] == "json_schema"

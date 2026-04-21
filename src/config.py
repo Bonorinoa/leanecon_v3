@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import json
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 APP_VERSION = "3.0.0-alpha"
 
@@ -18,6 +20,89 @@ BENCHMARK_BASELINE_DIR = PROJECT_ROOT / "benchmark_baselines" / "v3_alpha"
 CACHE_DIR = PROJECT_ROOT / ".cache"
 DB_PATH = CACHE_DIR / "jobs.db"
 MEMORY_DB_PATH = CACHE_DIR / "memory.db"
+
+_PLACEHOLDER_MARKERS = (
+    "replace-with",
+    "changeme",
+    "example",
+    "your-",
+    "<",
+    ">",
+)
+
+
+def _normalize_runtime_env(value: str | None) -> str:
+    cleaned = (value or "local").strip().lower()
+    return cleaned or "local"
+
+
+def load_runtime_env(*, env_path: Path | None = None) -> str:
+    """Load the repo `.env` before reading runtime configuration."""
+
+    resolved_path = env_path or (PROJECT_ROOT / ".env")
+    initial_mode = _normalize_runtime_env(os.environ.get("LEANECON_ENV"))
+    load_dotenv(resolved_path, override=initial_mode == "local")
+    return _normalize_runtime_env(os.environ.get("LEANECON_ENV", initial_mode))
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    normalized = value.strip().lower()
+    return any(marker in normalized for marker in _PLACEHOLDER_MARKERS)
+
+
+def _hf_token_invalid(value: str) -> bool:
+    stripped = value.strip()
+    return not stripped or _looks_like_placeholder(stripped) or not stripped.startswith("hf_")
+
+
+def _mistral_key_invalid(value: str) -> bool:
+    stripped = value.strip()
+    return not stripped or _looks_like_placeholder(stripped)
+
+
+def validate_runtime_secrets(
+    *,
+    runtime_env: str,
+    planner_backend: str,
+    planner_model: str,
+    prover_backend: str,
+    prover_provider: str,
+    formalizer_backend: str,
+    hf_token: str,
+    mistral_api_key: str,
+) -> None:
+    """Raise early for missing secrets in non-local environments."""
+
+    if runtime_env == "local":
+        return
+
+    failures: list[str] = []
+
+    if planner_backend in {"hf-structured", "minimax-m2.7", "trinity-large-thinking", "gemma-4-31b-it"}:
+        if _hf_token_invalid(hf_token):
+            failures.append(f"HF_TOKEN is required for planner backend `{planner_backend}` using model `{planner_model}`.")
+
+    prover_uses_hf = prover_backend == "goedel-prover-v2" or (
+        prover_backend == "leanstral" and prover_provider not in {"", "auto", "mistral"}
+    )
+    if prover_uses_hf and _hf_token_invalid(hf_token):
+        failures.append(f"HF_TOKEN is required for prover backend `{prover_backend}`.")
+
+    if formalizer_backend == "leanstral" and _mistral_key_invalid(mistral_api_key):
+        failures.append(f"MISTRAL_API_KEY is required for formalizer backend `{formalizer_backend}`.")
+
+    if prover_backend == "leanstral" and prover_provider in {"", "auto", "mistral"} and _mistral_key_invalid(mistral_api_key):
+        failures.append(f"MISTRAL_API_KEY is required for prover backend `{prover_backend}`.")
+
+    if failures:
+        joined = "\n- ".join(failures)
+        raise RuntimeError(
+            "Lean Econ configuration error: missing or invalid secrets for non-local mode.\n"
+            f"- {joined}"
+        )
+
+
+LEANECON_ENV = load_runtime_env()
 
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("PORT", os.getenv("API_PORT", "8000")))
@@ -35,8 +120,8 @@ MAX_SEARCH_TOOL_CALLS = int(os.getenv("MAX_SEARCH_TOOL_CALLS", "12"))
 JOB_TTL_SECONDS = int(os.getenv("JOB_TTL_SECONDS", "3600"))
 JOB_MAX_CONCURRENT = int(os.getenv("JOB_MAX_CONCURRENT", "2"))
 
-PLANNER_BACKEND = os.getenv("LEANECON_PLANNER_BACKEND", "minimax-m2.7")
-PLANNER_MODEL = os.getenv("LEANECON_PLANNER_MODEL", "MiniMaxAI/MiniMax-M2.7")
+PLANNER_BACKEND = os.getenv("LEANECON_PLANNER_BACKEND", "hf-structured")
+PLANNER_MODEL = os.getenv("LEANECON_PLANNER_MODEL", "OBLITERATUS/gemma-4-E4B-it-OBLITERATED")
 PLANNER_PROVIDER = os.getenv("LEANECON_PLANNER_PROVIDER", "auto").strip() or "auto"
 EMBEDDING_MODEL = os.getenv("LEANECON_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 FORMALIZER_BACKEND = os.getenv("LEANECON_FORMALIZER_BACKEND", "leanstral")
@@ -44,8 +129,8 @@ FORMALIZER_MODEL = os.getenv("LEANECON_FORMALIZER_MODEL", "labs-leanstral-2603")
 PROVER_BACKEND = os.getenv("LEANECON_PROVER_BACKEND", "leanstral").strip() or "leanstral"
 PROVER_MODEL = os.getenv("LEANECON_PROVER_MODEL", "hf:Goedel-LM/Goedel-Prover-V2-32B")
 PROVER_PROVIDER = os.getenv("LEANECON_PROVER_PROVIDER", "auto").strip() or "auto"
-HF_TOKEN = os.getenv("HF_TOKEN", "")
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
 MISTRAL_BASE_URL = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
 FORMALIZER_TIMEOUT = float(os.getenv("LEANECON_FORMALIZER_TIMEOUT", "120"))
 COST_TRACKING_ENABLED = os.getenv("LEANECON_COST_TRACKING_ENABLED", "true").lower() == "true"
@@ -56,6 +141,17 @@ try:
     PRICE_OVERRIDES = json.loads(PRICE_OVERRIDES_JSON_RAW) if PRICE_OVERRIDES_JSON_RAW.strip() else {}
 except json.JSONDecodeError:
     PRICE_OVERRIDES = {}
+
+validate_runtime_secrets(
+    runtime_env=LEANECON_ENV,
+    planner_backend=PLANNER_BACKEND,
+    planner_model=PLANNER_MODEL,
+    prover_backend=PROVER_BACKEND,
+    prover_provider=PROVER_PROVIDER,
+    formalizer_backend=FORMALIZER_BACKEND,
+    hf_token=HF_TOKEN,
+    mistral_api_key=MISTRAL_API_KEY,
+)
 
 JOB_STATES = {
     "queued",

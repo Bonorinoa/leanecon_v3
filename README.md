@@ -23,4 +23,4 @@ uvicorn src.api:app --host 0.0.0.0 --port 8000
 
 ## Benchmark Note
 
-`python -m evals.local_gate` runs the live local-gate workflow across `tier0_smoke`, `tier1_core`, and `tier2_frontier`. The hosted path now expects Hugging Face planner calls to go through routed chat-completion providers, while the default prover backend is Leanstral unless you explicitly provision a benchmark-ready Goedel endpoint.
+`python -m evals.local_gate` runs the live local-gate workflow across `tier0_smoke`, `tier1_core`, and `tier2_frontier`. Use `--benchmark-mode` to force the full Planner -> Formalizer -> Prover path with benchmark guardrails and explicit `verified_via` tagging.

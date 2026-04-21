@@ -18,11 +18,15 @@ def classify_exception(exc: BaseException) -> str:
         return "provider_http_error"
     if isinstance(exc, urllib_error.URLError):
         return "provider_unavailable"
+    if "api key" in message or "token" in message or "credential" in message:
+        return "auth"
+    if "auto-router" in message or "non-hugging face api key" in message:
+        return "auth"
     if "timeout" in message:
         return "timeout"
     if "schema" in message or "json" in message:
         return "schema_invalid"
-    if "provider" in message:
+    if "provider" in message or "connecterror" in message or "nodename nor servname" in message:
         return "provider_unavailable"
     if "lsp" in message:
         return "lsp_unavailable"

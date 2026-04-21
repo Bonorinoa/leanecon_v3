@@ -3,8 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from evals.local_gate import run_claim_set
-from src.formalizer import FormalizerGenerationResponse, FormalizerService, FormalizerSubgoal
+from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, ParseCheck
 from src.planner import PlannerLLMResponse, PlannerService
+from src.planner.retrieval import HashingTextEmbedder, PlannerRetrievalService
 from src.prover.models import ProverResult
 
 
@@ -26,22 +27,70 @@ class FakePlannerDriver:
         )
 
 
-class FakeFormalizerDriver:
-    def generate(self, **_: object) -> FormalizerGenerationResponse:
-        return FormalizerGenerationResponse(
-            theorem_name="local_gate_stub",
-            theorem_docstring="Deterministic theorem stub for benchmark tests.",
-            theorem_statement="True",
-            open_statements=[],
-            subgoals=[
-                FormalizerSubgoal(
-                    name="h_local_gate",
-                    statement="True",
-                    rationale="Synthetic subgoal for deterministic tests.",
-                )
-            ],
-            final_expression=None,
+class FakeFormalizerService:
+    def __init__(self) -> None:
+        self.backend = SimpleNamespace(name="leanstral", provider="mistral", model="labs-leanstral-2603")
+
+    def formalize_with_telemetry(
+        self,
+        claim: str,
+        *,
+        planner_packet,
+        theorem_stub,
+        preamble_names,
+        benchmark_mode,
+    ):
+        lean_code = theorem_stub or "import Mathlib\n\ntheorem local_gate_stub : True := by\n  sorry\n"
+        theorem_name = "local_gate_stub"
+        for line in lean_code.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("theorem "):
+                theorem_name = stripped.split()[1]
+                break
+        packet = FormalizationPacket.model_validate(
+            {
+                "claim": claim,
+                "lean_code": lean_code,
+                "theorem_with_sorry": lean_code,
+                "theorem_name": theorem_name,
+                "imports": ["Mathlib"],
+                "selected_imports": ["Mathlib"],
+                "open_statements": [],
+                "subgoals": [],
+                "selected_preamble": list(preamble_names or []),
+                "vacuity": {"is_vacuous": False},
+                "faithfulness": FaithfulnessAssessment(
+                    score=5.0,
+                    coverage=1.0,
+                    structural_isomorphism=1.0,
+                    primitive_faithfulness=1.0,
+                    claim_frame={},
+                    stub_frame={},
+                    needs_human_review=False,
+                    passes_gate=True,
+                    feedback=[],
+                ),
+                "parse_check": ParseCheck(success=True, exit_code=0, stdout="", stderr=""),
+                "review_state": "approved" if benchmark_mode else "awaiting_formalization_review",
+                "backend": "leanstral",
+                "provider": "mistral",
+                "model": "labs-leanstral-2603",
+            }
         )
+        usage_payload = {
+            "stage": "formalizer",
+            "provider": "mistral",
+            "model": "labs-leanstral-2603",
+            "input_tokens": 60,
+            "output_tokens": 20,
+            "estimated_cost_usd": 0.0,
+            "latency_ms": 10.0,
+            "success": True,
+            "usage_source": "provider",
+            "error_code": None,
+        }
+        usage = SimpleNamespace(latency_ms=10.0, to_dict=lambda: dict(usage_payload))
+        return SimpleNamespace(payload=packet, usage=usage)
 
 
 class FakeProver:
@@ -97,6 +146,13 @@ class FakeProver:
         )
 
 
+def _planner_service() -> PlannerService:
+    return PlannerService(
+        driver=FakePlannerDriver(),
+        retrieval_service=PlannerRetrievalService(embedder=HashingTextEmbedder()),
+    )
+
+
 def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
     import evals.local_gate as local_gate_module
 
@@ -105,10 +161,11 @@ def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
     fake_prover = FakeProver()
     summary = run_claim_set(
         "tier0_smoke",
-        planner_service=PlannerService(driver=FakePlannerDriver()),
-        formalizer_service=FormalizerService(mistral_driver=FakeFormalizerDriver()),
+        planner_service=_planner_service(),
+        formalizer_service=FakeFormalizerService(),
         prover_instance=fake_prover,
         enforce_readiness=False,
+        benchmark_mode=True,
     )
 
     assert summary["executed"] is True
@@ -116,15 +173,17 @@ def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
     assert summary["claims_total"] == 3
     assert summary["claims_passed"] == 3
     assert summary["claims_failed"] == 0
-    assert summary["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
+    assert summary["target_timeouts"] == {"theorem_body": 120, "subgoal": 120, "apollo_lemma": 120}
     assert summary["tokens_by_stage"]["prover"]["input_tokens"] == 360
     assert summary["cost_by_stage"]["prover"] == 0.36
     assert summary["cost_by_model"]["huggingface:Goedel-LM/Goedel-Prover-V2-32B"]["estimated_cost_usd"] == 0.36
     assert all(item["theorem_stub_reference"] is not None for item in summary["results"])
     assert all(item["benchmark_mode"] is True for item in summary["results"])
+    assert all(item["verified_via"] == "full_pipeline" for item in summary["results"])
     assert fake_prover.calls
     assert fake_prover.calls[0]["benchmark_mode"] is True
-    assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
+    assert fake_prover.calls[0]["timeout"] == 120
+    assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 120, "subgoal": 120, "apollo_lemma": 120}
 
 
 def test_local_gate_uses_trivial_shortcut_and_skips_pipeline(monkeypatch) -> None:
@@ -145,10 +204,11 @@ def test_local_gate_uses_trivial_shortcut_and_skips_pipeline(monkeypatch) -> Non
     fake_prover = FakeProver()
     summary = run_claim_set(
         "tier0_smoke",
-        planner_service=PlannerService(driver=FakePlannerDriver()),
-        formalizer_service=FormalizerService(mistral_driver=FakeFormalizerDriver()),
+        planner_service=_planner_service(),
+        formalizer_service=FakeFormalizerService(),
         prover_instance=fake_prover,
         enforce_readiness=False,
+        benchmark_mode=False,
     )
 
     shortcut_results = [item for item in summary["results"] if item.get("termination_reason") == "trivial_shortcut"]
@@ -158,5 +218,6 @@ def test_local_gate_uses_trivial_shortcut_and_skips_pipeline(monkeypatch) -> Non
         "tactic": "exact hspend",
     }
     assert shortcut_results[0]["status"] == "verified"
+    assert shortcut_results[0]["verified_via"] == "trivial_shortcut"
     assert shortcut_results[0]["usage_by_stage"] == {}
     assert len(fake_prover.calls) == summary["claims_total"] - 1

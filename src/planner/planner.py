@@ -47,31 +47,24 @@ class PlannerDriver(Protocol):
 class DriverRegistry:
     def __init__(self) -> None:
         self._backends = {
-            "minimax-m2.7": PlannerBackend(
-                "minimax-m2.7",
-                "MiniMaxAI/MiniMax-M2.7",
+            "hf-structured": PlannerBackend(
+                "hf-structured",
+                PLANNER_MODEL,
                 PLANNER_PROVIDER,
-                "Primary HILBERT planner backend.",
+                "Primary structured-output planner backend via Hugging Face Inference Providers.",
             ),
-            "trinity-large-thinking": PlannerBackend(
-                "trinity-large-thinking",
-                "arcee-ai/Trinity-Large-Thinking",
-                PLANNER_PROVIDER,
-                "Alternative reasoning-heavy planner backend.",
-            ),
-            "gemma-4-31b-it": PlannerBackend(
-                "gemma-4-31b-it",
-                "google/gemma-4-31B-it",
-                PLANNER_PROVIDER,
-                "Fallback open planner backend.",
-            ),
+        }
+        self._aliases = {
+            "minimax-m2.7": "hf-structured",
+            "trinity-large-thinking": "hf-structured",
+            "gemma-4-31b-it": "hf-structured",
         }
 
     def get(self, name: str) -> PlannerBackend:
-        return self._backends[name]
+        return self._backends[self._aliases.get(name, name)]
 
     def names(self) -> list[str]:
-        return sorted(self._backends)
+        return sorted({*self._backends, *self._aliases})
 
 
 def _extract_json_payload(raw_text: str) -> dict[str, object]:
@@ -95,6 +88,56 @@ def _unwrap_driver_response(
     if isinstance(value, tuple) and len(value) == 2 and isinstance(value[1], ProviderCallMetadata):
         return value[0], value[1]
     return value, None
+
+
+def _planner_response_format() -> dict[str, object]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "PlannerLLMResponse",
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "clarifying_questions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 3,
+                    },
+                    "textbook_defaults": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                    },
+                    "plan_paragraph": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                    "subgoals": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "maxItems": 6,
+                    },
+                    "needs_review": {"type": "boolean"},
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                    },
+                },
+                "required": [
+                    "clarifying_questions",
+                    "textbook_defaults",
+                    "plan_paragraph",
+                    "subgoals",
+                    "needs_review",
+                    "confidence",
+                ],
+            },
+            "strict": True,
+        },
+    }
 
 
 class HuggingFacePlannerDriver:
@@ -131,6 +174,7 @@ class HuggingFacePlannerDriver:
             messages,
             max_tokens=1200,
             temperature=0.2,
+            response_format=_planner_response_format(),
         )
         content = raw.choices[0].message.content
         if isinstance(content, list):
@@ -511,8 +555,6 @@ def _synthesize_subgoals(claim: str, context: PlannerContext) -> list[str]:
 
 
 def _subgoals_need_upgrade(subgoals: list[str]) -> bool:
-    if len(subgoals) < 4:
-        return True
     return any(
         _is_generic_subgoal(subgoal)
         or "theorem " not in subgoal

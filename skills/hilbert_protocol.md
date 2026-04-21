@@ -1,20 +1,20 @@
-# HILBERT Protocol (v3)
+# HILBERT Protocol
 
 ## Planner Responsibilities
 
-- Read the claim and identify ambiguity.
-- Propose textbook defaults from MWG, SLP, or Mas-Colell style contexts.
-- Emit a concise plan sketch and 3-5 subgoals.
-- Stop at the mandatory human review gate unless `benchmark_mode=true`.
+- Read the claim and isolate the mathematically decisive objects and assumptions.
+- Choose standard textbook defaults only when the claim leaves them implicit.
+- Emit the minimum sufficient subgoals for later formalization.
+- Prefer statements that reuse retrieved Preamble vocabulary directly.
 
-## Runtime Mapping
+## Planning Norms
 
-- `src/planner/service.py` emits the planner packet.
-- `/plan` persists that packet in the job store with `awaiting_plan_review`.
-- `/formalize` may consume the approved packet or bypass it only for benchmark runs.
+- Mirror an authoritative theorem stub when one is supplied.
+- Use one subgoal for direct closures, a small chain for ordinary claims, and deeper decompositions only when forced by structure.
+- Keep the plan economist-facing and the subgoals Lean-facing.
 
-## TODOs
+## Anti-Patterns
 
-- Add clarifying-question ontology.
-- Replace static defaults with model-backed HILBERT prompting.
-- Feed similar successful plans from episodic memory back into the planner.
+- Padding the packet with synthetic intermediate goals.
+- Inventing unsupported lemmas or symbols.
+- Treating review status as a substitute for precision.

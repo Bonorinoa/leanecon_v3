@@ -85,7 +85,7 @@ def build_system_prompt() -> str:
             "Do not emit `True`, `False`, tautologies, or generic filler subgoals unless the claim itself is trivial.",
             "Each subgoal must reference concrete imported identifiers, definitions, lemmas, or theorem templates from the selected Preamble context.",
             "When tactic hints are provided, use them in the subgoal rationale whenever they meaningfully suggest the local proof shape.",
-            "If the claim combines multiple economic concepts or multiple selected Preamble entries, emit 4 to 6 named subgoals.",
+            "Use the minimum sufficient number of named subgoals: 1 for direct closures, 2 to 4 for ordinary claims, and 5 to 6 only for genuine decomposition.",
             "Keep theorem statements faithful to the claim and Preamble concepts.",
             "",
             "Faithfulness rubric:",
@@ -104,8 +104,10 @@ def build_system_prompt() -> str:
 
 def _target_subgoal_range(context: FormalizerContext) -> str:
     if len(context.preamble_entries) >= 3 or len(context.planner_subgoals) >= 4:
-        return "Target 4 to 6 named subgoals for this claim."
-    return "Target 2 to 4 named subgoals unless the claim clearly decomposes further."
+        return "Target 2 to 4 named subgoals unless the claim clearly needs deeper decomposition."
+    if len(context.planner_subgoals) <= 1:
+        return "Target 1 to 2 named subgoals and mirror the authoritative stub when it is already direct."
+    return "Target 1 to 4 named subgoals unless the claim clearly decomposes further."
 
 
 def _identifier_inventory(context: FormalizerContext) -> list[str]:
@@ -202,7 +204,7 @@ def build_revision_user_prompt(
             "Revise conservatively:",
             "- Make the theorem statement narrower and closer to imported Preamble lemmas.",
             "- Replace any generic or tautological subgoals with explicit propositions mentioning imported identifiers.",
-            "- Prefer 4 to 6 named subgoals when the claim mixes Bellman, contraction, and value-function ideas.",
+            "- Prefer the minimum sufficient number of subgoals; do not pad the packet to hit an arbitrary count.",
             "- Use tactic hints in the rationale when they suggest the local proof route.",
             "",
             "Previous Lean stub:",

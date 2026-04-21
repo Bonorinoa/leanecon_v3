@@ -1,25 +1,19 @@
-# Semantic Faithfulness Rubric (v3)
+# Semantic Faithfulness Rubric
 
-## Current Runtime
+## What Matters
 
-`src/guardrails/semantic_frame.py` implements the bootstrap scorer.
+- Concept coverage: the formal stub should reflect the economic objects named in the claim.
+- Structural alignment: the stub should preserve the logical shape of the claim rather than replacing it with a nearby but easier theorem.
+- Primitive faithfulness: imported definitions and lemmas should match the intended mathematical content.
 
-Weighted dimensions:
+## Gate
 
-- Concept coverage: 30%
-- Structural isomorphism: 25%
-- Primitive faithfulness: 20%
-- Tactic alignment placeholder: 15%
-- Human review override: 10%
+- Reject tautological, vacuous, or concept-dropping rewrites.
+- Require human review when the formalization narrows or broadens the claim in a material way.
+- Auto-pass only when the stub is recognizably the same claim in Lean form.
 
-## Gate Policy
+## Anti-Patterns
 
-- `< 4.0`: reject
-- `4.0 - 4.49`: require human review
-- `>= 4.5`: passes automatic gate
-
-## TODOs For Grok/Feynman
-
-- Replace placeholder concept extraction with an econ ontology.
-- Upgrade quantifier and structural parsing from regex to Lean-aware structure.
-- Add reviewer override logging into episodic memory.
+- Replacing the claim with `True`, `False`, or a generic witness statement.
+- Smuggling in stronger assumptions not present in the claim or stub.
+- Using a proof-friendly surrogate theorem when the target theorem is already available.
