@@ -10,7 +10,7 @@
       "claims_total": 3,
       "cost_by_model": {
         "huggingface:MiniMaxAI/MiniMax-M2.7": {
-          "estimated_cost_usd": 2.35e-06,
+          "estimated_cost_usd": 2.45e-06,
           "model": "MiniMaxAI/MiniMax-M2.7",
           "provider": "huggingface"
         },
@@ -22,14 +22,13 @@
       },
       "cost_by_stage": {
         "formalizer": 0.0,
-        "planner": 2.35e-06,
-        "prover": 0.0
+        "planner": 2.45e-06
       },
       "executed": true,
       "failure_counts": {
         "schema_invalid": 1
       },
-      "generated_at": "2026-04-20T19:54:23.448409+00:00",
+      "generated_at": "2026-04-21T04:55:41.926369+00:00",
       "mode": "live_pipeline",
       "pass_at_1": 0.666667,
       "readiness": {
@@ -56,48 +55,36 @@
             "theorem_body": 300
           },
           "termination_reason": "verified",
-          "theorem_name": "formalizer_one_add_one_eq_two",
+          "theorem_name": "benchmark_one_plus_one",
           "theorem_stub_reference": "import Mathlib\n\ntheorem benchmark_one_plus_one : 1 + 1 = 2 := by\n  sorry\n",
           "timing_breakdown": {
-            "formalizer_ms": 11537.261083954945,
-            "planner_ms": 12486.701916204765,
-            "prover_ms": 50505.491,
-            "total_ms": 74529.454
+            "formalizer_ms": 28287.457291968167,
+            "planner_ms": 20971.999875037,
+            "prover_ms": 47440.053,
+            "total_ms": 96699.51
           },
           "usage_by_stage": {
             "formalizer": {
               "error_code": null,
               "estimated_cost_usd": 0.0,
-              "input_tokens": 11887,
-              "latency_ms": 11537.261,
+              "input_tokens": null,
+              "latency_ms": 28287.457,
               "model": "labs-leanstral-2603",
-              "output_tokens": 478,
+              "output_tokens": null,
               "provider": "mistral",
               "stage": "formalizer",
               "success": true,
-              "usage_source": "provider"
+              "usage_source": "estimated_chars"
             },
             "planner": {
               "error_code": null,
-              "estimated_cost_usd": 2.35e-06,
-              "input_tokens": 3826,
-              "latency_ms": 12486.702,
+              "estimated_cost_usd": 2.45e-06,
+              "input_tokens": 3927,
+              "latency_ms": 20972.0,
               "model": "MiniMaxAI/MiniMax-M2.7",
-              "output_tokens": 869,
+              "output_tokens": 972,
               "provider": "huggingface",
               "stage": "planner",
-              "success": true,
-              "usage_source": "provider"
-            },
-            "prover": {
-              "error_code": null,
-              "estimated_cost_usd": 0.0,
-              "input_tokens": 2433,
-              "latency_ms": 3657.423,
-              "model": "labs-leanstral-2603",
-              "output_tokens": 219,
-              "provider": "mistral",
-              "stage": "prover",
               "success": true,
               "usage_source": "provider"
             }
@@ -145,16 +132,16 @@
           "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Primitives.Measure\n\ntheorem benchmark_measure_empty\n    {\u03b1 : Type*} [MeasurableSpace \u03b1] (\u03bc : EconomicMeasure \u03b1) :\n    \u03bc \u2205 = 0 := by\n  sorry\n",
           "timing_breakdown": {
             "formalizer_ms": 0.0,
-            "planner_ms": 5159.15,
+            "planner_ms": 14226.945,
             "prover_ms": 0.0,
-            "total_ms": 5159.15
+            "total_ms": 14226.945
           },
           "usage_by_stage": {
             "planner": {
               "error_code": "schema_invalid",
               "estimated_cost_usd": 0.0,
               "input_tokens": null,
-              "latency_ms": 5159.15,
+              "latency_ms": 14226.945,
               "model": "MiniMaxAI/MiniMax-M2.7",
               "output_tokens": null,
               "provider": "huggingface",
@@ -172,16 +159,12 @@
       },
       "tokens_by_stage": {
         "formalizer": {
-          "input_tokens": 11887,
-          "output_tokens": 478
+          "input_tokens": 0,
+          "output_tokens": 0
         },
         "planner": {
-          "input_tokens": 3826,
-          "output_tokens": 869
-        },
-        "prover": {
-          "input_tokens": 2433,
-          "output_tokens": 219
+          "input_tokens": 3927,
+          "output_tokens": 972
         }
       }
     }
@@ -191,7 +174,7 @@
   "claims_total": 3,
   "cost_by_model": {
     "huggingface:MiniMaxAI/MiniMax-M2.7": {
-      "estimated_cost_usd": 2.35e-06,
+      "estimated_cost_usd": 2.45e-06,
       "model": "MiniMaxAI/MiniMax-M2.7",
       "provider": "huggingface"
     },
@@ -203,13 +186,12 @@
   },
   "cost_by_stage": {
     "formalizer": 0.0,
-    "planner": 2.35e-06,
-    "prover": 0.0
+    "planner": 2.45e-06
   },
   "failure_counts": {
     "schema_invalid": 1
   },
-  "generated_at": "2026-04-20T19:54:23.451421+00:00",
+  "generated_at": "2026-04-21T04:55:41.929344+00:00",
   "mode": "live_pipeline",
   "pass_at_1": 0.666667,
   "readiness": {
@@ -235,16 +217,12 @@
   },
   "tokens_by_stage": {
     "formalizer": {
-      "input_tokens": 11887,
-      "output_tokens": 478
+      "input_tokens": 0,
+      "output_tokens": 0
     },
     "planner": {
-      "input_tokens": 3826,
-      "output_tokens": 869
-    },
-    "prover": {
-      "input_tokens": 2433,
-      "output_tokens": 219
+      "input_tokens": 3927,
+      "output_tokens": 972
     }
   }
 }
