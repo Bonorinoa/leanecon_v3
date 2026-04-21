@@ -4,14 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import time
 from typing import Protocol
 
 from src.config import HF_TOKEN, PLANNER_BACKEND, PLANNER_MODEL, PLANNER_PROVIDER
+from src.observability.errors import classify_exception
 from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerContext, PlannerLLMResponse, PlannerPacket, slugify_claim
 from src.planner.prompts import build_system_prompt, build_user_prompt
 from src.planner.retrieval import PlannerRetrievalService, TextEmbedder, infer_structure_tags
 from src.providers import normalize_huggingface_provider
+
+
+PLANNER_RETRY_ATTEMPTS = 3
+PLANNER_RETRY_BACKOFF_SECONDS = (0.5, 1.0)
+PLANNER_RETRYABLE_ERROR_CODES = frozenset({"schema_invalid", "rate_limit", "provider_http_error", "provider_unavailable"})
 
 
 class PlannerDriverError(RuntimeError):
@@ -558,20 +565,27 @@ class Planner:
         self,
         claim: str,
         *,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
         benchmark_mode: bool = False,
     ) -> tuple[PlannerPacket, ProviderCallMetadata | None]:
         context = self.retrieval_service.build_context(claim)
-        response, metadata = _unwrap_driver_response(
-            self.driver.generate(
-                backend=self.backend,
-                system_prompt=self.system_prompt,
-                user_prompt=build_user_prompt(claim, context),
-            )
+        user_prompt = build_user_prompt(
+            claim,
+            context,
+            theorem_stub=theorem_stub,
+            preamble_names=preamble_names,
         )
-        upgraded_subgoals = _subgoals_need_upgrade(response.subgoals)
-        subgoals = _dedupe_subgoals(
-            _synthesize_subgoals(claim, context) if upgraded_subgoals else response.subgoals
-        )[:6]
+        response, metadata = self._generate_with_retry(user_prompt)
+        stub_authoritative = bool(theorem_stub and theorem_stub.strip())
+        if stub_authoritative:
+            subgoals = _dedupe_subgoals(response.subgoals)[:6]
+            upgraded_subgoals = False
+        else:
+            upgraded_subgoals = _subgoals_need_upgrade(response.subgoals)
+            subgoals = _dedupe_subgoals(
+                _synthesize_subgoals(claim, context) if upgraded_subgoals else response.subgoals
+            )[:6]
         return (
             PlannerPacket(
                 claim=claim,
@@ -590,6 +604,42 @@ class Planner:
             metadata,
         )
 
-    def build_plan(self, claim: str, *, benchmark_mode: bool = False) -> PlannerPacket:
-        packet, _ = self.build_plan_with_metadata(claim, benchmark_mode=benchmark_mode)
+    def _generate_with_retry(
+        self, user_prompt: str
+    ) -> tuple[PlannerLLMResponse, ProviderCallMetadata | None]:
+        last_error: Exception | None = None
+        for attempt in range(PLANNER_RETRY_ATTEMPTS):
+            try:
+                return _unwrap_driver_response(
+                    self.driver.generate(
+                        backend=self.backend,
+                        system_prompt=self.system_prompt,
+                        user_prompt=user_prompt,
+                    )
+                )
+            except Exception as exc:
+                last_error = exc
+                if classify_exception(exc) not in PLANNER_RETRYABLE_ERROR_CODES:
+                    raise
+                if attempt + 1 >= PLANNER_RETRY_ATTEMPTS:
+                    break
+                backoff = PLANNER_RETRY_BACKOFF_SECONDS[min(attempt, len(PLANNER_RETRY_BACKOFF_SECONDS) - 1)]
+                time.sleep(backoff)
+        assert last_error is not None
+        raise last_error
+
+    def build_plan(
+        self,
+        claim: str,
+        *,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
+        benchmark_mode: bool = False,
+    ) -> PlannerPacket:
+        packet, _ = self.build_plan_with_metadata(
+            claim,
+            theorem_stub=theorem_stub,
+            preamble_names=preamble_names,
+            benchmark_mode=benchmark_mode,
+        )
         return packet

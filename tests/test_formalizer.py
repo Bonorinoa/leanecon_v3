@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from src.formalizer import FormalizerGenerationResponse, FormalizerService, FormalizerSubgoal
+from src.formalizer.formalizer import (
+    FormalizerDriverError,
+    ParsedTheoremStub,
+    parse_theorem_stub,
+)
 from src.planner import PlannerPacket
 
 
@@ -222,6 +229,76 @@ def test_formalizer_revises_generic_output_into_specific_bellman_subgoals() -> N
     assert len(mistral_driver.calls) == 2
     assert "Revision request:" in str(mistral_driver.calls[1]["user_prompt"])
     assert "Target 4 to 6 named subgoals for this claim." in str(mistral_driver.calls[0]["user_prompt"])
+
+
+def test_parse_theorem_stub_extracts_imports_open_and_name() -> None:
+    stub = (
+        "import Mathlib\n"
+        "import LeanEcon.Preamble.Foundations.Primitives.Measure\n"
+        "open Classical\n"
+        "\n"
+        "theorem benchmark_measure_empty\n"
+        "    {α : Type*} [MeasurableSpace α] (μ : EconomicMeasure α) :\n"
+        "    μ ∅ = 0 := by\n"
+        "  sorry\n"
+    )
+    parsed = parse_theorem_stub(stub)
+    assert isinstance(parsed, ParsedTheoremStub)
+    assert parsed.theorem_name == "benchmark_measure_empty"
+    assert parsed.imports == [
+        "Mathlib",
+        "LeanEcon.Preamble.Foundations.Primitives.Measure",
+    ]
+    assert parsed.open_statements == ["Classical"]
+
+
+def test_parse_theorem_stub_rejects_malformed_input() -> None:
+    with pytest.raises(FormalizerDriverError):
+        parse_theorem_stub("")
+    with pytest.raises(FormalizerDriverError):
+        parse_theorem_stub("import Mathlib\n")
+    with pytest.raises(FormalizerDriverError):
+        parse_theorem_stub("theorem foo : True := sorry\n")
+
+
+def test_formalizer_stub_authoritative_skips_llm_and_preserves_stub() -> None:
+    class RejectingDriver:
+        calls: list[dict[str, object]] = []
+
+        def generate(self, **kwargs: object) -> object:
+            RejectingDriver.calls.append(kwargs)
+            raise AssertionError("Driver must not be called in stub-authoritative mode.")
+
+    mistral_driver = RejectingDriver()
+    service = FormalizerService(backend="leanstral", mistral_driver=mistral_driver)
+    stub = (
+        "import Mathlib\n"
+        "import LeanEcon.Preamble.Foundations.Primitives.Measure\n"
+        "\n"
+        "theorem benchmark_measure_empty\n"
+        "    {α : Type*} [MeasurableSpace α] (μ : EconomicMeasure α) :\n"
+        "    μ ∅ = 0 := by\n"
+        "  sorry\n"
+    )
+
+    packet = service.formalize(
+        "Under an economic measure, the impossible event has zero mass.",
+        theorem_stub=stub,
+        preamble_names=["measure"],
+        benchmark_mode=True,
+    )
+
+    assert packet.theorem_name == "benchmark_measure_empty"
+    assert packet.lean_code.strip() == stub.strip()
+    assert packet.subgoals == []
+    assert packet.imports == [
+        "Mathlib",
+        "LeanEcon.Preamble.Foundations.Primitives.Measure",
+    ]
+    assert packet.selected_preamble == ["measure"]
+    assert packet.faithfulness.passes_gate is True
+    assert packet.faithfulness.score == 5.0
+    assert RejectingDriver.calls == []
 
 
 def test_formalizer_routes_goedel_backend_to_huggingface() -> None:

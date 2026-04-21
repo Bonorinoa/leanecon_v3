@@ -54,6 +54,8 @@ class FormalizerService:
         claim: str,
         *,
         planner_packet: dict[str, Any] | None = None,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
         benchmark_mode: bool = False,
     ) -> StageRunResult[FormalizationPacket]:
         started_at = time.perf_counter()
@@ -61,6 +63,8 @@ class FormalizerService:
             packet, metadata = self._formalizer.formalize_with_metadata(
                 claim,
                 planner_packet=planner_packet,
+                theorem_stub=theorem_stub,
+                preamble_names=preamble_names,
                 benchmark_mode=benchmark_mode,
             )
         except Exception as exc:
@@ -142,11 +146,15 @@ class FormalizerService:
         claim: str,
         *,
         planner_packet: dict[str, Any] | None = None,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
         benchmark_mode: bool = False,
     ) -> FormalizationPacket:
         return self.formalize_with_telemetry(
             claim,
             planner_packet=planner_packet,
+            theorem_stub=theorem_stub,
+            preamble_names=preamble_names,
             benchmark_mode=benchmark_mode,
         ).payload
 

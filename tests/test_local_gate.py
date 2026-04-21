@@ -97,7 +97,11 @@ class FakeProver:
         )
 
 
-def test_local_gate_runs_live_pipeline_with_usage_summary() -> None:
+def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
+    import evals.local_gate as local_gate_module
+
+    monkeypatch.setattr(local_gate_module, "_try_claim_trivial_shortcut", lambda _stub: None)
+
     fake_prover = FakeProver()
     summary = run_claim_set(
         "tier0_smoke",
@@ -121,3 +125,38 @@ def test_local_gate_runs_live_pipeline_with_usage_summary() -> None:
     assert fake_prover.calls
     assert fake_prover.calls[0]["benchmark_mode"] is True
     assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
+
+
+def test_local_gate_uses_trivial_shortcut_and_skips_pipeline(monkeypatch) -> None:
+    import evals.local_gate as local_gate_module
+
+    def fake_shortcut(theorem_stub):
+        if theorem_stub and "hspend" in theorem_stub:
+            return {
+                "theorem_name": "benchmark_budget_constraint",
+                "hypothesis": "hspend",
+                "tactic": "exact hspend",
+                "verified_code": theorem_stub.replace("sorry", "exact hspend"),
+            }
+        return None
+
+    monkeypatch.setattr(local_gate_module, "_try_claim_trivial_shortcut", fake_shortcut)
+
+    fake_prover = FakeProver()
+    summary = run_claim_set(
+        "tier0_smoke",
+        planner_service=PlannerService(driver=FakePlannerDriver()),
+        formalizer_service=FormalizerService(mistral_driver=FakeFormalizerDriver()),
+        prover_instance=fake_prover,
+        enforce_readiness=False,
+    )
+
+    shortcut_results = [item for item in summary["results"] if item.get("termination_reason") == "trivial_shortcut"]
+    assert len(shortcut_results) == 1
+    assert shortcut_results[0]["trivial_shortcut"] == {
+        "hypothesis": "hspend",
+        "tactic": "exact hspend",
+    }
+    assert shortcut_results[0]["status"] == "verified"
+    assert shortcut_results[0]["usage_by_stage"] == {}
+    assert len(fake_prover.calls) == summary["claims_total"] - 1

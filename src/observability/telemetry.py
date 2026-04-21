@@ -133,6 +133,10 @@ def verification_outcome(
         return "verified"
     if normalized_reason in {"timeout", "timed_out"}:
         return "timeout"
+    if normalized_reason == "max_turns_exhausted":
+        return "max_turns_exhausted"
+    if normalized_reason == "repl_compile_disagreement":
+        return "repl_compile_disagreement"
     if normalized_reason in {"provider_budget_exhausted", "tool_budget_exhausted"}:
         return "budget_exhausted"
     if normalized_reason in {"faithfulness_failed", "faithfulness_check_failed"}:

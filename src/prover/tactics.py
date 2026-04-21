@@ -25,11 +25,37 @@ ALLOWED_TOOL_NAMES = frozenset(
 
 
 def direct_hypothesis_name(theorem_code: str) -> str | None:
-    goal_match = re.search(r":\s*\n\s*(.+?)\s*:=\s*by", theorem_code, re.DOTALL)
-    if goal_match is None:
+    # Locate the theorem signature up to `:= by` (handles both multi-line stubs
+    # and single-line formalizer output).
+    sig_match = re.search(
+        r"(?:theorem|lemma)\s+[A-Za-z0-9_']+(.*?):=\s*by",
+        theorem_code,
+        re.DOTALL,
+    )
+    if sig_match is None:
         return None
-    goal = " ".join(goal_match.group(1).split())
-    for match in re.finditer(r"\((?P<name>[A-Za-z0-9_']+)\s*:\s*(?P<body>[^)]*)\)", theorem_code):
+    signature = sig_match.group(1)
+    depth = 0
+    last_colon = -1
+    i = 0
+    while i < len(signature):
+        ch = signature[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == ":" and depth == 0:
+            # Skip `:=` that we might have captured partially.
+            if i + 1 < len(signature) and signature[i + 1] == "=":
+                i += 2
+                continue
+            last_colon = i
+        i += 1
+    if last_colon == -1:
+        return None
+    goal = " ".join(signature[last_colon + 1 :].split())
+    binders = signature[:last_colon]
+    for match in re.finditer(r"\((?P<name>[A-Za-z0-9_']+)\s*:\s*(?P<body>[^)]*)\)", binders):
         body = " ".join(match.group("body").split())
         if body == goal:
             return match.group("name")

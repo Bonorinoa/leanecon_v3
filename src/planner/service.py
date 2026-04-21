@@ -41,11 +41,18 @@ class PlannerService:
         self,
         claim: str,
         *,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
         benchmark_mode: bool = False,
     ) -> StageRunResult[PlannerPacket]:
         started_at = time.perf_counter()
         try:
-            packet, metadata = self._planner.build_plan_with_metadata(claim, benchmark_mode=benchmark_mode)
+            packet, metadata = self._planner.build_plan_with_metadata(
+                claim,
+                theorem_stub=theorem_stub,
+                preamble_names=preamble_names,
+                benchmark_mode=benchmark_mode,
+            )
         except Exception as exc:
             latency_ms = (time.perf_counter() - started_at) * 1000.0
             provider = getattr(self._planner.backend, "provider", "unknown")
@@ -120,8 +127,20 @@ class PlannerService:
         )
         return StageRunResult(payload=packet, usage=usage, audit_events=[audit])
 
-    def build_plan(self, claim: str, *, benchmark_mode: bool = False) -> PlannerPacket:
-        packet = self.build_plan_with_telemetry(claim, benchmark_mode=benchmark_mode).payload
+    def build_plan(
+        self,
+        claim: str,
+        *,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
+        benchmark_mode: bool = False,
+    ) -> PlannerPacket:
+        packet = self.build_plan_with_telemetry(
+            claim,
+            theorem_stub=theorem_stub,
+            preamble_names=preamble_names,
+            benchmark_mode=benchmark_mode,
+        ).payload
         return packet.model_copy(
             update={
                 "needs_review": not benchmark_mode,

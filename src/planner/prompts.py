@@ -22,8 +22,8 @@ def build_system_prompt() -> str:
             "Non-negotiable rules:",
             "- Emit strict JSON only. No Markdown fences and no extra commentary.",
             "- Ask at most 3 clarifying questions, and only when ambiguity materially affects formalization.",
-            "- Always emit textbook defaults, exactly 1 concise paragraph plan with LaTeX math, and 3 to 6 Lean 4 sorry subgoals.",
-            "- Prefer 4 to 6 subgoals when the claim naturally decomposes into operator setup, assumptions, core inequality, and conclusion steps.",
+            "- Always emit textbook defaults and exactly 1 concise paragraph plan with LaTeX math.",
+            "- Use the minimum number of subgoals the stub requires. If a single preamble lemma closes the stub, emit ONE subgoal that mirrors the stub conclusion and name the lemma. Only reach 4-6 subgoals when the claim genuinely decomposes into operator setup, assumptions, core inequality, and conclusion steps. If the goal is already present as a hypothesis, emit a single trivial step and do not fabricate intermediate subgoals.",
             "- Subgoals must be specific, theorem-shaped Lean statements that reference actual LeanEcon Preamble concepts when available. Avoid generic ': True' placeholders.",
             "- Emit a confidence score in [0.0, 1.0] for the overall plan.",
             "- Use retrieved Preamble concepts and verified memory traces as grounding; do not invent unsupported lemmas.",
@@ -36,7 +36,13 @@ def build_system_prompt() -> str:
     ).strip()
 
 
-def build_user_prompt(claim: str, context: PlannerContext) -> str:
+def build_user_prompt(
+    claim: str,
+    context: PlannerContext,
+    *,
+    theorem_stub: str | None = None,
+    preamble_names: list[str] | None = None,
+) -> str:
     """Build the user prompt with retrieval context and the JSON schema contract."""
 
     schema = PlannerLLMResponse.model_json_schema()
@@ -44,10 +50,29 @@ def build_user_prompt(claim: str, context: PlannerContext) -> str:
     selected_preamble = context.preamble_context or "No relevant Preamble context retrieved."
     memory_context = context.memory_context or "No verified memory traces retrieved."
 
-    return "\n".join(
+    sections: list[str] = [f"Claim: {claim}", ""]
+
+    if theorem_stub:
+        sections.extend(
+            [
+                "Authoritative Lean 4 theorem stub (treat as ground truth — plan toward closing THIS exact goal):",
+                "```lean",
+                theorem_stub.strip(),
+                "```",
+                "",
+            ]
+        )
+    if preamble_names:
+        sections.extend(
+            [
+                "Named preamble entries relevant to this claim:",
+                ", ".join(preamble_names),
+                "",
+            ]
+        )
+
+    sections.extend(
         [
-            f"Claim: {claim}",
-            "",
             "Retrieved Preamble context:",
             selected_preamble,
             "",
@@ -57,7 +82,8 @@ def build_user_prompt(claim: str, context: PlannerContext) -> str:
             "Output contract:",
             "- The response must be valid JSON matching the schema below.",
             "- `plan_paragraph` must be exactly one concise paragraph and must contain LaTeX math.",
-            "- `subgoals` must contain 3 to 6 Lean 4 theorem sorry statements.",
+            "- `subgoals`: emit the minimum number of subgoals needed to close the stub. If a preamble theorem already matches the stub, emit a single subgoal whose statement IS the stub conclusion, and note which preamble lemma closes it.",
+            "- Never fabricate subgoals the stub does not imply. Never rewrite the theorem signature — it is authoritative.",
             "- `subgoals` should mention retrieved Preamble concepts such as BellmanOperator, IsContraction, Function.IsFixedPt, ValueFunction, or other relevant LeanEcon symbols when supported by context.",
             "- `needs_review` should be true whenever ambiguity remains or human approval is still required.",
             "- `confidence` must be a float between 0.0 and 1.0.",
@@ -67,3 +93,4 @@ def build_user_prompt(claim: str, context: PlannerContext) -> str:
             schema_json,
         ]
     )
+    return "\n".join(sections)

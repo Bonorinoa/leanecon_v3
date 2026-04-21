@@ -66,6 +66,7 @@ class ProverTraceStep(ProverModel):
     code_snapshot: str = ""
     decomposition_theorem: str | None = None
     error_code: str | None = None
+    repl_local_solved: bool = False
 
 
 class ProverFailure(ProverModel):

@@ -9,6 +9,7 @@ import pytest
 from src.memory.models import ProofTrace
 from src.memory.store import ProofTraceStore
 from src.planner import HuggingFacePlannerDriver, PlannerBackend, PlannerLLMResponse, PlannerService
+from src.planner.planner import PlannerDriverError
 from src.planner.retrieval import HashingTextEmbedder, PlannerRetrievalService
 
 
@@ -211,6 +212,124 @@ def test_planner_json_output_validation() -> None:
                 "confidence": 1.4,
             }
         )
+
+
+def test_planner_retries_on_schema_invalid_before_succeeding(tmp_path: Path) -> None:
+    retrieval = PlannerRetrievalService(
+        embedder=HashingTextEmbedder(),
+        trace_store=_make_trace_store(tmp_path),
+    )
+    payload = {
+        "clarifying_questions": [],
+        "textbook_defaults": ["Assume MWG continuity and $\\beta \\in (0,1)$."],
+        "plan_paragraph": (
+            "Interpret the claim through the retrieved Bellman preamble and emit a single subgoal that mirrors the stub "
+            "while pointing at the named lemma $T$ as a contraction with $\\beta$."
+        ),
+        "subgoals": [
+            "theorem planner_retry_1 {S : Type*} (reward : S → ℝ) (transition : S → S) (β : ℝ) : ∃ T : (S → ℝ) → (S → ℝ), T = BellmanOperator reward transition β := by\n  sorry",
+            "theorem planner_retry_2 {V : Type*} [MetricSpace V] (T : V → V) : IsContraction T := by\n  sorry",
+            "theorem planner_retry_3 {V : Type*} [MetricSpace V] [CompleteSpace V] [Nonempty V] {K : NNReal} {T : V → V} (hT : ContractingWith K T) : ∃ x, Function.IsFixedPt T x := by\n  sorry",
+        ],
+        "needs_review": False,
+        "confidence": 0.88,
+    }
+
+    class FlakyDriver:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def generate(self, **_: object) -> PlannerLLMResponse:
+            self.call_count += 1
+            if self.call_count <= 2:
+                raise PlannerDriverError("Planner backend returned schema-invalid JSON: missing field 'plan_paragraph'")
+            return PlannerLLMResponse.model_validate(payload)
+
+    driver = FlakyDriver()
+    service = PlannerService(driver=driver, retrieval_service=retrieval)
+    packet = service.build_plan("Prove that the Bellman operator is a contraction", benchmark_mode=True)
+
+    assert driver.call_count == 3
+    assert packet.plan_paragraph.startswith("Interpret the claim")
+
+
+def test_planner_does_not_retry_on_unknown_errors(tmp_path: Path) -> None:
+    retrieval = PlannerRetrievalService(
+        embedder=HashingTextEmbedder(),
+        trace_store=_make_trace_store(tmp_path),
+    )
+
+    class HardFailDriver:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def generate(self, **_: object) -> PlannerLLMResponse:
+            self.call_count += 1
+            raise RuntimeError("unexpected non-retryable failure")
+
+    driver = HardFailDriver()
+    service = PlannerService(driver=driver, retrieval_service=retrieval)
+
+    with pytest.raises(RuntimeError, match="unexpected non-retryable failure"):
+        service.build_plan("Prove that the Bellman operator is a contraction")
+
+    assert driver.call_count == 1
+
+
+def test_planner_user_prompt_includes_authoritative_theorem_stub(tmp_path: Path) -> None:
+    retrieval = PlannerRetrievalService(
+        embedder=HashingTextEmbedder(),
+        trace_store=_make_trace_store(tmp_path),
+    )
+    payload = {
+        "clarifying_questions": [],
+        "textbook_defaults": ["Assume MWG continuity."],
+        "plan_paragraph": (
+            "Close the stub via the retrieved preamble lemma and cite the named entry so that the Lean target matches the "
+            "stub exactly, with no fabricated $\\beta$ assumptions."
+        ),
+        "subgoals": [
+            "theorem planner_stub_1 {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) : μ ∅ = 0 := by\n  sorry",
+            "theorem planner_stub_2 {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) : μ ∅ = 0 := by\n  sorry",
+            "theorem planner_stub_3 {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) : μ ∅ = 0 := by\n  sorry",
+        ],
+        "needs_review": False,
+        "confidence": 0.9,
+    }
+
+    class CapturingDriver:
+        def __init__(self) -> None:
+            self.captured: dict[str, object] = {}
+
+        def generate(self, **kwargs: object) -> PlannerLLMResponse:
+            self.captured.update(kwargs)
+            return PlannerLLMResponse.model_validate(payload)
+
+    driver = CapturingDriver()
+    service = PlannerService(driver=driver, retrieval_service=retrieval)
+
+    stub = (
+        "import Mathlib\n"
+        "open Classical\n\n"
+        "theorem benchmark_measure_empty {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) :\n"
+        "    μ ∅ = 0 := by sorry"
+    )
+    preamble_names = ["measure"]
+    packet = service.build_plan(
+        "Under an economic measure, the impossible event has zero mass.",
+        theorem_stub=stub,
+        preamble_names=preamble_names,
+        benchmark_mode=True,
+    )
+
+    user_prompt = driver.captured.get("user_prompt")
+    assert isinstance(user_prompt, str)
+    assert "Authoritative Lean 4 theorem stub" in user_prompt
+    assert "benchmark_measure_empty" in user_prompt
+    assert "μ ∅ = 0" in user_prompt
+    assert "Named preamble entries" in user_prompt
+    assert "measure" in user_prompt
+    assert packet.review_state == "approved"
 
 
 def test_hf_planner_driver_uses_chat_completion_and_normalizes_legacy_provider(monkeypatch) -> None:

@@ -159,7 +159,36 @@ async def test_prover_closes_simple_algebra_with_field_simp_and_ring(tmp_path, m
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
-    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+
+    def _driver_only_compile(code: str, **_: object) -> dict[str, object]:
+        has_sorry = "sorry" in code
+        if has_sorry:
+            return {
+                "success": False,
+                "has_sorry": True,
+                "axiom_warnings": [],
+                "output": "Proof contains `sorry`.",
+                "errors": ["Proof contains `sorry`."],
+                "warnings": [],
+                "stdout": "",
+                "stderr": "Proof contains `sorry`.",
+                "exit_code": 1,
+            }
+        success = "field_simp" in code and "ring" in code
+        errors = [] if success else ["unsolved proof"]
+        return {
+            "success": success,
+            "has_sorry": False,
+            "axiom_warnings": [],
+            "output": "\n".join(errors),
+            "errors": errors,
+            "warnings": [],
+            "stdout": "",
+            "stderr": "\n".join(errors),
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", _driver_only_compile)
     monkeypatch.setattr(
         prover_module,
         "lean_run_code",
@@ -211,6 +240,7 @@ async def test_prover_self_corrects_after_lean_feedback(tmp_path, monkeypatch) -
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
     monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
     monkeypatch.setattr(
         prover_module,
         "lean_run_code",
@@ -387,6 +417,7 @@ async def test_prover_uses_apollo_decomposition_for_stalled_target(tmp_path, mon
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
     monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
     monkeypatch.setattr(
         prover_module,
         "lean_run_code",
@@ -440,6 +471,7 @@ async def test_prover_decomposition_rewrites_subgoal_after_repl_materialization(
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
     monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
     monkeypatch.setattr(
         prover_module,
         "lean_run_code",
@@ -505,6 +537,7 @@ async def test_prover_supports_lsp_tools_via_client(tmp_path, monkeypatch) -> No
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
     monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
     monkeypatch.setattr(
         prover_module,
         "lean_run_code",
@@ -558,3 +591,247 @@ async def test_prover_supports_lsp_tools_via_client(tmp_path, monkeypatch) -> No
     assert result.trace[0].tool_name == "lean_goal"
     assert '"goals": ["\\u22a2 True"]' in result.trace[0].tool_result
     assert result.usage_by_stage["prover"]["stage"] == "prover"
+
+
+@pytest.mark.anyio
+async def test_prover_uses_trivial_shortcut_when_goal_matches_hypothesis(
+    tmp_path, monkeypatch
+) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+
+    def fake_compile(code: str, **_: object) -> dict[str, object]:
+        success = "exact hspend" in code and "sorry" not in code
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    huggingface_driver = ScriptedDriver({})
+    mistral_driver = ScriptedDriver({})
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=huggingface_driver,
+        mistral_driver=mistral_driver,
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    lean_code = (
+        "import Mathlib\n\n"
+        "theorem benchmark_budget_constraint\n"
+        "    (m p1 p2 x1 x2 : \u211d)\n"
+        "    (hm : m > 0) (hp1 : p1 > 0) (hp2 : p2 > 0)\n"
+        "    (hspend : p1 * x1 + p2 * x2 = m) :\n"
+        "    p1 * x1 + p2 * x2 = m := by\n"
+        "  sorry\n"
+    )
+    result = await prover.prove(
+        _packet(
+            theorem_name="benchmark_budget_constraint",
+            claim="Goal literally matches the `hspend` hypothesis.",
+            lean_code=lean_code,
+        ),
+        "job_trivial_shortcut",
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "exact hspend" in result.verified_code
+    assert any(step.action_type == "trivial_shortcut" for step in result.trace)
+    assert all(step.action_type == "trivial_shortcut" for step in result.trace)
+
+
+@pytest.mark.anyio
+async def test_prover_shortcut_falls_back_to_exact_question_mark(
+    tmp_path, monkeypatch
+) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+
+    def fake_compile(code: str, **_: object) -> dict[str, object]:
+        success = "exact?" in code and "sorry" not in code
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver({}),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    lean_code = (
+        "import Mathlib\n\n"
+        "theorem benchmark_measure_empty {\u03b1 : Type*} [MeasurableSpace \u03b1]\n"
+        "    (\u03bc : MeasureTheory.Measure \u03b1) :\n"
+        "    \u03bc \u2205 = 0 := by\n"
+        "  sorry\n"
+    )
+    result = await prover.prove(
+        _packet(
+            theorem_name="benchmark_measure_empty",
+            claim="Empty event has zero measure.",
+            lean_code=lean_code,
+        ),
+        "job_exact_question_mark",
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "exact?" in result.verified_code
+    shortcut_steps = [step for step in result.trace if step.action_type == "trivial_shortcut"]
+    assert shortcut_steps
+    assert "exact?" in shortcut_steps[0].tool_result
+
+
+@pytest.mark.anyio
+async def test_prover_detects_repl_compile_disagreement(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    class LoopReplSession(FakeReplSession):
+        def apply_tactic(self, tactic: str, timeout=None):
+            self.tactics.append(tactic)
+            return SimpleNamespace(
+                has_errors=lambda: False,
+                goals=[],
+                proof_status="Completed",
+                proof_state=len(self.tactics) + 1,
+            )
+
+        def materialize_proof(self):
+            return self.code
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", LoopReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "First linarith attempt.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "linarith"}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Second linarith attempt after compile still fails.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "linarith"}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Third linarith attempt to trigger disagreement detection.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "linarith"}},
+                    },
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="disagreement_claim",
+            claim="REPL reports solved but compile never does.",
+            lean_code="import Mathlib\n\ntheorem disagreement_claim : True := by\n  sorry\n",
+        ),
+        "job_repl_compile_disagreement",
+        max_turns=5,
+    )
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.error_code == "repl_compile_disagreement"
+    assert result.failure.reason == "repl_compile_disagreement"
+    assert any(step.repl_local_solved for step in result.trace)
+
+
+@pytest.mark.anyio
+async def test_prover_preserves_max_turns_exhausted_error_code(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Keep trying a tactic that never closes the goal.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "simp"}},
+                    }
+                ]
+                * 6,
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="max_turns_claim",
+            claim="A claim that exhausts the turn budget.",
+            lean_code="import Mathlib\n\ntheorem max_turns_claim : True := by\n  sorry\n",
+        ),
+        "job_max_turns",
+        max_turns=3,
+    )
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.error_code == "max_turns_exhausted"
+    assert result.termination_reason == "max_turns_exhausted"

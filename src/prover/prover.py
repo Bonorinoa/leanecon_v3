@@ -41,6 +41,7 @@ from src.prover.models import (
     ProverTraceStep,
 )
 from src.prover.tactics import (
+    direct_hypothesis_name,
     failure_feedback_messages,
     repeated_noop_action,
     should_decompose,
@@ -49,6 +50,19 @@ from src.prover.tactics import (
 )
 from src.providers import normalize_huggingface_provider
 from src.tools import ToolCall, ToolRegistry, ToolResult, build_default_registry
+
+
+SHORTCUT_ATTEMPT_TIMEOUT_SECONDS = 60
+
+SHORTCUT_FALLBACK_TACTICS: tuple[tuple[str, str], ...] = (
+    ("assumption", "Goal matches a local hypothesis; closing via `assumption`."),
+    ("rfl", "Goal closes by definitional reflexivity."),
+    ("exact?", "Library search closed the goal via `exact?`."),
+    ("decide", "Goal is decidable; closing via `decide`."),
+    ("norm_num", "Numerical goal closes via `norm_num`."),
+    ("simp", "Goal closes after `simp` normalization."),
+    ("linarith", "Linear-arithmetic closure via `linarith`."),
+)
 
 
 class ProverDriverError(RuntimeError):
@@ -562,7 +576,53 @@ class Prover:
         try:
             failure: ProverFailure | None = None
 
-            for index, target in enumerate(targets, start=1):
+            shortcut = self._try_trivial_shortcut(
+                packet=packet,
+                current_code=working_code,
+                timeout=self._timeout_for_target(targets[-1], resolved_target_timeouts),
+            )
+            if shortcut is not None:
+                working_code = shortcut["code"]
+                for target in targets:
+                    target.status = "proved"
+                if not attempted_backends:
+                    attempted_backends.append(self.primary_backend.name)
+                shortcut_rationale = shortcut.get("rationale") or (
+                    f"Closed via `{shortcut['tactic']}`."
+                )
+                trace.append(
+                    ProverTraceStep(
+                        turn=1,
+                        backend=self.primary_backend.name,
+                        target_name="theorem_body",
+                        action_type="trivial_shortcut",
+                        success=True,
+                        rationale=shortcut_rationale,
+                        tool_name="compile_check",
+                        tool_result=f"All goals solved via shortcut tactic `{shortcut['tactic']}`.",
+                        code_snapshot=working_code,
+                    )
+                )
+                audit_events.append(
+                    AuditEvent(
+                        stage="prover",
+                        event_type="trivial_shortcut",
+                        provider=self.primary_backend.provider,
+                        model=self.primary_backend.model,
+                        success=True,
+                        metadata={
+                            "hypothesis": shortcut["hypothesis"],
+                            "tactic": shortcut["tactic"],
+                            "targets_skipped": len(targets),
+                        },
+                    )
+                )
+                self.file_controller.write_current_code(job_id, working_code)
+                targets_to_iterate: list[ProverTarget] = []
+            else:
+                targets_to_iterate = targets
+
+            for index, target in enumerate(targets_to_iterate, start=1):
                 target.status = "in_progress"
                 target_timeout = self._timeout_for_target(target, resolved_target_timeouts)
                 if target.kind == "subgoal":
@@ -796,6 +856,17 @@ class Prover:
                 if compile_result["success"] and (not session.active_repl or not goals):
                     return True, current_code, None
 
+                if not compile_result["success"]:
+                    disagreement_fail = self._detect_repl_compile_disagreement(
+                        trace=trace,
+                        target=target,
+                        turn=turn,
+                        backend=active_backend,
+                        lean_feedback=lean_feedback,
+                    )
+                    if disagreement_fail is not None:
+                        return False, session.read_code(), disagreement_fail
+
                 prompt = _build_prompt(
                     packet=packet,
                     target=target,
@@ -1023,6 +1094,11 @@ class Prover:
                     goals=session.get_goals(),
                     code_snapshot=session.read_code(),
                     error_code=self._tool_error_code(action.tool.name, tool_result.content) if tool_result.is_error else None,
+                    repl_local_solved=(
+                        action.tool.name == "apply_tactic"
+                        and not tool_result.is_error
+                        and bool(session.solved)
+                    ),
                 )
                 trace.append(step)
                 audit_events.append(
@@ -1050,7 +1126,7 @@ class Prover:
             return False, session.read_code(), ProverFailure(
                 reason="max_turns_exhausted",
                 message="Prover hit the configured maximum number of turns.",
-                error_code="timeout",
+                error_code="max_turns_exhausted",
                 target_name=target.name,
                 turn=max_turns,
                 backend=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
@@ -1158,6 +1234,43 @@ class Prover:
         )
         return targets
 
+    def _try_trivial_shortcut(
+        self,
+        *,
+        packet: FormalizationPacket,
+        current_code: str,
+        timeout: int,
+    ) -> dict[str, Any] | None:
+        attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
+        candidates: list[tuple[str, str]] = []
+        hypothesis = direct_hypothesis_name(current_code)
+        if hypothesis:
+            candidates.append(
+                (f"exact {hypothesis}", f"Goal matches hypothesis `{hypothesis}`")
+            )
+        for tactic, rationale in SHORTCUT_FALLBACK_TACTICS:
+            candidates.append((tactic, rationale))
+
+        for tactic, rationale in candidates:
+            try:
+                candidate_code = _replace_named_theorem_body(
+                    current_code, packet.theorem_name, tactic
+                )
+            except ValueError:
+                return None
+            try:
+                result = compile_check(candidate_code, timeout=attempt_timeout)
+            except Exception:
+                continue
+            if result.get("success"):
+                return {
+                    "code": candidate_code,
+                    "tactic": tactic,
+                    "hypothesis": hypothesis or "library",
+                    "rationale": rationale,
+                }
+        return None
+
     def _resolve_target_timeouts(
         self,
         *,
@@ -1223,6 +1336,42 @@ class Prover:
             "failure_counts": failure_counts,
             "events": [event.to_dict() for event in audit_events],
         }
+
+    def _detect_repl_compile_disagreement(
+        self,
+        *,
+        trace: list[ProverTraceStep],
+        target: ProverTarget,
+        turn: int,
+        backend: ProverBackend,
+        lean_feedback: list[str],
+    ) -> ProverFailure | None:
+        relevant = [
+            step
+            for step in trace
+            if step.target_name == target.name
+            and step.tool_name == "apply_tactic"
+            and step.repl_local_solved
+        ]
+        if len(relevant) < 2:
+            return None
+        last_two = relevant[-2:]
+        tactics = [str(step.tool_arguments.get("tactic") or "") for step in last_two]
+        if not tactics[0] or tactics[0] != tactics[1]:
+            return None
+        return ProverFailure(
+            reason="repl_compile_disagreement",
+            message=(
+                f"REPL reported tactic `{tactics[0]}` closed the goal on two consecutive "
+                "turns, but the global compile still fails. The local proof does not "
+                "integrate with the surrounding theorem context."
+            ),
+            error_code="repl_compile_disagreement",
+            target_name=target.name,
+            turn=turn,
+            backend=backend.name,
+            lean_feedback=lean_feedback,
+        )
 
     def _tool_error_code(self, tool_name: str, content: str) -> str | None:
         lowered = content.lower()

@@ -85,6 +85,46 @@ class DriverRegistry:
         return sorted(self._backends)
 
 
+_STUB_THEOREM_HEAD_RE = re.compile(r"(?:theorem|lemma)\s+([A-Za-z0-9_']+)", re.MULTILINE)
+_STUB_IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z0-9_.]+)\s*$", re.MULTILINE)
+_STUB_OPEN_RE = re.compile(r"^\s*open\s+(.+?)\s*$", re.MULTILINE)
+
+
+@dataclass(frozen=True)
+class ParsedTheoremStub:
+    prelude: str
+    theorem_name: str
+    imports: list[str]
+    open_statements: list[str]
+    raw: str
+
+
+def parse_theorem_stub(theorem_stub: str) -> ParsedTheoremStub:
+    """Parse an authoritative Lean theorem stub into its structural components.
+
+    Raises FormalizerDriverError if the stub is not well-formed (missing
+    `theorem`/`lemma` head or `:= by` body placeholder).
+    """
+    if not theorem_stub or not theorem_stub.strip():
+        raise FormalizerDriverError("Authoritative theorem_stub is empty.")
+    if ":= by" not in theorem_stub:
+        raise FormalizerDriverError("Authoritative theorem_stub does not contain `:= by` body placeholder.")
+    head_match = _STUB_THEOREM_HEAD_RE.search(theorem_stub)
+    if head_match is None:
+        raise FormalizerDriverError("Authoritative theorem_stub does not contain a theorem declaration.")
+    theorem_start = head_match.start()
+    prelude = theorem_stub[:theorem_start]
+    imports = [match.group(1).strip() for match in _STUB_IMPORT_RE.finditer(prelude)]
+    open_statements = [match.group(1).strip() for match in _STUB_OPEN_RE.finditer(prelude)]
+    return ParsedTheoremStub(
+        prelude=prelude,
+        theorem_name=head_match.group(1),
+        imports=imports,
+        open_statements=open_statements,
+        raw=theorem_stub,
+    )
+
+
 def _extract_json_payload(raw_text: str) -> dict[str, object]:
     stripped = raw_text.strip()
     start = stripped.find("{")
@@ -381,8 +421,18 @@ class Formalizer:
         claim: str,
         *,
         planner_packet: dict[str, Any] | None = None,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
         benchmark_mode: bool = False,
     ) -> tuple[FormalizationPacket, ProviderCallMetadata | None]:
+        if theorem_stub and theorem_stub.strip():
+            return self._formalize_from_stub(
+                claim=claim,
+                theorem_stub=theorem_stub,
+                preamble_names=preamble_names or [],
+                planner_packet=planner_packet,
+                benchmark_mode=benchmark_mode,
+            )
         validated_packet = PlannerPacket.model_validate(planner_packet) if planner_packet else None
         built = self.context_builder.build(claim, validated_packet)
         response, metadata = _unwrap_driver_response(
@@ -438,14 +488,74 @@ class Formalizer:
         claim: str,
         *,
         planner_packet: dict[str, Any] | None = None,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
         benchmark_mode: bool = False,
     ) -> FormalizationPacket:
         packet, _ = self.formalize_with_metadata(
             claim,
             planner_packet=planner_packet,
+            theorem_stub=theorem_stub,
+            preamble_names=preamble_names,
             benchmark_mode=benchmark_mode,
         )
         return packet
+
+    def _formalize_from_stub(
+        self,
+        *,
+        claim: str,
+        theorem_stub: str,
+        preamble_names: list[str],
+        planner_packet: dict[str, Any] | None,
+        benchmark_mode: bool,
+    ) -> tuple[FormalizationPacket, ProviderCallMetadata | None]:
+        """Stub-authoritative formalization: no LLM, treat the stub as truth."""
+        parsed = parse_theorem_stub(theorem_stub)
+        lean_code = theorem_stub if theorem_stub.endswith("\n") else theorem_stub + "\n"
+        parse_result = lean_run_code(lean_code, filename=f"{parsed.theorem_name}.lean")
+        parse_check = ParseCheck(
+            success=bool(parse_result.get("success")),
+            exit_code=int(parse_result.get("exit_code", -1)),
+            stdout=str(parse_result.get("stdout", "")),
+            stderr=str(parse_result.get("stderr", "")),
+        )
+        vacuity = vacuity_report(lean_code)
+        faithfulness = FaithfulnessAssessment.model_validate(
+            {
+                "score": 5.0,
+                "coverage": 1.0,
+                "structural_isomorphism": 1.0,
+                "primitive_faithfulness": 1.0,
+                "claim_frame": {"concepts": []},
+                "stub_frame": {"concepts": []},
+                "needs_human_review": False,
+                "passes_gate": True,
+                "feedback": [
+                    "Authoritative theorem stub supplied; formalizer did not regenerate the statement.",
+                ],
+            }
+        )
+        review_state = "approved" if benchmark_mode else "awaiting_formalization_review"
+        packet = FormalizationPacket(
+            claim=claim,
+            lean_code=lean_code,
+            theorem_with_sorry=lean_code,
+            theorem_name=parsed.theorem_name,
+            imports=list(parsed.imports),
+            selected_imports=list(parsed.imports),
+            open_statements=list(parsed.open_statements),
+            subgoals=[],
+            selected_preamble=list(preamble_names),
+            vacuity=vacuity,
+            faithfulness=faithfulness,
+            parse_check=parse_check,
+            review_state=review_state,
+            backend=self.backend.name,
+            provider=self.backend.provider,
+            model=self._model_name(),
+        )
+        return packet, None
 
     def _revise_if_needed(
         self,
