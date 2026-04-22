@@ -9,7 +9,7 @@ from pathlib import Path
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from src.config import (
     BENCHMARK_MAX_RECURSION_DEPTH,
@@ -399,7 +399,9 @@ def _build_prompt(
     goals: list[str],
     prior_trace: list[ProverTraceStep],
     examples: list[dict[str, Any]],
+    turn_hints: list[str] | None = None,
 ) -> str:
+    preferred_tactics = list(dict.fromkeys([*(turn_hints or []), *suggest_fast_path_tactics(current_code)]))
     recent_steps = [
         {
             "turn": step.turn,
@@ -426,7 +428,7 @@ def _build_prompt(
         "instructions": {
             "return_json_only": True,
             "action_type": ["tool", "decompose", "finish"],
-            "preferred_tactics": suggest_fast_path_tactics(current_code),
+            "preferred_tactics": preferred_tactics,
             "rules": [
                 "All Lean actions must go through a registered tool.",
                 "Prefer apply_tactic before rewriting full code.",
@@ -454,6 +456,7 @@ class _ActiveProofSession:
     timeout: int
     repl: Any = None
     proof_path: Path | None = None
+    materialize_code: Callable[[str], str] | None = None
     active_repl: bool = False
     goals: list[str] | None = None
     solved: bool = False
@@ -494,7 +497,8 @@ class _ActiveProofSession:
                 if getattr(message, "data", "")
             ]
             return False, "\n".join(errors) if errors else f"Tactic failed: {tactic}"
-        self.code = self.repl.materialize_proof()
+        materialized = self.repl.materialize_proof()
+        self.code = self.materialize_code(materialized) if self.materialize_code is not None else materialized
         if self.proof_path is not None:
             self.proof_path.write_text(self.code, encoding="utf-8")
         self.goals = list(getattr(response, "goals", []) or [])
@@ -850,10 +854,12 @@ class Prover:
             current_code,
             timeout,
             proof_path=self.file_controller.proof_path(job_id),
+            materialize_code=lambda code: self.file_controller.build_final_code(job_id, code),
         )
         failed_turns = 0
         invalid_output_count = 0
         active_backend = self.primary_backend
+        soft_repair_used = False
 
         try:
             for turn in range(1, max_turns + 1):
@@ -875,15 +881,47 @@ class Prover:
                     return True, current_code, None
 
                 if not compile_result["success"]:
-                    disagreement_fail = self._detect_repl_compile_disagreement(
-                        trace=trace,
-                        target=target,
-                        turn=turn,
-                        backend=active_backend,
-                        lean_feedback=lean_feedback,
-                    )
-                    if disagreement_fail is not None:
-                        return False, session.read_code(), disagreement_fail
+                    repeated_solved = self._repeated_solved_repl_tactic(trace=trace, target=target)
+                    if repeated_solved:
+                        if soft_repair_used:
+                            disagreement_fail = self._detect_repl_compile_disagreement(
+                                trace=trace,
+                                target=target,
+                                turn=turn,
+                                backend=active_backend,
+                                lean_feedback=lean_feedback,
+                            )
+                            if disagreement_fail is not None:
+                                return False, session.read_code(), disagreement_fail
+                        else:
+                            repaired_code = session.read_code()
+                            if repeated_solved.startswith("exact "):
+                                repaired_code = _replace_named_theorem_body(
+                                    repaired_code,
+                                    self._target_theorem_name(packet, target),
+                                    repeated_solved,
+                                )
+                            repaired_code = self.file_controller.build_final_code(job_id, repaired_code)
+                            session.write_code(repaired_code)
+                            soft_repair_used = True
+                            trace.append(
+                                ProverTraceStep(
+                                    turn=turn,
+                                    backend=active_backend.name,
+                                    target_name=target.name,
+                                    action_type="repl_compile_soft_repair",
+                                    success=True,
+                                    rationale="Rebuild the theorem context before treating the disagreement as fatal.",
+                                    tool_name="apply_tactic",
+                                    tool_arguments={"tactic": repeated_solved},
+                                    tool_result=f"Soft-repaired REPL/global compile disagreement after `{repeated_solved}`.",
+                                    lean_feedback=lean_feedback,
+                                    goals=goals,
+                                    code_snapshot=session.read_code(),
+                                )
+                            )
+                            failed_turns = 0
+                            continue
 
                 prompt = _build_prompt(
                     packet=packet,
@@ -901,6 +939,7 @@ class Prover:
                     goals=goals,
                     prior_trace=trace,
                     examples=self._memory_examples(packet),
+                    turn_hints=self._first_turn_hints(packet) if turn == 1 else None,
                 )
 
                 try:
@@ -1246,6 +1285,43 @@ class Prover:
             for trace in examples
         ]
 
+    def _first_turn_hints(self, packet: FormalizationPacket) -> list[str]:
+        from src.planner.retrieval import _entry_tactic_hints, _load_metadata
+        from src.preamble_library import PREAMBLE_LIBRARY
+
+        hints: list[str] = []
+        for name in ("fixed_point_theorem", "value_function"):
+            if name not in packet.selected_preamble:
+                continue
+            entry = PREAMBLE_LIBRARY.get(name)
+            if entry is None:
+                continue
+            for hint in _entry_tactic_hints(entry, _load_metadata(entry)):
+                if hint not in hints:
+                    hints.append(hint)
+        return hints
+
+    def _target_theorem_name(self, packet: FormalizationPacket, target: ProverTarget) -> str:
+        return packet.theorem_name if target.kind == "theorem_body" else target.helper_theorem_name or target.name
+
+    def _repeated_solved_repl_tactic(
+        self,
+        *,
+        trace: list[ProverTraceStep],
+        target: ProverTarget,
+    ) -> str | None:
+        relevant = [
+            step
+            for step in trace
+            if step.target_name == target.name
+            and step.tool_name == "apply_tactic"
+            and step.repl_local_solved
+        ]
+        if len(relevant) < 2:
+            return None
+        tactics = [str(step.tool_arguments.get("tactic") or "") for step in relevant[-2:]]
+        return tactics[0] if tactics[0] and tactics[0] == tactics[1] else None
+
     def _build_targets(self, packet: FormalizationPacket) -> list[ProverTarget]:
         targets = [
             ProverTarget(name=subgoal.name, statement=subgoal.statement, kind="subgoal")
@@ -1368,23 +1444,13 @@ class Prover:
         backend: ProverBackend,
         lean_feedback: list[str],
     ) -> ProverFailure | None:
-        relevant = [
-            step
-            for step in trace
-            if step.target_name == target.name
-            and step.tool_name == "apply_tactic"
-            and step.repl_local_solved
-        ]
-        if len(relevant) < 2:
-            return None
-        last_two = relevant[-2:]
-        tactics = [str(step.tool_arguments.get("tactic") or "") for step in last_two]
-        if not tactics[0] or tactics[0] != tactics[1]:
+        tactic = self._repeated_solved_repl_tactic(trace=trace, target=target)
+        if tactic is None:
             return None
         return ProverFailure(
             reason="repl_compile_disagreement",
             message=(
-                f"REPL reported tactic `{tactics[0]}` closed the goal on two consecutive "
+                f"REPL reported tactic `{tactic}` closed the goal on two consecutive "
                 "turns, but the global compile still fails. The local proof does not "
                 "integrate with the surrounding theorem context."
             ),

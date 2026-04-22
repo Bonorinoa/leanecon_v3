@@ -30,6 +30,13 @@ def _tokenize(text: str) -> list[str]:
     return [_normalize_token(token) for token in re.findall(r"[A-Za-z0-9_'-]+", text.lower()) if _normalize_token(token)]
 
 
+def _query_text(claim: str, theorem_stub: str | None = None) -> str:
+    parts = [claim.strip()]
+    if theorem_stub and theorem_stub.strip():
+        parts.append(theorem_stub.strip())
+    return "\n".join(part for part in parts if part)
+
+
 class HashingTextEmbedder:
     """Dependency-free fallback embedder using hashed bag-of-words vectors."""
 
@@ -173,12 +180,10 @@ def _lexical_claim_score(
     return score
 
 
-def _trace_score(query: str, trace: ProofTrace, similarity: float) -> float:
+def _trace_overlap(query: str, trace: ProofTrace) -> int:
     query_tokens = set(_tokenize(query))
     trace_tokens = set(_tokenize(trace.claim_text))
-    overlap = len(query_tokens & trace_tokens)
-    preamble_overlap = len(query_tokens & {_normalize_token(name) for name in trace.preamble_names})
-    return float(overlap + preamble_overlap) + max(similarity, 0.0) * 3.0
+    return len(query_tokens & trace_tokens)
 
 
 def infer_structure_tags(
@@ -230,9 +235,7 @@ def _trace_score(
     selected_preamble_names: list[str],
     query_structure_tags: list[str],
 ) -> float:
-    query_tokens = set(_tokenize(query))
-    trace_tokens = set(_tokenize(trace.claim_text))
-    overlap = len(query_tokens & trace_tokens)
+    overlap = _trace_overlap(query, trace)
     trace_preamble_names = set(trace.preamble_names)
     preamble_overlap = len(trace_preamble_names & set(selected_preamble_names))
     structure_overlap = len(
@@ -240,32 +243,50 @@ def _trace_score(
         & set(infer_structure_tags(trace.claim_text, preamble_names=trace.preamble_names, tactics=trace.tactic_sequence))
     )
     recency_bonus = 0.25 if trace.repair_count == 0 else 0.0
-    return float(overlap) + (2.5 * preamble_overlap) + (2.0 * structure_overlap) + max(similarity, 0.0) * 3.0 + recency_bonus
+    return float(overlap) + (2.5 * preamble_overlap) + (1.5 * structure_overlap) + max(similarity, 0.0) * 3.0 + recency_bonus
+
+
+def _trace_is_relevant(
+    query: str,
+    trace: ProofTrace,
+    similarity: float,
+    *,
+    selected_preamble_names: list[str],
+    query_structure_tags: list[str],
+) -> bool:
+    preamble_overlap = len(set(trace.preamble_names) & set(selected_preamble_names))
+    if preamble_overlap == 0:
+        return False
+    overlap = _trace_overlap(query, trace)
+    structure_overlap = len(
+        set(query_structure_tags)
+        & set(infer_structure_tags(trace.claim_text, preamble_names=trace.preamble_names, tactics=trace.tactic_sequence))
+    )
+    return overlap >= 2 or similarity >= 0.35 or (structure_overlap > 0 and similarity >= 0.2)
 
 
 def _infer_subgoal_hint(trace: ProofTrace, shared_preamble_names: list[str], structure_tags: list[str]) -> str:
     if "bellman" in structure_tags and "contraction" in structure_tags:
-        return "Mirror a Bellman decomposition: define the operator, prove the discounted inequality, then close the fixed-point/contraction step."
+        return "Reuse the retrieved Bellman lemma before expanding into any extra decomposition."
     if "nash" in structure_tags or "equilibrium" in structure_tags:
-        return "Split the proof into hypotheses on strategy spaces, an equilibrium existence step, and the witness/is_nash conclusion."
+        return "Prefer the direct equilibrium witness lemma before introducing extra structure."
     if "optimization" in structure_tags or "kuhn_tucker" in structure_tags:
-        return "Separate feasibility, optimality inequalities, and complementary-slackness style conditions."
+        return "Reuse the direct optimization certificate lemma before decomposing the claim."
     if shared_preamble_names:
-        return f"Reuse the {', '.join(shared_preamble_names[:2])} structure before introducing claim-specific hypotheses."
-    return "Reuse the verified trace structure before specializing the hypotheses to the current claim."
+        return f"Reuse the {', '.join(shared_preamble_names[:2])} lemma shape directly."
+    return "Reuse the verified trace structure before specializing the claim."
 
 
 def _sanitize_trace(
     trace: ProofTrace,
     *,
     selected_preamble_names: list[str],
-    query_structure_tags: list[str],
 ) -> MemoryTraceExample:
-    tactic_excerpt = trace.tactic_sequence[:3]
-    stage_markers = [f"{stage}={status}" for stage, status in sorted(trace.stage_outcomes.items())[:3]]
+    tactic_excerpt = trace.tactic_sequence[:2]
+    stage_markers = [f"{stage}={status}" for stage, status in sorted(trace.stage_outcomes.items())[:2]]
     lesson_fragments = tactic_excerpt if tactic_excerpt else stage_markers
-    lesson = "; ".join(lesson_fragments) if lesson_fragments else "Verified proof trace with reusable dynamic structure."
-    shared_preamble_names = [name for name in trace.preamble_names if name in selected_preamble_names][:3]
+    lesson = "; ".join(lesson_fragments) if lesson_fragments else "Verified proof trace with reusable structure."
+    shared_preamble_names = [name for name in trace.preamble_names if name in selected_preamble_names][:2]
     structure_tags = infer_structure_tags(
         trace.claim_text,
         preamble_names=trace.preamble_names,
@@ -273,7 +294,7 @@ def _sanitize_trace(
     )
     return MemoryTraceExample(
         claim_text=trace.claim_text,
-        preamble_names=trace.preamble_names[:5],
+        preamble_names=trace.preamble_names[:3],
         shared_preamble_names=shared_preamble_names,
         structure_tags=structure_tags,
         tactic_sequence=tactic_excerpt,
@@ -282,6 +303,43 @@ def _sanitize_trace(
         lesson=lesson,
         subgoal_hint=_infer_subgoal_hint(trace, shared_preamble_names, structure_tags),
     )
+
+
+def _hit_from_entry(entry: PreambleEntry, *, score: float, metadata: dict[str, object]) -> PreambleHit:
+    return PreambleHit(
+        name=entry.name,
+        lean_module=entry.lean_module,
+        score=round(score, 4),
+        description=entry.description,
+        concepts=_entry_concepts(entry, metadata),
+        proven_lemmas=list(entry.planner_proven_lemmas),
+        tactic_hints=_entry_tactic_hints(entry, metadata),
+        textbook_source=_entry_textbook_source(entry, metadata),
+        related=_entry_related(entry, metadata),
+    )
+
+
+def _compact_preamble_context(selected_preamble: list[PreambleHit]) -> str:
+    lines: list[str] = []
+    for hit in selected_preamble:
+        lines.append(f"- {hit.name}: {hit.description}")
+        if hit.proven_lemmas:
+            lines.append(f"  lemmas: {', '.join(hit.proven_lemmas[:2])}")
+        if hit.tactic_hints:
+            lines.append(f"  tactics: {', '.join(hit.tactic_hints[:2])}")
+    return "\n".join(lines)
+
+
+def _compact_memory_context(few_shot_traces: list[MemoryTraceExample]) -> str:
+    if not few_shot_traces:
+        return ""
+    trace = few_shot_traces[0]
+    parts = [f"- {trace.claim_text}"]
+    if trace.shared_preamble_names:
+        parts.append(f"shared_preamble={', '.join(trace.shared_preamble_names)}")
+    if trace.lesson:
+        parts.append(f"lesson={trace.lesson}")
+    return " | ".join(parts)
 
 
 @dataclass
@@ -294,18 +352,48 @@ class PlannerRetrievalService:
             self.embedder = get_default_embedder()
         return self.embedder
 
-    def retrieve_preamble(self, claim: str, *, limit: int = 5) -> list[PreambleHit]:
-        embedder = self._resolve_embedder()
+    def retrieve_preamble(
+        self,
+        claim: str,
+        *,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
+        limit: int = 2,
+    ) -> list[PreambleHit]:
         entries = list(PREAMBLE_LIBRARY.values())
         metadata_by_name = {entry.name: _load_metadata(entry) for entry in entries}
-        weighted_matches = {entry.name: float(score) for entry, score in rank_matching_preambles(claim)}
-        query_vector = embedder.encode([claim])[0]
-        entry_vectors = embedder.encode([_entry_document(entry, metadata_by_name[entry.name]) for entry in entries])
+        selected: list[PreambleHit] = []
+        seen: set[str] = set()
+
+        for index, name in enumerate(preamble_names or []):
+            entry = PREAMBLE_LIBRARY.get(name)
+            if entry is None or entry.name in seen:
+                continue
+            seen.add(entry.name)
+            selected.append(
+                _hit_from_entry(
+                    entry,
+                    score=1000.0 - float(index),
+                    metadata=metadata_by_name[entry.name],
+                )
+            )
+            if len(selected) >= limit:
+                return selected[:limit]
+
+        query_text = _query_text(claim, theorem_stub)
+        embedder = self._resolve_embedder()
+        weighted_matches = {entry.name: float(score) for entry, score in rank_matching_preambles(query_text)}
+        query_vector = embedder.encode([query_text])[0]
+        remaining_entries = [entry for entry in entries if entry.name not in seen]
+        if not remaining_entries:
+            return selected[:limit]
+
+        entry_vectors = embedder.encode([_entry_document(entry, metadata_by_name[entry.name]) for entry in remaining_entries])
         ranked: list[PreambleHit] = []
-        for entry, vector in zip(entries, entry_vectors, strict=True):
+        for entry, vector in zip(remaining_entries, entry_vectors, strict=True):
             metadata = metadata_by_name[entry.name]
             lexical_score = _lexical_claim_score(
-                claim,
+                query_text,
                 entry,
                 metadata,
                 weighted_match_score=weighted_matches.get(entry.name, 0.0),
@@ -314,54 +402,49 @@ class PlannerRetrievalService:
             total_score = lexical_score + semantic_score * 3.0
             if total_score <= 0:
                 continue
-            ranked.append(
-                PreambleHit(
-                    name=entry.name,
-                    lean_module=entry.lean_module,
-                    score=round(total_score, 4),
-                    description=entry.description,
-                    concepts=_entry_concepts(entry, metadata),
-                    proven_lemmas=list(entry.planner_proven_lemmas),
-                    tactic_hints=_entry_tactic_hints(entry, metadata),
-                    textbook_source=_entry_textbook_source(entry, metadata),
-                    related=_entry_related(entry, metadata),
-                )
-            )
+            ranked.append(_hit_from_entry(entry, score=total_score, metadata=metadata))
+
         ranked.sort(key=lambda hit: (-hit.score, hit.name))
-        return ranked[:limit]
+        for hit in ranked:
+            if hit.name in seen:
+                continue
+            selected.append(hit)
+            seen.add(hit.name)
+            if len(selected) >= limit:
+                break
+        return selected[:limit]
 
     def retrieve_memory_traces(
         self,
         claim: str,
         *,
+        theorem_stub: str | None = None,
         selected_preamble: list[PreambleHit],
-        limit: int = 2,
-        candidate_limit: int = 10,
+        limit: int = 1,
+        candidate_limit: int = 6,
     ) -> list[MemoryTraceExample]:
+        if not selected_preamble or limit <= 0:
+            return []
+
         embedder = self._resolve_embedder()
+        query_text = _query_text(claim, theorem_stub)
         preamble_names = [hit.name for hit in selected_preamble]
-        query_structure_tags = infer_structure_tags(claim, preamble_names=preamble_names)
+        query_structure_tags = infer_structure_tags(query_text, preamble_names=preamble_names)
         candidates = self.trace_store.query_similar(
             preamble_names,
             limit=max(candidate_limit, limit),
             outcome="verified",
         )
-        if len(candidates) < limit:
-            seen_ids = {trace.claim_id for trace in candidates}
-            for trace in self.trace_store.list_recent(limit=candidate_limit, outcome="verified"):
-                if trace.claim_id not in seen_ids:
-                    candidates.append(trace)
-                    seen_ids.add(trace.claim_id)
         if not candidates:
             return []
 
-        texts = [claim, *[trace.claim_text for trace in candidates]]
+        texts = [query_text, *[trace.claim_text for trace in candidates]]
         vectors = embedder.encode(texts)
         query_vector = vectors[0]
         ranked = sorted(
             zip(candidates, vectors[1:], strict=True),
             key=lambda item: _trace_score(
-                claim,
+                query_text,
                 item[0],
                 cosine_similarity(query_vector, item[1]),
                 selected_preamble_names=preamble_names,
@@ -371,15 +454,23 @@ class PlannerRetrievalService:
         )
         sanitized: list[MemoryTraceExample] = []
         seen_claims: set[str] = set()
-        for trace, _vector in ranked:
+        for trace, vector in ranked:
             if trace.claim_text in seen_claims:
+                continue
+            similarity = cosine_similarity(query_vector, vector)
+            if not _trace_is_relevant(
+                query_text,
+                trace,
+                similarity,
+                selected_preamble_names=preamble_names,
+                query_structure_tags=query_structure_tags,
+            ):
                 continue
             seen_claims.add(trace.claim_text)
             sanitized.append(
                 _sanitize_trace(
                     trace,
                     selected_preamble_names=preamble_names,
-                    query_structure_tags=query_structure_tags,
                 )
             )
             if len(sanitized) >= limit:
@@ -390,49 +481,27 @@ class PlannerRetrievalService:
         self,
         claim: str,
         *,
-        preamble_limit: int = 5,
-        memory_limit: int = 2,
+        theorem_stub: str | None = None,
+        preamble_names: list[str] | None = None,
+        preamble_limit: int = 2,
+        memory_limit: int = 1,
     ) -> PlannerContext:
-        selected_preamble = self.retrieve_preamble(claim, limit=preamble_limit)
+        selected_preamble = self.retrieve_preamble(
+            claim,
+            theorem_stub=theorem_stub,
+            preamble_names=preamble_names,
+            limit=preamble_limit,
+        )
         few_shot_traces = self.retrieve_memory_traces(
             claim,
+            theorem_stub=theorem_stub,
             selected_preamble=selected_preamble,
             limit=memory_limit,
         )
-        preamble_lines: list[str] = []
-        for hit in selected_preamble:
-            preamble_lines.append(
-                "\n".join(
-                    [
-                        f"- {hit.name} ({hit.lean_module})",
-                        f"  description: {hit.description}",
-                        f"  concepts: {', '.join(hit.concepts) if hit.concepts else 'n/a'}",
-                        f"  proven_lemmas: {', '.join(hit.proven_lemmas) if hit.proven_lemmas else 'n/a'}",
-                        f"  tactic_hints: {', '.join(hit.tactic_hints) if hit.tactic_hints else 'n/a'}",
-                        f"  textbook_source: {hit.textbook_source or 'n/a'}",
-                        f"  related: {', '.join(hit.related) if hit.related else 'n/a'}",
-                    ]
-                )
-            )
-        memory_lines: list[str] = []
-        for index, trace in enumerate(few_shot_traces, start=1):
-            memory_lines.append(
-                "\n".join(
-                    [
-                        f"Example {index}: {trace.claim_text}",
-                        f"  shared_preamble: {', '.join(trace.shared_preamble_names) if trace.shared_preamble_names else 'n/a'}",
-                        f"  structure_tags: {', '.join(trace.structure_tags) if trace.structure_tags else 'n/a'}",
-                        f"  preamble: {', '.join(trace.preamble_names) if trace.preamble_names else 'n/a'}",
-                        f"  tactics: {', '.join(trace.tactic_sequence) if trace.tactic_sequence else 'n/a'}",
-                        f"  lesson: {trace.lesson}",
-                        f"  subgoal_hint: {trace.subgoal_hint or 'n/a'}",
-                    ]
-                )
-            )
         return PlannerContext(
             claim=claim,
             selected_preamble=selected_preamble,
             few_shot_traces=few_shot_traces,
-            preamble_context="\n\n".join(preamble_lines),
-            memory_context="\n\n".join(memory_lines),
+            preamble_context=_compact_preamble_context(selected_preamble),
+            memory_context=_compact_memory_context(few_shot_traces),
         )

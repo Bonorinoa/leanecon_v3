@@ -1,10 +1,663 @@
 {
+  "benchmark_mode": true,
   "claim_set": "tier1_core",
-  "generated_at": "2026-04-19T21:32:19.978005+00:00",
-  "meets_threshold": true,
-  "mode": "bootstrap_threshold_scaffold",
-  "notes": "TODO(Grok/CTO): replace scaffold summaries with live benchmark execution.",
-  "pass_at_1": 0.916667,
-  "passes": 22,
-  "total": 24
+  "claims_failed": 5,
+  "claims_passed": 5,
+  "claims_total": 10,
+  "cost_by_model": {
+    "mistral:labs-leanstral-2603": {
+      "estimated_cost_usd": 0.0,
+      "model": "labs-leanstral-2603",
+      "provider": "mistral"
+    },
+    "ollama:gemma4:31b-cloud": {
+      "estimated_cost_usd": 0.0,
+      "model": "gemma4:31b-cloud",
+      "provider": "ollama"
+    }
+  },
+  "cost_by_stage": {
+    "formalizer": 0.0,
+    "planner": 0.0,
+    "prover": 0.0
+  },
+  "executed": true,
+  "failure_counts": {
+    "unsolved_goals": 5
+  },
+  "generated_at": "2026-04-22T04:42:34.329453+00:00",
+  "mode": "live_pipeline",
+  "pass_at_1": 0.5,
+  "readiness": {
+    "blockers": [],
+    "checks": {
+      "formalizer_price_known": true,
+      "planner_price_known": true,
+      "planner_provider_configured": true,
+      "prover_price_known": true,
+      "prover_provider_configured": true
+    },
+    "ready": true
+  },
+  "results": [
+    {
+      "benchmark_mode": true,
+      "failure_code": "unsolved_goals",
+      "id": "t1_discount_factor_constant",
+      "raw_claim": "If the discount factor is nonnegative and one continuation value dominates another, the Bellman operator preserves that ranking.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "decomposition_limit_reached",
+      "theorem_name": "benchmark_bellman_operator_monotone",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator\n\ntheorem benchmark_bellman_operator_monotone\n    {S : Type*} {reward : S \u2192 \u211d} {transition : S \u2192 S} {\u03b2 : \u211d}\n    (h\u03b2 : 0 \u2264 \u03b2) {v w : S \u2192 \u211d} (hvw : \u2200 s, v s \u2264 w s) :\n    \u2200 s, BellmanOperator reward transition \u03b2 v s \u2264\n      BellmanOperator reward transition \u03b2 w s := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16402.699207887053,
+        "planner_ms": 24940.847584046423,
+        "prover_ms": 200736.18,
+        "total_ms": 242079.727
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16402.699,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 603,
+          "latency_ms": 24940.848,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 182,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": "schema_invalid",
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 9474,
+          "latency_ms": 12339.011,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 614,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": false,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": true,
+      "failure_code": null,
+      "id": "t1_marshallian_demand_good1",
+      "raw_claim": "Any constrained maximizer must satisfy the feasibility constraints.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "verified",
+      "theorem_name": "benchmark_constrained_maximum_feasible",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Optimization.ConstrainedOptimization\n\ntheorem benchmark_constrained_maximum_feasible\n    {\u03b1 : Type*} {f : \u03b1 \u2192 \u211d} {feasible : Set \u03b1} {x : \u03b1}\n    (hx : IsConstrainedMaximum f feasible x) :\n    x \u2208 feasible := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 15952.363291056827,
+        "planner_ms": 4354.543666122481,
+        "prover_ms": 68056.189,
+        "total_ms": 88363.096
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 15952.363,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 541,
+          "latency_ms": 4354.544,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 136,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 1225,
+          "latency_ms": 1619.611,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 129,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": true,
+      "failure_code": null,
+      "id": "t1_crra_rra",
+      "raw_claim": "A continuous preference representation remains continuous on every feasible subset.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "verified",
+      "theorem_name": "benchmark_continuous_preference_restrict",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Preferences.ContinuousPreference\n\ntheorem benchmark_continuous_preference_restrict\n    {\u03b1 : Type*} [TopologicalSpace \u03b1] [TopologicalSpace \u211d]\n    {u : \u03b1 \u2192 \u211d} (hu : ContinuousPreference u) (s : Set \u03b1) :\n    ContinuousOn u s := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 15975.156167056412,
+        "planner_ms": 44302.13174992241,
+        "prover_ms": 74811.433,
+        "total_ms": 135088.721
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 15975.156,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 494,
+          "latency_ms": 44302.132,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 160,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 2499,
+          "latency_ms": 2887.617,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 199,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": true,
+      "failure_code": "unsolved_goals",
+      "id": "t1_cobb_douglas_crs",
+      "raw_claim": "Every contraction on a complete metric space has a fixed point.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "repeated_noop_action",
+      "theorem_name": "benchmark_contraction_has_fixed_point",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.DynamicProgramming.ContractionMapping\n\ntheorem benchmark_contraction_has_fixed_point\n    {\u03b1 : Type*} [MetricSpace \u03b1] [CompleteSpace \u03b1] [Nonempty \u03b1]\n    {f : \u03b1 \u2192 \u03b1} (hf : IsContraction f) :\n    \u2203 x, Function.IsFixedPt f x := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16202.52045802772,
+        "planner_ms": 4750.425125006586,
+        "prover_ms": 84841.67,
+        "total_ms": 105794.616
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16202.52,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 554,
+          "latency_ms": 4750.425,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 172,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 3584,
+          "latency_ms": 4318.831,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 295,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": true,
+      "failure_code": null,
+      "id": "t1_cobb_douglas_elasticity",
+      "raw_claim": "A convex preference representation induces a convex utility map on the whole commodity space.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "verified",
+      "theorem_name": "benchmark_convex_preference_univ",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Preferences.ConvexPreference\n\ntheorem benchmark_convex_preference_univ\n    {E : Type*} [NormedAddCommGroup E] [NormedSpace \u211d E]\n    {u : E \u2192 \u211d} (hu : ConvexPreference u) :\n    ConvexOn \u211d Set.univ u := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16648.70766690001,
+        "planner_ms": 4636.000416940078,
+        "prover_ms": 87269.211,
+        "total_ms": 108553.919
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16648.708,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 502,
+          "latency_ms": 4636.0,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 158,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 2232,
+          "latency_ms": 3168.11,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 231,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": true,
+      "failure_code": "unsolved_goals",
+      "id": "t1_indirect_utility_linear_income",
+      "raw_claim": "A contraction on a complete metric space admits a fixed point.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "decomposition_limit_reached",
+      "theorem_name": "benchmark_fixed_point_exists",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Equilibrium.FixedPointTheorem\n\ntheorem benchmark_fixed_point_exists\n    {\u03b1 : Type*} [MetricSpace \u03b1] [CompleteSpace \u03b1] [Nonempty \u03b1]\n    {K : NNReal} {f : \u03b1 \u2192 \u03b1} (hf : ContractingWith K f) :\n    \u2203 x, Function.IsFixedPt f x := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16816.408416023478,
+        "planner_ms": 3107.798249926418,
+        "prover_ms": 178477.083,
+        "total_ms": 198401.29
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16816.408,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 572,
+          "latency_ms": 3107.798,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 164,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 8744,
+          "latency_ms": 11516.793,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 796,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": true,
+      "failure_code": "unsolved_goals",
+      "id": "t1_cara_ara_arrow_pratt",
+      "raw_claim": "At a Kuhn-Tucker point, complementary slackness forces each multiplier-constraint product to vanish.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "repeated_noop_action",
+      "theorem_name": "benchmark_kuhn_tucker_slackness",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Optimization.KuhnTucker\n\ntheorem benchmark_kuhn_tucker_slackness\n    {\u03b1 \u03b9 : Type*} {x : \u03b1} {g : \u03b1 \u2192 \u03b9 \u2192 \u211d} {\u03bc : \u03b9 \u2192 \u211d}\n    (hkt : KuhnTuckerPoint x g \u03bc) (i : \u03b9) :\n    \u03bc i * g x i = 0 := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16553.99087490514,
+        "planner_ms": 3554.214208154008,
+        "prover_ms": 87863.021,
+        "total_ms": 107971.226
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16553.991,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 570,
+          "latency_ms": 3554.214,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 173,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 3778,
+          "latency_ms": 4530.715,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 344,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": true,
+      "failure_code": null,
+      "id": "t1_unit_price_elasticity",
+      "raw_claim": "Under any economic measure, the empty event receives zero mass.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "verified",
+      "theorem_name": "benchmark_economic_measure_empty",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Primitives.Measure\n\ntheorem benchmark_economic_measure_empty\n    {\u03b1 : Type*} [MeasurableSpace \u03b1] (\u03bc : EconomicMeasure \u03b1) :\n    \u03bc \u2205 = 0 := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16662.0334580075,
+        "planner_ms": 2451.4337088912725,
+        "prover_ms": 68419.141,
+        "total_ms": 87532.608
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16662.033,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 469,
+          "latency_ms": 2451.434,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 121,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 960,
+          "latency_ms": 1631.571,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 130,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": true,
+      "failure_code": "unsolved_goals",
+      "id": "t1_bellman_rhs_monotone_discount",
+      "raw_claim": "A witness-based Nash certificate immediately yields equilibrium existence.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "decomposition_limit_reached",
+      "theorem_name": "benchmark_nash_exists_of_witness",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Equilibrium.NashExistence\n\ntheorem benchmark_nash_exists_of_witness\n    {Profile : Type} (h : HasNashEquilibrium Profile) :\n    \u2203 profile, h.isNash profile := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16684.737665811554,
+        "planner_ms": 3023.1915002223104,
+        "prover_ms": 250866.531,
+        "total_ms": 270574.46
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16684.738,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 531,
+          "latency_ms": 3023.192,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 148,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": "schema_invalid",
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 12461,
+          "latency_ms": 15284.354,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 1106,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": false,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": true,
+      "failure_code": null,
+      "id": "t1_solow_steady_state_balance",
+      "raw_claim": "Any policy weakly improves on itself under a policy-improvement ordering.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "verified",
+      "theorem_name": "benchmark_policy_iteration_refl",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.DynamicProgramming.PolicyIteration\n\ntheorem benchmark_policy_iteration_refl\n    {\u03c0 : Type*} (criterion : \u03c0 \u2192 \u211d) (policy : \u03c0) :\n    PolicyImproves criterion policy policy := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16614.097875077277,
+        "planner_ms": 3098.6189590767026,
+        "prover_ms": 85721.726,
+        "total_ms": 105434.443
+      },
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16614.098,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 511,
+          "latency_ms": 3098.619,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 150,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 2087,
+          "latency_ms": 2699.823,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 203,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    }
+  ],
+  "target_timeouts": {
+    "apollo_lemma": 120,
+    "subgoal": 120,
+    "theorem_body": 120
+  },
+  "tokens_by_stage": {
+    "formalizer": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "planner": {
+      "input_tokens": 5347,
+      "output_tokens": 1564
+    },
+    "prover": {
+      "input_tokens": 47044,
+      "output_tokens": 4047
+    }
+  }
 }

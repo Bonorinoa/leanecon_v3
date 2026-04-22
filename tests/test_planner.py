@@ -9,6 +9,7 @@ import pytest
 
 from src.memory.models import ProofTrace
 from src.memory.store import ProofTraceStore
+from src.observability.models import ProviderCallMetadata
 from src.planner import HuggingFacePlannerDriver, OllamaPlannerDriver, PlannerBackend, PlannerLLMResponse, PlannerService
 from src.planner.planner import PlannerDriverError
 from src.planner.retrieval import HashingTextEmbedder, PlannerRetrievalService
@@ -127,9 +128,8 @@ def test_planner_upgrades_generic_subgoals_to_specific_targets(tmp_path: Path) -
     )
 
     assert all(": True := by" not in subgoal for subgoal in packet.subgoals)
-    assert any("IsContraction" in subgoal for subgoal in packet.subgoals)
-    assert any("Function.IsFixedPt" in subgoal for subgoal in packet.subgoals)
-    assert any("ValueFunction" in subgoal for subgoal in packet.subgoals)
+    assert len(packet.subgoals) == 1
+    assert "BellmanOperator.monotone" in packet.subgoals[0]
 
 
 def test_planner_ambiguous_claim_triggers_questions(tmp_path: Path) -> None:
@@ -215,26 +215,35 @@ def test_planner_json_output_validation() -> None:
         )
 
 
-def test_planner_retries_on_schema_invalid_before_succeeding(tmp_path: Path) -> None:
+def test_planner_accepts_non_latex_plan_paragraph() -> None:
+    validated = PlannerLLMResponse.model_validate(
+        {
+            "clarifying_questions": [],
+            "textbook_defaults": ["Use the direct preamble lemma."],
+            "plan_paragraph": "Close the claim by reusing the retrieved preamble lemma and keeping the theorem stub unchanged.",
+            "subgoals": ["theorem planner_validation_plain : True := by\n  sorry"],
+            "needs_review": False,
+            "confidence": 0.74,
+        }
+    )
+
+    assert validated.plan_paragraph.startswith("Close the claim")
+
+
+def test_planner_repairs_schema_invalid_locally_without_remote_retry(tmp_path: Path) -> None:
     retrieval = PlannerRetrievalService(
         embedder=HashingTextEmbedder(),
         trace_store=_make_trace_store(tmp_path),
     )
-    payload = {
-        "clarifying_questions": [],
-        "textbook_defaults": ["Assume MWG continuity and $\\beta \\in (0,1)$."],
-        "plan_paragraph": (
-            "Interpret the claim through the retrieved Bellman preamble and emit a single subgoal that mirrors the stub "
-            "while pointing at the named lemma $T$ as a contraction with $\\beta$."
-        ),
-        "subgoals": [
-            "theorem planner_retry_1 {S : Type*} (reward : S → ℝ) (transition : S → S) (β : ℝ) : ∃ T : (S → ℝ) → (S → ℝ), T = BellmanOperator reward transition β := by\n  sorry",
-            "theorem planner_retry_2 {V : Type*} [MetricSpace V] (T : V → V) : IsContraction T := by\n  sorry",
-            "theorem planner_retry_3 {V : Type*} [MetricSpace V] [CompleteSpace V] [Nonempty V] {K : NNReal} {T : V → V} (hT : ContractingWith K T) : ∃ x, Function.IsFixedPt T x := by\n  sorry",
-        ],
-        "needs_review": False,
-        "confidence": 0.88,
-    }
+    raw_text = """```json
+{
+  "plan_paragraph": "Reuse the retrieved measure lemma and close the theorem stub directly.",
+  "textbook_defaults": {"measure": "standard economic measure"},
+  "subgoals": [{"statement": "exact economicMeasure_empty (μ := μ)"}],
+  "needs_review": false,
+  "confidence": 1.0
+}
+```"""
 
     class FlakyDriver:
         def __init__(self) -> None:
@@ -242,16 +251,31 @@ def test_planner_retries_on_schema_invalid_before_succeeding(tmp_path: Path) -> 
 
         def generate(self, **_: object) -> PlannerLLMResponse:
             self.call_count += 1
-            if self.call_count <= 2:
-                raise PlannerDriverError("Planner backend returned schema-invalid JSON: missing field 'plan_paragraph'")
-            return PlannerLLMResponse.model_validate(payload)
+            error = PlannerDriverError("Planner backend returned schema-invalid JSON: missing clarifying_questions")
+            setattr(
+                error,
+                "provider_metadata",
+                ProviderCallMetadata(response_text=raw_text, raw_planner_response=raw_text),
+            )
+            raise error
 
     driver = FlakyDriver()
-    service = PlannerService(driver=driver, retrieval_service=retrieval)
-    packet = service.build_plan("Prove that the Bellman operator is a contraction", benchmark_mode=True)
+    result = PlannerService(driver=driver, retrieval_service=retrieval).build_plan_with_telemetry(
+        "Under an economic measure, the impossible event has zero mass.",
+        theorem_stub=(
+            "import Mathlib\n"
+            "theorem benchmark_measure_empty {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) :\n"
+            "    μ ∅ = 0 := by\n"
+            "  sorry\n"
+        ),
+        preamble_names=["measure"],
+        benchmark_mode=True,
+    )
 
-    assert driver.call_count == 3
-    assert packet.plan_paragraph.startswith("Interpret the claim")
+    assert driver.call_count == 1
+    assert result.payload.textbook_defaults == ["measure: standard economic measure"]
+    assert result.payload.subgoals[0].startswith("theorem benchmark_measure_empty")
+    assert result.usage.error_code == "schema_invalid"
 
 
 def test_planner_does_not_retry_on_unknown_errors(tmp_path: Path) -> None:
@@ -275,6 +299,43 @@ def test_planner_does_not_retry_on_unknown_errors(tmp_path: Path) -> None:
         service.build_plan("Prove that the Bellman operator is a contraction")
 
     assert driver.call_count == 1
+
+
+def test_planner_repairs_schema_invalid_and_persists_raw_response(tmp_path: Path) -> None:
+    retrieval = PlannerRetrievalService(
+        embedder=HashingTextEmbedder(),
+        trace_store=_make_trace_store(tmp_path),
+    )
+    raw_text = json.dumps(
+        {
+            "plan_paragraph": "Use the measure preamble to close the empty-event identity $\\mu(\\emptyset)=0$ directly.",
+            "subgoals": ["exact benchmark_measure_empty"],
+        }
+    )
+
+    class RepairableDriver:
+        def generate(self, **_: object) -> PlannerLLMResponse:
+            error = PlannerDriverError("Planner backend returned schema-invalid JSON: missing required keys")
+            setattr(
+                error,
+                "provider_metadata",
+                ProviderCallMetadata(response_text=raw_text, raw_planner_response=raw_text),
+            )
+            raise error
+
+    result = PlannerService(driver=RepairableDriver(), retrieval_service=retrieval).build_plan_with_telemetry(
+        "Under an economic measure, the impossible event has zero mass.",
+        benchmark_mode=True,
+    )
+
+    assert result.payload.clarifying_questions == []
+    assert result.payload.textbook_defaults == [
+        "Standard PhD-level assumptions (MWG/SLP continuous/bounded return, β∈(0,1), complete metric spaces)"
+    ]
+    assert result.payload.needs_review is True
+    assert result.payload.confidence == 0.65
+    assert result.usage.error_code == "schema_invalid"
+    assert any(event.raw_planner_response == raw_text for event in result.audit_events if event.error_code == "schema_invalid")
 
 
 def test_planner_user_prompt_includes_authoritative_theorem_stub(tmp_path: Path) -> None:
@@ -326,9 +387,59 @@ def test_planner_user_prompt_includes_authoritative_theorem_stub(tmp_path: Path)
     assert "Authoritative Lean 4 theorem stub" in user_prompt
     assert "benchmark_measure_empty" in user_prompt
     assert "μ ∅ = 0" in user_prompt
-    assert "Named preamble entries" in user_prompt
+    assert "Pinned preamble entries" in user_prompt
     assert "measure" in user_prompt
     assert packet.review_state == "approved"
+
+
+def test_planner_context_uses_pinned_preamble_and_filters_irrelevant_memory(tmp_path: Path) -> None:
+    store = ProofTraceStore(tmp_path / "planner-memory.db")
+    store.record(
+        ProofTrace(
+            claim_id="trace-irrelevant",
+            claim_text="1 + 1 = 2",
+            preamble_names=["measure"],
+            tactic_sequence=["simp"],
+            stage_outcomes={"formalizer": "ok", "prover": "verified"},
+            failure_class=None,
+            repair_count=0,
+            outcome="verified",
+            formalizer_model="mistralai/Leanstral-2603",
+            timestamp="2026-04-19T12:00:00+00:00",
+        )
+    )
+    store.record(
+        ProofTrace(
+            claim_id="trace-relevant",
+            claim_text="Under an economic measure, the empty event receives zero mass.",
+            preamble_names=["measure"],
+            tactic_sequence=["simpa using economicMeasure_empty"],
+            stage_outcomes={"formalizer": "ok", "prover": "verified"},
+            failure_class=None,
+            repair_count=0,
+            outcome="verified",
+            formalizer_model="mistralai/Leanstral-2603",
+            timestamp="2026-04-19T13:00:00+00:00",
+        )
+    )
+    retrieval = PlannerRetrievalService(embedder=HashingTextEmbedder(), trace_store=store)
+
+    context = retrieval.build_context(
+        "Under an economic measure, the impossible event has zero mass.",
+        theorem_stub=(
+            "import Mathlib\n"
+            "theorem benchmark_measure_empty {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) :\n"
+            "    μ ∅ = 0 := by\n"
+            "  sorry\n"
+        ),
+        preamble_names=["measure"],
+    )
+
+    assert [hit.name for hit in context.selected_preamble][:1] == ["measure"]
+    assert len(context.selected_preamble) <= 2
+    assert len(context.few_shot_traces) == 1
+    assert context.few_shot_traces[0].claim_text != "1 + 1 = 2"
+    assert "economicMeasure_empty" in context.preamble_context
 
 
 def test_hf_planner_driver_uses_chat_completion_and_normalizes_legacy_provider(monkeypatch) -> None:
@@ -380,9 +491,53 @@ def test_hf_planner_driver_uses_chat_completion_and_normalizes_legacy_provider(m
     assert metadata is not None
     assert metadata.input_tokens == 111
     assert metadata.output_tokens == 37
+    assert captured["max_tokens"] == 500
     assert captured["messages"][0]["role"] == "system"
     assert captured["messages"][1]["role"] == "user"
     assert captured["response_format"]["type"] == "json_schema"
+
+
+def test_hf_planner_driver_normalizes_fenced_json_and_object_fields(monkeypatch) -> None:
+    class FakeInferenceClient:
+        def __init__(self, *, model: str, token: str, timeout: float, provider: str) -> None:
+            pass
+
+        def chat_completion(self, messages, max_tokens: int, temperature: float, response_format):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="""```json
+{
+  "plan_paragraph": "Close the claim by reusing the direct preamble lemma.",
+  "textbook_defaults": {"measure": "economic measure"},
+  "subgoals": [{"statement": "exact economicMeasure_empty (μ := μ)"}],
+  "needs_review": false,
+  "confidence": 1.0
+}
+```"""
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(prompt_tokens=20, completion_tokens=10),
+            )
+
+    monkeypatch.setattr("huggingface_hub.InferenceClient", FakeInferenceClient)
+
+    backend = PlannerBackend(
+        name="hf-structured",
+        model="Qwen/Qwen3-32B",
+        provider="auto",
+        notes="test backend",
+    )
+    response, _ = HuggingFacePlannerDriver(provider="auto").generate(
+        backend=backend,
+        system_prompt="Return only JSON.",
+        user_prompt="Claim: impossible event has zero mass",
+    )
+
+    assert response.textbook_defaults == ["measure: economic measure"]
+    assert response.subgoals == ["exact economicMeasure_empty (μ := μ)"]
 
 
 def test_ollama_planner_driver_posts_chat_schema(monkeypatch) -> None:
@@ -568,7 +723,7 @@ def test_ollama_planner_driver_backfills_empty_textbook_defaults(monkeypatch) ->
     )
 
     assert response.textbook_defaults == [
-        "Respect the authoritative theorem stub and the retrieved LeanEcon preamble assumptions."
+        "Standard PhD-level assumptions (MWG/SLP continuous/bounded return, β∈(0,1), complete metric spaces)"
     ]
 
 

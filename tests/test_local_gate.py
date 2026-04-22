@@ -3,8 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from evals.local_gate import run_claim_set
+from src.observability.models import ProviderCallMetadata
 from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, ParseCheck
 from src.planner import PlannerLLMResponse, PlannerService
+from src.planner.planner import PlannerDriverError
 from src.planner.retrieval import HashingTextEmbedder, PlannerRetrievalService
 from src.prover.models import ProverResult
 
@@ -179,11 +181,46 @@ def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
     assert summary["cost_by_model"]["huggingface:Goedel-LM/Goedel-Prover-V2-32B"]["estimated_cost_usd"] == 0.36
     assert all(item["theorem_stub_reference"] is not None for item in summary["results"])
     assert all(item["benchmark_mode"] is True for item in summary["results"])
+    assert all("raw_planner_response" not in item for item in summary["results"])
     assert all(item["verified_via"] == "full_pipeline" for item in summary["results"])
     assert fake_prover.calls
     assert fake_prover.calls[0]["benchmark_mode"] is True
     assert fake_prover.calls[0]["timeout"] == 120
     assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 120, "subgoal": 120, "apollo_lemma": 120}
+
+
+def test_local_gate_persists_raw_planner_response_for_schema_invalid(monkeypatch) -> None:
+    import evals.local_gate as local_gate_module
+
+    class RepairingPlannerDriver:
+        raw_text = (
+            '{"plan_paragraph":"Map the claim to the measure axiom $\\\\mu(\\\\emptyset)=0$.","subgoals":["exact benchmark_measure_empty"]}'
+        )
+
+        def generate(self, **_: object) -> PlannerLLMResponse:
+            error = PlannerDriverError("Planner backend returned schema-invalid JSON: missing required keys")
+            setattr(
+                error,
+                "provider_metadata",
+                ProviderCallMetadata(response_text=self.raw_text, raw_planner_response=self.raw_text),
+            )
+            raise error
+
+    monkeypatch.setattr(local_gate_module, "_try_claim_trivial_shortcut", lambda _stub: None)
+    summary = run_claim_set(
+        "tier0_smoke",
+        planner_service=PlannerService(
+            driver=RepairingPlannerDriver(),
+            retrieval_service=PlannerRetrievalService(embedder=HashingTextEmbedder()),
+        ),
+        formalizer_service=FakeFormalizerService(),
+        prover_instance=FakeProver(),
+        enforce_readiness=False,
+        benchmark_mode=True,
+    )
+
+    assert all(item["usage_by_stage"]["planner"]["error_code"] == "schema_invalid" for item in summary["results"])
+    assert all(item["raw_planner_response"] == RepairingPlannerDriver.raw_text for item in summary["results"])
 
 
 def test_local_gate_uses_trivial_shortcut_and_skips_pipeline(monkeypatch) -> None:

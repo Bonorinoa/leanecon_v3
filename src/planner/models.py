@@ -40,7 +40,7 @@ class MemoryTraceExample(PlannerModel):
 class PlannerContext(PlannerModel):
     claim: str = Field(min_length=1)
     selected_preamble: list[PreambleHit] = Field(default_factory=list)
-    few_shot_traces: list[MemoryTraceExample] = Field(default_factory=list, max_length=2)
+    few_shot_traces: list[MemoryTraceExample] = Field(default_factory=list, max_length=1)
     preamble_context: str = ""
     memory_context: str = ""
 
@@ -78,8 +78,6 @@ class PlannerLLMResponse(PlannerModel):
         cleaned = paragraph.strip()
         if "\n\n" in cleaned:
             raise ValueError("Planner must emit exactly one paragraph.")
-        if "$" not in cleaned and "\\(" not in cleaned:
-            raise ValueError("Planner paragraph must contain LaTeX math.")
         return cleaned
 
     @field_validator("subgoals")
@@ -96,7 +94,7 @@ class PlannerPacket(PlannerLLMResponse):
     backend: str
     model: str
     selected_preamble: list[PreambleHit] = Field(default_factory=list)
-    few_shot_traces: list[MemoryTraceExample] = Field(default_factory=list, max_length=2)
+    few_shot_traces: list[MemoryTraceExample] = Field(default_factory=list, max_length=1)
 
     @field_validator("review_state")
     @classmethod

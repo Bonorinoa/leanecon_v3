@@ -737,7 +737,7 @@ async def test_prover_shortcut_falls_back_to_exact_question_mark(
 
 
 @pytest.mark.anyio
-async def test_prover_detects_repl_compile_disagreement(tmp_path, monkeypatch) -> None:
+async def test_prover_soft_repairs_repl_compile_disagreement(tmp_path, monkeypatch) -> None:
     import src.prover.prover as prover_module
 
     class LoopReplSession(FakeReplSession):
@@ -751,10 +751,24 @@ async def test_prover_detects_repl_compile_disagreement(tmp_path, monkeypatch) -
             )
 
         def materialize_proof(self):
-            return self.code
+            return "theorem disagreement_claim : True := by\n  sorry\n"
+
+    def fake_compile(code: str, **_: object) -> dict[str, object]:
+        success = "import Mathlib" in code and "exact True.intro" in code and "sorry" not in code
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", LoopReplSession)
-    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module, "compile_check", fake_compile)
     monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
     monkeypatch.setattr(
         prover_module,
@@ -769,18 +783,13 @@ async def test_prover_detects_repl_compile_disagreement(tmp_path, monkeypatch) -
                 "theorem_body": [
                     {
                         "action_type": "tool",
-                        "rationale": "First linarith attempt.",
-                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "linarith"}},
+                        "rationale": "First exact attempt closes the local REPL goal.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "exact True.intro"}},
                     },
                     {
                         "action_type": "tool",
-                        "rationale": "Second linarith attempt after compile still fails.",
-                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "linarith"}},
-                    },
-                    {
-                        "action_type": "tool",
-                        "rationale": "Third linarith attempt to trigger disagreement detection.",
-                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "linarith"}},
+                        "rationale": "Repeat the same exact proof so the prover triggers a soft repair.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "exact True.intro"}},
                     },
                 ]
             }
@@ -793,17 +802,19 @@ async def test_prover_detects_repl_compile_disagreement(tmp_path, monkeypatch) -
     result = await prover.prove(
         _packet(
             theorem_name="disagreement_claim",
-            claim="REPL reports solved but compile never does.",
+            claim="REPL reports solved, then succeeds after rebuilding theorem context once.",
             lean_code="import Mathlib\n\ntheorem disagreement_claim : True := by\n  sorry\n",
         ),
         "job_repl_compile_disagreement",
         max_turns=5,
     )
 
-    assert result.status == "failed"
-    assert result.failure is not None
-    assert result.failure.error_code == "repl_compile_disagreement"
-    assert result.failure.reason == "repl_compile_disagreement"
+    assert result.status == "verified"
+    assert result.failure is None
+    assert result.verified_code is not None
+    assert result.verified_code.startswith("import Mathlib")
+    assert "exact True.intro" in result.verified_code
+    assert any(step.action_type == "repl_compile_soft_repair" for step in result.trace)
     assert any(step.repl_local_solved for step in result.trace)
 
 

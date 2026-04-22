@@ -15,13 +15,14 @@ from src.observability.errors import classify_exception
 from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerContext, PlannerLLMResponse, PlannerPacket, slugify_claim
 from src.planner.prompts import build_system_prompt, build_user_prompt
-from src.planner.retrieval import PlannerRetrievalService, TextEmbedder, infer_structure_tags
+from src.planner.retrieval import PlannerRetrievalService, TextEmbedder
 from src.providers import normalize_huggingface_provider
 
 
 PLANNER_RETRY_ATTEMPTS = 3
 PLANNER_RETRY_BACKOFF_SECONDS = (0.5, 1.0)
-PLANNER_RETRYABLE_ERROR_CODES = frozenset({"schema_invalid", "rate_limit", "provider_http_error", "provider_unavailable"})
+PLANNER_RETRYABLE_ERROR_CODES = frozenset({"rate_limit", "provider_http_error", "provider_unavailable", "timeout"})
+PLANNER_MAX_OUTPUT_TOKENS = 500
 PLANNER_REPAIR_DEFAULT = "Standard PhD-level assumptions (MWG/SLP continuous/bounded return, β∈(0,1), complete metric spaces)"
 
 
@@ -79,6 +80,13 @@ class DriverRegistry:
 
 def _extract_json_payload(raw_text: str) -> dict[str, object]:
     stripped = raw_text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
     start = stripped.find("{")
     end = stripped.rfind("}")
     if start == -1 or end == -1 or end < start:
@@ -92,22 +100,83 @@ def _extract_json_payload(raw_text: str) -> dict[str, object]:
     return payload
 
 
+def _clean_string_list(values: object) -> list[str]:
+    if isinstance(values, str):
+        cleaned = values.strip()
+        return [cleaned] if cleaned else []
+    if not isinstance(values, list):
+        return []
+    cleaned_values = [str(item).strip() for item in values if str(item).strip()]
+    return cleaned_values
+
+
+def _extract_subgoal_text(value: object) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    if not isinstance(value, dict):
+        return None
+    for key in ("statement", "text", "theorem", "goal", "subgoal", "expression", "tactic"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    for candidate in value.values():
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def _coerce_subgoals(value: object) -> list[str]:
+    if isinstance(value, list):
+        cleaned = [_extract_subgoal_text(item) for item in value]
+        return [item for item in cleaned if item]
+    single = _extract_subgoal_text(value)
+    return [single] if single else []
+
+
+def _coerce_textbook_defaults(value: object) -> list[str]:
+    if isinstance(value, dict):
+        cleaned = [f"{key}: {str(item).strip()}" for key, item in value.items() if str(item).strip()]
+        return cleaned or [PLANNER_REPAIR_DEFAULT]
+    cleaned = _clean_string_list(value)
+    return cleaned or [PLANNER_REPAIR_DEFAULT]
+
+
+def _coerce_bool(value: object, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "1"}:
+            return True
+        if normalized in {"false", "no", "0"}:
+            return False
+    return default
+
+
+def _coerce_confidence(value: object, *, default: float) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return default
+    return default
+
+
 def _normalize_planner_payload(payload: dict[str, object]) -> dict[str, object]:
-    normalized = dict(payload)
-    questions = normalized.get("clarifying_questions")
-    if not isinstance(questions, list):
-        normalized["clarifying_questions"] = []
-    defaults = normalized.get("textbook_defaults")
-    cleaned_defaults = [str(item).strip() for item in defaults] if isinstance(defaults, list) else []
-    cleaned_defaults = [item for item in cleaned_defaults if item]
-    if not cleaned_defaults:
-        normalized["textbook_defaults"] = [
-            "Respect the authoritative theorem stub and the retrieved LeanEcon preamble assumptions."
-        ]
-    if "needs_review" not in normalized:
-        normalized["needs_review"] = False
-    if "confidence" not in normalized:
-        normalized["confidence"] = 0.75
+    normalized: dict[str, object] = {}
+    normalized["clarifying_questions"] = _clean_string_list(payload.get("clarifying_questions"))
+    normalized["textbook_defaults"] = _coerce_textbook_defaults(payload.get("textbook_defaults"))
+    paragraph = payload.get("plan_paragraph", payload.get("plan"))
+    if isinstance(paragraph, str):
+        normalized["plan_paragraph"] = paragraph.strip()
+    elif paragraph is not None:
+        normalized["plan_paragraph"] = str(paragraph).strip()
+    normalized["subgoals"] = _coerce_subgoals(payload.get("subgoals", payload.get("subgoal")))
+    normalized["needs_review"] = _coerce_bool(payload.get("needs_review"), default=False)
+    normalized["confidence"] = _coerce_confidence(payload.get("confidence"), default=0.75)
     return normalized
 
 
@@ -215,7 +284,7 @@ class HuggingFacePlannerDriver:
         ]
         raw = client.chat_completion(
             messages,
-            max_tokens=1200,
+            max_tokens=PLANNER_MAX_OUTPUT_TOKENS,
             temperature=0.2,
             response_format=_planner_response_format(),
         )
@@ -260,7 +329,7 @@ class HuggingFacePlannerDriver:
         )
         raw_text = client.text_generation(
             prompt,
-            max_new_tokens=1200,
+            max_new_tokens=PLANNER_MAX_OUTPUT_TOKENS,
             temperature=0.2,
             return_full_text=False,
             details=True,
@@ -374,7 +443,7 @@ class OllamaPlannerDriver:
             "format": _planner_response_format()["json_schema"]["schema"],
             "options": {
                 "temperature": 0.2,
-                "num_predict": 1200,
+                "num_predict": PLANNER_MAX_OUTPUT_TOKENS,
             },
             "stream": False,
             "think": False,
@@ -441,277 +510,45 @@ def _dedupe_subgoals(subgoals: list[str]) -> list[str]:
     return deduped
 
 
-def _fallback_subgoals(claim: str, context: PlannerContext) -> list[str]:
+def _extract_stub_subgoal(theorem_stub: str | None) -> str | None:
+    if not theorem_stub or not theorem_stub.strip():
+        return None
+    lines = theorem_stub.strip().splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("theorem ") or stripped.startswith("lemma "):
+            return "\n".join(lines[index:]).strip()
+    return None
+
+
+def _minimal_hit_subgoal(claim: str, hit) -> str:
     slug = slugify_claim(claim)
-    normalized_claim = claim.lower()
-    selected_names = [hit.name for hit in context.selected_preamble]
-    lines: list[str] = []
-    for index, hit in enumerate(context.selected_preamble[:4], start=1):
-        theorem_name = f"{slug}_{hit.name}_subgoal_{index}"
-        if hit.name == "contraction_mapping":
-            lines.append(
-                "\n".join(
-                    [
-                        f"theorem {theorem_name} {{V : Type*}} [MetricSpace V] (T : V → V) :",
-                        "    IsContraction T := by",
-                        "  sorry",
-                    ]
-                )
-            )
-        elif hit.name == "fixed_point_theorem":
-            lines.append(
-                "\n".join(
-                    [
-                        f"theorem {theorem_name} {{V : Type*}} [MetricSpace V] [CompleteSpace V] [Nonempty V]",
-                        "    {K : NNReal} {T : V → V} (hT : ContractingWith K T) :",
-                        (
-                            "    Function.IsFixedPt T (ContractingWith.fixedPoint (f := T) hT) := by"
-                            if "canonical fixed point" in normalized_claim or "indeed fixed" in normalized_claim
-                            else "    ∃ x, Function.IsFixedPt T x := by"
-                        ),
-                        "  sorry",
-                    ]
-                )
-            )
-        elif hit.name == "bellman_operator":
-            if "monotone" in normalized_claim or "ranking" in normalized_claim:
-                lines.append(
-                    "\n".join(
-                        [
-                            f"theorem {theorem_name} {{S : Type*}} {{reward : S → ℝ}} {{transition : S → S}} {{β : ℝ}}",
-                            "    {v w : S → ℝ} (hβ : 0 ≤ β) (hvw : ∀ s, v s ≤ w s) :",
-                            "    ∀ s, BellmanOperator reward transition β v s ≤ BellmanOperator reward transition β w s := by",
-                            "  sorry",
-                        ]
-                    )
-                )
-                continue
-            lines.append(
-                "\n".join(
-                    [
-                        f"theorem {theorem_name} {{S : Type*}} (reward : S → ℝ) (transition : S → S) (β : ℝ) :",
-                        "    ∃ T : (S → ℝ) → (S → ℝ), T = BellmanOperator reward transition β := by",
-                        "  sorry",
-                    ]
-                )
-            )
-        elif hit.name == "value_function":
-            lines.append(
-                "\n".join(
-                    [
-                        f"theorem {theorem_name} {{V : Type*}} [MetricSpace V] [CompleteSpace V] [Nonempty V]",
-                        "    {K : NNReal} (T : V → V) (hT : ContractingWith K T) :",
-                        "    Function.IsFixedPt T (ValueFunction T hT) := by",
-                        "  sorry",
-                    ]
-                )
-            )
-        elif hit.name == "nash_existence":
-            lines.append(
-                "\n".join(
-                    [
-                        f"theorem {theorem_name} {{Profile : Type}} (h : HasNashEquilibrium Profile) :",
-                        "    ∃ profile, h.isNash profile := by",
-                        "  sorry",
-                    ]
-                )
-            )
-        elif hit.name == "constrained_optimization":
-            lines.append(
-                "\n".join(
-                    [
-                        f"theorem {theorem_name} {{α : Type*}} (f : α → ℝ) (feasible : Set α) (x : α) :",
-                        "    IsConstrainedMaximum f feasible x := by",
-                        "  sorry",
-                    ]
-                )
-            )
-        elif hit.name == "kuhn_tucker":
-            lines.append(
-                "\n".join(
-                    [
-                        f"theorem {theorem_name} {{α ι : Type*}} (x : α) (g : α → ι → ℝ) (μ : ι → ℝ) :",
-                        "    KuhnTuckerPoint x g μ := by",
-                        "  sorry",
-                    ]
-                )
-            )
-        elif hit.name == "continuous_preference":
-            lines.append(
-                "\n".join(
-                    [
-                        f"theorem {theorem_name} {{α : Type*}} [TopologicalSpace α] [TopologicalSpace ℝ] (u : α → ℝ) :",
-                        "    ContinuousPreference u := by",
-                        "  sorry",
-                    ]
-                )
-            )
-        elif hit.name == "convex_preference":
-            lines.append(
-                "\n".join(
-                    [
-                        f"theorem {theorem_name} {{E : Type*}} (u : E → ℝ) :",
-                        "    ConvexPreference u := by",
-                        "  sorry",
-                    ]
-                )
-            )
-    if not lines:
-        theorem_name = f"{slug}_structure_subgoal"
-        concept = selected_names[0] if selected_names else "economic_claim"
-        lines.append(
-            "\n".join(
-                [
-                    f"theorem {theorem_name} :",
-                    f"    Prop := by  -- organize the {concept} formalization around explicit hypotheses",
-                    "  sorry",
-                ]
-            )
-        )
-    return lines[:6]
+    hint = hit.proven_lemmas[0] if hit.proven_lemmas else hit.tactic_hints[0] if hit.tactic_hints else hit.name
+    return "\n".join(
+        [
+            f"theorem {slug}_{hit.name}_subgoal :",
+            f"    Prop := by  -- close this goal by reusing `{hint}`",
+            "  sorry",
+        ]
+    )
 
 
-def _bellman_subgoals(claim: str, context: PlannerContext) -> list[str]:
-    slug = slugify_claim(claim, prefix="bellman")
-    subgoals = [
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_1 {{S : Type*}} (reward : S → ℝ) (transition : S → S) (β : ℝ) :",
-                "    ∃ T : (S → ℝ) → (S → ℝ), T = BellmanOperator reward transition β := by",
-                "  sorry",
-            ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_2 {{S : Type*}} {{reward : S → ℝ}} {{transition : S → S}} {{β : ℝ}}",
-                "    (hβ : 0 ≤ β) {v w : S → ℝ} (hvw : ∀ s, v s ≤ w s) :",
-                "    ∀ s, BellmanOperator reward transition β v s ≤ BellmanOperator reward transition β w s := by",
-                "  sorry",
-            ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_3 {{S : Type*}} [MetricSpace (S → ℝ)]",
-                "    (reward : S → ℝ) (transition : S → S) (β : ℝ) :",
-                "    IsContraction (BellmanOperator reward transition β) := by",
-                "  sorry",
-            ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_4 {{S : Type*}} [MetricSpace (S → ℝ)] [CompleteSpace (S → ℝ)] [Nonempty (S → ℝ)]",
-                "    (reward : S → ℝ) (transition : S → S) (β : ℝ)",
-                "    {K : NNReal} (hK : ContractingWith K (BellmanOperator reward transition β)) :",
-                "    Function.IsFixedPt (BellmanOperator reward transition β)",
-                "      (ContractingWith.fixedPoint (f := BellmanOperator reward transition β) hK) := by",
-                "  sorry",
-            ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_5 {{S : Type*}} [MetricSpace (S → ℝ)] [CompleteSpace (S → ℝ)] [Nonempty (S → ℝ)]",
-                "    {K : NNReal} (reward : S → ℝ) (transition : S → S) (β : ℝ)",
-                "    (hK : ContractingWith K (BellmanOperator reward transition β)) :",
-                "    Function.IsFixedPt (BellmanOperator reward transition β)",
-                "      (ValueFunction (BellmanOperator reward transition β) hK) := by",
-                "  sorry",
-            ]
-        ),
-    ]
-    if context.few_shot_traces:
-        subgoals.append(
-            "\n".join(
-                [
-                    f"theorem {slug}_subgoal_6 {{S : Type*}} {{reward : S → ℝ}} {{transition : S → S}} {{β : ℝ}} :",
-                    "    ∀ v w : S → ℝ, BellmanOperator reward transition β v = BellmanOperator reward transition β w → v = w := by",
-                    "  sorry",
-                ]
-            )
-        )
-    return subgoals[:6]
-
-
-def _equilibrium_subgoals(claim: str) -> list[str]:
-    slug = slugify_claim(claim, prefix="equilibrium")
+def _fallback_subgoals(claim: str, context: PlannerContext, *, theorem_stub: str | None = None) -> list[str]:
+    stub_subgoal = _extract_stub_subgoal(theorem_stub)
+    if stub_subgoal is not None:
+        return [stub_subgoal]
+    if context.selected_preamble:
+        return [_minimal_hit_subgoal(claim, context.selected_preamble[0])]
+    slug = slugify_claim(claim)
     return [
         "\n".join(
             [
-                f"theorem {slug}_subgoal_1 {{Profile : Type}} :",
-                "    ∃ h : HasNashEquilibrium Profile, h.isNash h.witness := by",
+                f"theorem {slug}_subgoal :",
+                "    Prop := by  -- organize the claim around explicit hypotheses and a direct closing lemma",
                 "  sorry",
             ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_2 {{Profile : Type}} (h : HasNashEquilibrium Profile) :",
-                "    ∃ profile, h.isNash profile := by",
-                "  sorry",
-            ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_3 {{α : Type*}} [MetricSpace α] [CompleteSpace α] [Nonempty α]",
-                "    {K : NNReal} {f : α → α} (hf : ContractingWith K f) :",
-                "    ∃ x, Function.IsFixedPt f x := by",
-                "  sorry",
-            ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_4 {{Profile : Type}} :",
-                "    Prop := by  -- translate the economic equilibrium statement into a witness-based Lean target",
-                "  sorry",
-            ]
-        ),
+        )
     ]
-
-
-def _optimization_subgoals(claim: str) -> list[str]:
-    slug = slugify_claim(claim, prefix="optimization")
-    return [
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_1 {{α : Type*}} (f : α → ℝ) (feasible : Set α) (x : α) :",
-                "    IsConstrainedMaximum f feasible x := by",
-                "  sorry",
-            ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_2 {{α ι : Type*}} (x : α) (g : α → ι → ℝ) (μ : ι → ℝ) :",
-                "    KuhnTuckerPoint x g μ := by",
-                "  sorry",
-            ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_3 {{α : Type*}} (f : α → ℝ) (feasible : Set α) (x y : α)",
-                "    (hx : IsConstrainedMaximum f feasible x) (hy : y ∈ feasible) :",
-                "    f y ≤ f x := by",
-                "  sorry",
-            ]
-        ),
-        "\n".join(
-            [
-                f"theorem {slug}_subgoal_4 {{α ι : Type*}} (x : α) (g : α → ι → ℝ) (μ : ι → ℝ)",
-                "    (hkt : KuhnTuckerPoint x g μ) :",
-                "    Prop := by  -- isolate complementary slackness or multiplier conditions",
-                "  sorry",
-            ]
-        ),
-    ]
-
-
-def _synthesize_subgoals(claim: str, context: PlannerContext) -> list[str]:
-    selected_names = {hit.name for hit in context.selected_preamble}
-    tags = set(infer_structure_tags(claim, preamble_names=list(selected_names)))
-    if "bellman_operator" in selected_names or ("bellman" in tags and "contraction" in tags):
-        return _bellman_subgoals(claim, context)
-    if "nash_existence" in selected_names or "equilibrium" in tags:
-        return _equilibrium_subgoals(claim)
-    if "constrained_optimization" in selected_names or "kuhn_tucker" in selected_names or "optimization" in tags:
-        return _optimization_subgoals(claim)
-    return _fallback_subgoals(claim, context)
 
 
 def _subgoals_need_upgrade(subgoals: list[str]) -> bool:
@@ -735,12 +572,10 @@ def _calibrate_confidence(
         confidence -= 0.2
     if not context.selected_preamble:
         confidence -= 0.2
-    elif len(context.selected_preamble) >= 3:
+    elif len(context.selected_preamble) >= 2:
         confidence += 0.05
     if context.few_shot_traces:
-        confidence += 0.05
-    else:
-        confidence -= 0.05
+        confidence += 0.02
     if upgraded_subgoals:
         confidence = min(confidence, 0.82)
     return round(min(max(confidence, 0.0), 1.0), 3)
@@ -773,7 +608,11 @@ class Planner:
         preamble_names: list[str] | None = None,
         benchmark_mode: bool = False,
     ) -> tuple[PlannerPacket, ProviderCallMetadata | None]:
-        context = self.retrieval_service.build_context(claim)
+        context = self.retrieval_service.build_context(
+            claim,
+            theorem_stub=theorem_stub,
+            preamble_names=preamble_names,
+        )
         user_prompt = build_user_prompt(
             claim,
             context,
@@ -799,16 +638,11 @@ class Planner:
                     "error_message": str(exc),
                 },
             )
-        stub_authoritative = bool(theorem_stub and theorem_stub.strip())
-        if stub_authoritative:
-            subgoals = _dedupe_subgoals(response.subgoals)[:6]
-            upgraded_subgoals = False
-        else:
-            upgraded_subgoals = _subgoals_need_upgrade(response.subgoals)
-            subgoals = _dedupe_subgoals(
-                _synthesize_subgoals(claim, context) if upgraded_subgoals else response.subgoals
-            )[:6]
         repaired = bool(metadata and metadata.metadata.get("planner_repaired"))
+        upgraded_subgoals = repaired or _subgoals_need_upgrade(response.subgoals)
+        subgoals = _dedupe_subgoals(
+            _fallback_subgoals(claim, context, theorem_stub=theorem_stub) if upgraded_subgoals else response.subgoals
+        )[:3]
         return (
             PlannerPacket(
                 claim=claim,
@@ -831,10 +665,7 @@ class Planner:
         if not raw_text:
             raise error
         try:
-            payload = _extract_json_payload(raw_text)
-            payload["clarifying_questions"] = payload.get("clarifying_questions") if isinstance(payload.get("clarifying_questions"), list) else []
-            defaults = payload.get("textbook_defaults")
-            payload["textbook_defaults"] = defaults if isinstance(defaults, list) and any(str(item).strip() for item in defaults) else [PLANNER_REPAIR_DEFAULT]
+            payload = _normalize_planner_payload(_extract_json_payload(raw_text))
             payload["needs_review"] = True
             payload["confidence"] = 0.65
             return PlannerLLMResponse.model_validate(payload)

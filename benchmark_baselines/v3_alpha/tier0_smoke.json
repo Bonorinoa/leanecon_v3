@@ -23,7 +23,7 @@
   },
   "executed": true,
   "failure_counts": {},
-  "generated_at": "2026-04-21T15:59:40.777423+00:00",
+  "generated_at": "2026-04-22T04:09:09.493391+00:00",
   "mode": "live_pipeline",
   "pass_at_1": 1.0,
   "readiness": {
@@ -53,17 +53,17 @@
       "theorem_name": "benchmark_one_plus_one",
       "theorem_stub_reference": "import Mathlib\n\ntheorem benchmark_one_plus_one : 1 + 1 = 2 := by\n  sorry\n",
       "timing_breakdown": {
-        "formalizer_ms": 15799.220707966015,
-        "planner_ms": 129969.93337501772,
-        "prover_ms": 172695.174,
-        "total_ms": 318464.328
+        "formalizer_ms": 48551.032416988164,
+        "planner_ms": 8984.974416904151,
+        "prover_ms": 80971.216,
+        "total_ms": 138507.223
       },
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
           "input_tokens": null,
-          "latency_ms": 15799.221,
+          "latency_ms": 48551.032,
           "model": "labs-leanstral-2603",
           "output_tokens": null,
           "provider": "mistral",
@@ -74,10 +74,10 @@
         "planner": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 1655,
-          "latency_ms": 129969.933,
+          "input_tokens": 474,
+          "latency_ms": 8984.974,
           "model": "gemma4:31b-cloud",
-          "output_tokens": 127,
+          "output_tokens": 119,
           "provider": "ollama",
           "stage": "planner",
           "success": true,
@@ -86,10 +86,10 @@
         "prover": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 830,
-          "latency_ms": 1621.041,
+          "input_tokens": 829,
+          "latency_ms": 1449.789,
           "model": "labs-leanstral-2603",
-          "output_tokens": 110,
+          "output_tokens": 94,
           "provider": "mistral",
           "stage": "prover",
           "success": true,
@@ -113,17 +113,17 @@
       "theorem_name": "benchmark_budget_constraint",
       "theorem_stub_reference": "import Mathlib\nopen Real\n\ntheorem benchmark_budget_constraint\n    (m p1 p2 x1 x2 : \u211d)\n    (hm : m > 0) (hp1 : p1 > 0) (hp2 : p2 > 0)\n    (hspend : p1 * x1 + p2 * x2 = m) :\n    p1 * x1 + p2 * x2 = m := by\n  sorry\n",
       "timing_breakdown": {
-        "formalizer_ms": 14454.574458068237,
-        "planner_ms": 4730.764374835417,
-        "prover_ms": 62957.345,
-        "total_ms": 82142.684
+        "formalizer_ms": 15863.753458950669,
+        "planner_ms": 5648.60525005497,
+        "prover_ms": 67370.721,
+        "total_ms": 88883.08
       },
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
           "input_tokens": null,
-          "latency_ms": 14454.574,
+          "latency_ms": 15863.753,
           "model": "labs-leanstral-2603",
           "output_tokens": null,
           "provider": "mistral",
@@ -134,10 +134,10 @@
         "planner": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 1966,
-          "latency_ms": 4730.764,
+          "input_tokens": 540,
+          "latency_ms": 5648.605,
           "model": "gemma4:31b-cloud",
-          "output_tokens": 119,
+          "output_tokens": 126,
           "provider": "ollama",
           "stage": "planner",
           "success": true,
@@ -147,7 +147,7 @@
           "error_code": null,
           "estimated_cost_usd": 0.0,
           "input_tokens": 1024,
-          "latency_ms": 1591.3,
+          "latency_ms": 1382.5,
           "model": "labs-leanstral-2603",
           "output_tokens": 102,
           "provider": "mistral",
@@ -173,17 +173,17 @@
       "theorem_name": "benchmark_measure_empty",
       "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Primitives.Measure\n\ntheorem benchmark_measure_empty\n    {\u03b1 : Type*} [MeasurableSpace \u03b1] (\u03bc : EconomicMeasure \u03b1) :\n    \u03bc \u2205 = 0 := by\n  sorry\n",
       "timing_breakdown": {
-        "formalizer_ms": 12842.866207938641,
-        "planner_ms": 280714.89683305845,
-        "prover_ms": 57323.133,
-        "total_ms": 350880.896
+        "formalizer_ms": 16440.258165821433,
+        "planner_ms": 3090.7060001045465,
+        "prover_ms": 67890.112,
+        "total_ms": 87421.076
       },
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
           "input_tokens": null,
-          "latency_ms": 12842.866,
+          "latency_ms": 16440.258,
           "model": "labs-leanstral-2603",
           "output_tokens": null,
           "provider": "mistral",
@@ -194,10 +194,10 @@
         "planner": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 1930,
-          "latency_ms": 280714.897,
+          "input_tokens": 467,
+          "latency_ms": 3090.706,
           "model": "gemma4:31b-cloud",
-          "output_tokens": 153,
+          "output_tokens": 123,
           "provider": "ollama",
           "stage": "planner",
           "success": true,
@@ -206,10 +206,10 @@
         "prover": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 953,
-          "latency_ms": 1543.404,
+          "input_tokens": 957,
+          "latency_ms": 1496.673,
           "model": "labs-leanstral-2603",
-          "output_tokens": 117,
+          "output_tokens": 114,
           "provider": "mistral",
           "stage": "prover",
           "success": true,
@@ -230,12 +230,12 @@
       "output_tokens": 0
     },
     "planner": {
-      "input_tokens": 5551,
-      "output_tokens": 399
+      "input_tokens": 1481,
+      "output_tokens": 368
     },
     "prover": {
-      "input_tokens": 2807,
-      "output_tokens": 329
+      "input_tokens": 2810,
+      "output_tokens": 310
     }
   }
 }

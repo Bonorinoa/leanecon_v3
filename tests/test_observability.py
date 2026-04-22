@@ -62,6 +62,7 @@ def test_job_store_persists_usage_metrics_and_audits(tmp_path) -> None:
             provider="mistral",
             model="labs-leanstral-2603",
             success=True,
+            raw_planner_response="raw planner response",
             metadata={"claim_id": "demo"},
         ),
     )
@@ -71,6 +72,7 @@ def test_job_store_persists_usage_metrics_and_audits(tmp_path) -> None:
     assert hydrated.result["usage_by_stage"]["formalizer"]["stage"] == "formalizer"
     assert hydrated.result["timing_breakdown"]["formalizer_ms"] == 7.0
     assert hydrated.result["audit_summary"]["event_count"] == 1
+    assert hydrated.result["audit_summary"]["events"][0]["raw_planner_response"] == "raw planner response"
 
     snapshot = store.metrics_snapshot()
     assert snapshot["usage_totals"]["records"] == 1
