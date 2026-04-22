@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import time
 from typing import Protocol
@@ -22,6 +22,7 @@ from src.providers import normalize_huggingface_provider
 PLANNER_RETRY_ATTEMPTS = 3
 PLANNER_RETRY_BACKOFF_SECONDS = (0.5, 1.0)
 PLANNER_RETRYABLE_ERROR_CODES = frozenset({"schema_invalid", "rate_limit", "provider_http_error", "provider_unavailable"})
+PLANNER_REPAIR_DEFAULT = "Standard PhD-level assumptions (MWG/SLP continuous/bounded return, β∈(0,1), complete metric spaces)"
 
 
 class PlannerDriverError(RuntimeError):
@@ -118,6 +119,20 @@ def _unwrap_driver_response(
     return value, None
 
 
+def _planner_error_metadata(error: BaseException) -> ProviderCallMetadata | None:
+    for candidate in (error, getattr(error, "__cause__", None)):
+        metadata = getattr(candidate, "provider_metadata", None)
+        if isinstance(metadata, ProviderCallMetadata):
+            return metadata
+    return None
+
+
+def _schema_invalid_error(message: str, *, metadata: ProviderCallMetadata, cause: Exception) -> PlannerDriverError:
+    error = PlannerDriverError(message)
+    setattr(error, "provider_metadata", metadata)
+    raise error from cause
+
+
 def _planner_response_format() -> dict[str, object]:
     return {
         "type": "json_schema",
@@ -209,11 +224,6 @@ class HuggingFacePlannerDriver:
             content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
         if not isinstance(content, str):
             raise PlannerDriverError("Planner chat-completion response did not contain text content.")
-        payload = _extract_json_payload(content)
-        try:
-            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(payload))
-        except Exception as error:
-            raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
         usage = getattr(raw, "usage", None)
         metadata = ProviderCallMetadata(
             input_tokens=int(usage.prompt_tokens) if getattr(usage, "prompt_tokens", None) is not None else None,
@@ -221,7 +231,13 @@ class HuggingFacePlannerDriver:
             usage_source="provider" if usage is not None else "estimated_chars",
             prompt_text=json.dumps(messages, ensure_ascii=True),
             response_text=content,
+            raw_planner_response=content,
         )
+        try:
+            payload = _extract_json_payload(content)
+            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(payload))
+        except Exception as error:
+            _schema_invalid_error(f"Planner backend returned schema-invalid JSON: {error}", metadata=metadata, cause=error)
         return response, metadata
 
     def _text_generation(
@@ -253,18 +269,19 @@ class HuggingFacePlannerDriver:
         generated_text = getattr(raw_text, "generated_text", None)
         details = getattr(raw_text, "details", None)
         response_text = str(generated_text if generated_text is not None else raw_text)
-        payload = _extract_json_payload(response_text)
-        try:
-            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(payload))
-        except Exception as error:
-            raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
         metadata = ProviderCallMetadata(
             input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
             output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
             usage_source="provider" if details is not None else "estimated_chars",
             prompt_text=prompt,
             response_text=response_text,
+            raw_planner_response=response_text,
         )
+        try:
+            payload = _extract_json_payload(response_text)
+            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(payload))
+        except Exception as error:
+            _schema_invalid_error(f"Planner backend returned schema-invalid JSON: {error}", metadata=metadata, cause=error)
         return response, metadata
 
     def _should_fallback_to_text_generation(self, error: Exception) -> bool:
@@ -307,7 +324,11 @@ class HuggingFacePlannerDriver:
                     user_prompt=user_prompt,
                 )
         except Exception as error:
-            raise PlannerDriverError(f"Planner backend invocation failed for {backend.model}: {error}") from error
+            wrapped = PlannerDriverError(f"Planner backend invocation failed for {backend.model}: {error}")
+            metadata = _planner_error_metadata(error)
+            if metadata is not None:
+                setattr(wrapped, "provider_metadata", metadata)
+            raise wrapped from error
 
 
 class OllamaPlannerDriver:
@@ -382,23 +403,24 @@ class OllamaPlannerDriver:
         content = payload.get("message", {}).get("content")
         if not isinstance(content, str):
             raise PlannerDriverError("Ollama planner response did not contain assistant text content.")
-        parsed = _extract_json_payload(content)
-        try:
-            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(parsed))
-        except Exception as error:
-            raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
         metadata = ProviderCallMetadata(
             input_tokens=int(payload.get("prompt_eval_count")) if payload.get("prompt_eval_count") is not None else None,
             output_tokens=int(payload.get("eval_count")) if payload.get("eval_count") is not None else None,
             usage_source="provider",
             prompt_text=json.dumps(messages, ensure_ascii=True),
             response_text=content,
+            raw_planner_response=content,
             metadata={
                 "done_reason": payload.get("done_reason"),
                 "total_duration": payload.get("total_duration"),
                 "load_duration": payload.get("load_duration"),
             },
         )
+        try:
+            parsed = _extract_json_payload(content)
+            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(parsed))
+        except Exception as error:
+            _schema_invalid_error(f"Planner backend returned schema-invalid JSON: {error}", metadata=metadata, cause=error)
         return response, metadata
 
 
@@ -421,6 +443,7 @@ def _dedupe_subgoals(subgoals: list[str]) -> list[str]:
 
 def _fallback_subgoals(claim: str, context: PlannerContext) -> list[str]:
     slug = slugify_claim(claim)
+    normalized_claim = claim.lower()
     selected_names = [hit.name for hit in context.selected_preamble]
     lines: list[str] = []
     for index, hit in enumerate(context.selected_preamble[:4], start=1):
@@ -441,12 +464,28 @@ def _fallback_subgoals(claim: str, context: PlannerContext) -> list[str]:
                     [
                         f"theorem {theorem_name} {{V : Type*}} [MetricSpace V] [CompleteSpace V] [Nonempty V]",
                         "    {K : NNReal} {T : V → V} (hT : ContractingWith K T) :",
-                        "    ∃ x, Function.IsFixedPt T x := by",
+                        (
+                            "    Function.IsFixedPt T (ContractingWith.fixedPoint (f := T) hT) := by"
+                            if "canonical fixed point" in normalized_claim or "indeed fixed" in normalized_claim
+                            else "    ∃ x, Function.IsFixedPt T x := by"
+                        ),
                         "  sorry",
                     ]
                 )
             )
         elif hit.name == "bellman_operator":
+            if "monotone" in normalized_claim or "ranking" in normalized_claim:
+                lines.append(
+                    "\n".join(
+                        [
+                            f"theorem {theorem_name} {{S : Type*}} {{reward : S → ℝ}} {{transition : S → S}} {{β : ℝ}}",
+                            "    {v w : S → ℝ} (hβ : 0 ≤ β) (hvw : ∀ s, v s ≤ w s) :",
+                            "    ∀ s, BellmanOperator reward transition β v s ≤ BellmanOperator reward transition β w s := by",
+                            "  sorry",
+                        ]
+                    )
+                )
+                continue
             lines.append(
                 "\n".join(
                     [
@@ -562,8 +601,9 @@ def _bellman_subgoals(claim: str, context: PlannerContext) -> list[str]:
             [
                 f"theorem {slug}_subgoal_4 {{S : Type*}} [MetricSpace (S → ℝ)] [CompleteSpace (S → ℝ)] [Nonempty (S → ℝ)]",
                 "    (reward : S → ℝ) (transition : S → S) (β : ℝ)",
-                "    (hT : IsContraction (BellmanOperator reward transition β)) :",
-                "    ∃ v, Function.IsFixedPt (BellmanOperator reward transition β) v := by",
+                "    {K : NNReal} (hK : ContractingWith K (BellmanOperator reward transition β)) :",
+                "    Function.IsFixedPt (BellmanOperator reward transition β)",
+                "      (ContractingWith.fixedPoint (f := BellmanOperator reward transition β) hK) := by",
                 "  sorry",
             ]
         ),
@@ -740,7 +780,25 @@ class Planner:
             theorem_stub=theorem_stub,
             preamble_names=preamble_names,
         )
-        response, metadata = self._generate_with_retry(user_prompt)
+        try:
+            response, metadata = self._generate_with_retry(user_prompt)
+        except Exception as exc:
+            if classify_exception(exc) != "schema_invalid":
+                raise
+            metadata = _planner_error_metadata(exc)
+            response = self._repair_planner_response(exc, metadata.raw_planner_response if metadata else None)
+            raw_text = metadata.raw_planner_response if metadata else None
+            metadata = replace(
+                metadata or ProviderCallMetadata(response_text=raw_text, raw_planner_response=raw_text),
+                response_text=(metadata.response_text if metadata else None) or raw_text,
+                raw_planner_response=raw_text,
+                metadata={
+                    **((metadata.metadata if metadata is not None else {})),
+                    "planner_repaired": True,
+                    "error_code": "schema_invalid",
+                    "error_message": str(exc),
+                },
+            )
         stub_authoritative = bool(theorem_stub and theorem_stub.strip())
         if stub_authoritative:
             subgoals = _dedupe_subgoals(response.subgoals)[:6]
@@ -750,6 +808,7 @@ class Planner:
             subgoals = _dedupe_subgoals(
                 _synthesize_subgoals(claim, context) if upgraded_subgoals else response.subgoals
             )[:6]
+        repaired = bool(metadata and metadata.metadata.get("planner_repaired"))
         return (
             PlannerPacket(
                 claim=claim,
@@ -758,7 +817,7 @@ class Planner:
                 plan_paragraph=response.plan_paragraph,
                 subgoals=subgoals,
                 needs_review=(not benchmark_mode) or response.needs_review,
-                confidence=_calibrate_confidence(response, context, upgraded_subgoals=upgraded_subgoals),
+                confidence=0.65 if repaired else _calibrate_confidence(response, context, upgraded_subgoals=upgraded_subgoals),
                 review_state="approved" if benchmark_mode else "awaiting_plan_review",
                 backend=self.backend.name,
                 model=self.backend.model or PLANNER_MODEL,
@@ -768,10 +827,25 @@ class Planner:
             metadata,
         )
 
+    def _repair_planner_response(self, error: Exception, raw_text: str | None) -> PlannerLLMResponse:
+        if not raw_text:
+            raise error
+        try:
+            payload = _extract_json_payload(raw_text)
+            payload["clarifying_questions"] = payload.get("clarifying_questions") if isinstance(payload.get("clarifying_questions"), list) else []
+            defaults = payload.get("textbook_defaults")
+            payload["textbook_defaults"] = defaults if isinstance(defaults, list) and any(str(item).strip() for item in defaults) else [PLANNER_REPAIR_DEFAULT]
+            payload["needs_review"] = True
+            payload["confidence"] = 0.65
+            return PlannerLLMResponse.model_validate(payload)
+        except Exception:
+            raise error
+
     def _generate_with_retry(
         self, user_prompt: str
     ) -> tuple[PlannerLLMResponse, ProviderCallMetadata | None]:
         last_error: Exception | None = None
+        last_metadata: ProviderCallMetadata | None = None
         for attempt in range(PLANNER_RETRY_ATTEMPTS):
             try:
                 return _unwrap_driver_response(
@@ -783,13 +857,19 @@ class Planner:
                 )
             except Exception as exc:
                 last_error = exc
-                if classify_exception(exc) not in PLANNER_RETRYABLE_ERROR_CODES:
+                error_code = classify_exception(exc)
+                metadata = _planner_error_metadata(exc)
+                if metadata is not None:
+                    last_metadata = metadata
+                if error_code not in PLANNER_RETRYABLE_ERROR_CODES:
                     raise
                 if attempt + 1 >= PLANNER_RETRY_ATTEMPTS:
                     break
                 backoff = PLANNER_RETRY_BACKOFF_SECONDS[min(attempt, len(PLANNER_RETRY_BACKOFF_SECONDS) - 1)]
                 time.sleep(backoff)
         assert last_error is not None
+        if last_metadata is not None and _planner_error_metadata(last_error) is None:
+            setattr(last_error, "provider_metadata", last_metadata)
         raise last_error
 
     def build_plan(

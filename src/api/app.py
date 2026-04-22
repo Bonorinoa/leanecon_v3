@@ -161,6 +161,13 @@ def _record_audit_events(job_id: str, events: list[AuditEvent] | list[dict[str, 
         job_store.record_audit_event(job_id, AuditEvent(**payload))
 
 
+def _planner_raw_response(events: list[AuditEvent]) -> tuple[bool, str | None]:
+    for event in events:
+        if event.stage == "planner" and event.error_code == "schema_invalid":
+            return True, event.raw_planner_response or event.metadata.get("raw_planner_response")
+    return False, None
+
+
 def _persist_stage_success(
     job_id: str,
     *,
@@ -171,6 +178,10 @@ def _persist_stage_success(
     usage: TokenUsage,
     audit_events: list[AuditEvent],
 ) -> JobStatusResponse:
+    if stage == "planner":
+        has_schema_invalid, raw_response = _planner_raw_response(audit_events)
+        if has_schema_invalid:
+            payload["raw_planner_response"] = raw_response
     _record_usage(job_id, usage, success_override=True)
     _record_audit_events(job_id, audit_events)
     job_store.record_timing(job_id, _stage_timing(stage, usage.latency_ms))

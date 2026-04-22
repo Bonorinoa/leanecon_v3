@@ -44,6 +44,33 @@ def _usage_dict(value: Any) -> dict[str, Any] | None:
     return None
 
 
+def _planner_raw_response(plan_result: Any) -> tuple[bool, str | None]:
+    usage = _usage_dict(getattr(plan_result, "usage", None)) or {}
+    if usage.get("error_code") != "schema_invalid":
+        return False, None
+    for event in getattr(plan_result, "audit_events", []):
+        raw_response = getattr(event, "raw_planner_response", None)
+        if raw_response is not None:
+            return True, raw_response
+        metadata = getattr(event, "metadata", {})
+        if isinstance(metadata, dict) and metadata.get("raw_planner_response") is not None:
+            return True, str(metadata["raw_planner_response"])
+    return True, None
+
+
+def _audit_raw_response(events: list[Any]) -> str | None:
+    for event in events:
+        if getattr(event, "error_code", None) != "schema_invalid":
+            continue
+        raw_response = getattr(event, "raw_planner_response", None)
+        if raw_response is not None:
+            return raw_response
+        metadata = getattr(event, "metadata", {})
+        if isinstance(metadata, dict) and metadata.get("raw_planner_response") is not None:
+            return str(metadata["raw_planner_response"])
+    return None
+
+
 def _accumulate_usage(
     usage: dict[str, Any] | None,
     *,
@@ -146,6 +173,37 @@ def _preflight(
     return {"ready": ready, "checks": checks, "blockers": blockers}
 
 
+def _select_claims(
+    claims: list[dict[str, Any]],
+    *,
+    limit: int | None,
+    stratified: bool,
+) -> list[dict[str, Any]]:
+    if limit is None or limit >= len(claims):
+        return claims
+    if not stratified:
+        return claims[:limit]
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for claim in claims:
+        preambles = claim.get("preamble_names") or []
+        key = str(preambles[0]) if preambles else ""
+        buckets.setdefault(key, []).append(claim)
+    selected: list[dict[str, Any]] = []
+    while len(selected) < limit:
+        progressed = False
+        for key in sorted(buckets):
+            bucket = buckets[key]
+            if not bucket:
+                continue
+            selected.append(bucket.pop(0))
+            progressed = True
+            if len(selected) >= limit:
+                break
+        if not progressed:
+            break
+    return selected
+
+
 async def _run_claim_set_async(
     claim_set: str,
     *,
@@ -154,8 +212,10 @@ async def _run_claim_set_async(
     prover_instance: Prover,
     enforce_readiness: bool,
     benchmark_mode: bool,
+    limit: int | None,
+    stratified: bool,
 ) -> dict[str, Any]:
-    claims = load_claims(claim_set)
+    claims = _select_claims(load_claims(claim_set), limit=limit, stratified=stratified)
     readiness = _preflight(planner_service, formalizer_service, prover_instance)
     target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
     if enforce_readiness and not readiness["ready"]:
@@ -193,6 +253,8 @@ async def _run_claim_set_async(
         planner_usage: dict[str, Any] | None = None
         formalizer_usage: dict[str, Any] | None = None
         prover_usage: dict[str, Any] | None = None
+        planner_schema_invalid = False
+        raw_planner_response: str | None = None
         failure_code: str | None = None
         termination_reason: str | None = None
         stage_timings = {"planner_ms": 0.0, "formalizer_ms": 0.0, "prover_ms": 0.0, "total_ms": 0.0}
@@ -238,6 +300,7 @@ async def _run_claim_set_async(
                 benchmark_mode=benchmark_mode,
             )
             planner_usage = _usage_dict(plan_result.usage)
+            planner_schema_invalid, raw_planner_response = _planner_raw_response(plan_result)
             stage_timings["planner_ms"] = float(plan_result.usage.latency_ms or 0.0)
 
             formalize_result = formalizer_service.formalize_with_telemetry(
@@ -275,6 +338,8 @@ async def _run_claim_set_async(
             if exc.stage == "planner":
                 planner_usage = usage
                 stage_timings["planner_ms"] = float((usage or {}).get("latency_ms") or 0.0)
+                planner_schema_invalid = exc.error_code == "schema_invalid"
+                raw_planner_response = _audit_raw_response(exc.audit_events)
             elif exc.stage == "formalizer":
                 formalizer_usage = usage
                 stage_timings["formalizer_ms"] = float((usage or {}).get("latency_ms") or 0.0)
@@ -319,6 +384,7 @@ async def _run_claim_set_async(
                     }.items()
                     if value is not None
                 },
+                **({"raw_planner_response": raw_planner_response} if planner_schema_invalid else {}),
             }
         )
 
@@ -352,6 +418,8 @@ def run_claim_set(
     prover_instance: Prover | None = None,
     enforce_readiness: bool = True,
     benchmark_mode: bool = False,
+    limit: int | None = None,
+    stratified: bool = False,
 ) -> dict[str, Any]:
     return asyncio.run(
         _run_claim_set_async(
@@ -361,6 +429,8 @@ def run_claim_set(
             prover_instance=prover_instance or DEFAULT_PROVER,
             enforce_readiness=enforce_readiness,
             benchmark_mode=benchmark_mode,
+            limit=limit,
+            stratified=stratified,
         )
     )
 
@@ -424,6 +494,8 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--allow-unready", action="store_true")
     parser.add_argument("--benchmark-mode", action="store_true")
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--stratified", action="store_true")
     args = parser.parse_args()
 
     selected = tuple(args.claim_set or CLAIM_SETS)
@@ -432,6 +504,8 @@ def main() -> int:
             claim_set,
             enforce_readiness=not args.allow_unready,
             benchmark_mode=args.benchmark_mode,
+            limit=args.limit,
+            stratified=args.stratified,
         )
         for claim_set in selected
     ]

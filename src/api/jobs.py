@@ -310,6 +310,9 @@ class JobStore:
         self._publish_snapshot(job_id)
 
     def record_audit_event(self, job_id: str, event: AuditEvent) -> None:
+        metadata_payload = dict(event.metadata)
+        if event.raw_planner_response is not None:
+            metadata_payload["raw_planner_response"] = event.raw_planner_response
         with closing(sqlite3.connect(self.db_path)) as connection:
             connection.execute(
                 """
@@ -330,7 +333,7 @@ class JobStore:
                     event.error_message,
                     event.prompt_hash,
                     event.response_hash,
-                    json.dumps(event.metadata, sort_keys=True),
+                    json.dumps(metadata_payload, sort_keys=True),
                     _utc_now(),
                 ),
             )
@@ -405,6 +408,7 @@ class JobStore:
             error_code = str(row[5]) if row[5] is not None else None
             if error_code:
                 failure_counts[error_code] = failure_counts.get(error_code, 0) + 1
+            metadata = json.loads(str(row[9])) if row[9] else {}
             events.append(
                 {
                     "stage": str(row[0]),
@@ -416,7 +420,8 @@ class JobStore:
                     "error_message": str(row[6]) if row[6] is not None else None,
                     "prompt_hash": str(row[7]) if row[7] is not None else None,
                     "response_hash": str(row[8]) if row[8] is not None else None,
-                    "metadata": json.loads(str(row[9])) if row[9] else {},
+                    "raw_planner_response": metadata.get("raw_planner_response"),
+                    "metadata": metadata,
                     "created_at": str(row[10]),
                 }
             )

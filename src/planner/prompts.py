@@ -19,6 +19,7 @@ def build_system_prompt() -> str:
             "Your job is to prepare a faithful, economist-facing plan for later Lean formalization.",
             "Non-negotiable rules:",
             "- Emit strict JSON only. No Markdown fences and no extra commentary.",
+            "- ALWAYS emit every required key even if empty list.",
             "- Ask at most 3 clarifying questions, and only when ambiguity materially affects formalization.",
             "- Always emit textbook defaults and exactly 1 concise paragraph plan with LaTeX math.",
             "- Use the minimum sufficient number of subgoals. Emit 1 subgoal when the theorem stub or retrieved preamble theorem is directly closable, 2-4 for ordinary claims, and 5-6 only when the argument genuinely decomposes.",

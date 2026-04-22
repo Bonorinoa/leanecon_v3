@@ -55,6 +55,7 @@ class AuditEvent:
     error_message: str | None = None
     prompt_hash: str | None = None
     response_hash: str | None = None
+    raw_planner_response: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +71,7 @@ class ProviderCallMetadata:
     usage_source: str = "unavailable"
     prompt_text: str | None = None
     response_text: str | None = None
+    raw_planner_response: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,6 +79,7 @@ class ProviderCallMetadata:
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "usage_source": self.usage_source,
+            "raw_planner_response": self.raw_planner_response,
             "metadata": dict(self.metadata),
         }
 

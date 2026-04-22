@@ -104,7 +104,7 @@ def build_system_prompt() -> str:
 
 def _target_subgoal_range(context: FormalizerContext) -> str:
     if len(context.preamble_entries) >= 3 or len(context.planner_subgoals) >= 4:
-        return "Target 2 to 4 named subgoals unless the claim clearly needs deeper decomposition."
+        return "Target 4 to 6 named subgoals for this claim."
     if len(context.planner_subgoals) <= 1:
         return "Target 1 to 2 named subgoals and mirror the authoritative stub when it is already direct."
     return "Target 1 to 4 named subgoals unless the claim clearly decomposes further."
