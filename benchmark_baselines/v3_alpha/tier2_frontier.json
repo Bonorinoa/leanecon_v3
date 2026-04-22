@@ -1,10 +1,764 @@
 {
+  "average_decomposition_depth": 0.0,
+  "average_decomposition_steps": 0.0,
+  "average_tool_calls": 2.154,
+  "benchmark_mode": false,
   "claim_set": "tier2_frontier",
-  "generated_at": "2026-04-19T21:32:19.979130+00:00",
-  "meets_threshold": true,
-  "mode": "bootstrap_threshold_scaffold",
-  "notes": "TODO(Grok/CTO): replace scaffold summaries with live benchmark execution.",
-  "pass_at_1": 0.615385,
-  "passes": 8,
-  "total": 13
+  "claims_failed": 9,
+  "claims_passed": 4,
+  "claims_total": 13,
+  "cost_by_model": {
+    "mistral:labs-leanstral-2603": {
+      "estimated_cost_usd": 0.0,
+      "model": "labs-leanstral-2603",
+      "provider": "mistral"
+    },
+    "ollama:gemma4:31b-cloud": {
+      "estimated_cost_usd": 0.0,
+      "model": "gemma4:31b-cloud",
+      "provider": "ollama"
+    }
+  },
+  "cost_by_stage": {
+    "formalizer": 0.0,
+    "planner": 0.0,
+    "prover": 0.0
+  },
+  "executed": true,
+  "failure_counts": {
+    "max_turns_exhausted": 3,
+    "repl_compile_disagreement": 2,
+    "schema_invalid": 4
+  },
+  "generated_at": "2026-04-22T16:46:59.755626+00:00",
+  "mode": "live_pipeline",
+  "pass_at_1": 0.307692,
+  "readiness": {
+    "blockers": [],
+    "checks": {
+      "formalizer_price_known": true,
+      "planner_price_known": true,
+      "planner_provider_configured": true,
+      "prover_price_known": true,
+      "prover_provider_configured": true
+    },
+    "ready": true
+  },
+  "results": [
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": "repl_compile_disagreement",
+      "id": "t2_contraction_mapping_fixed_point",
+      "raw_claim": "A contraction mapping on a complete metric space has a unique fixed point.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "repl_compile_disagreement",
+      "theorem_name": "formalizer_contraction_mapping_unique_fixed_point",
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 13808.574541006237,
+        "planner_ms": 15692.5119580701,
+        "prover_ms": 603540.993,
+        "total_ms": 633042.079
+      },
+      "tool_calls": 3,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 6650,
+          "latency_ms": 13808.575,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 712,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 513,
+          "latency_ms": 15692.512,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 254,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": "schema_invalid",
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 6477,
+          "latency_ms": 9085.074,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 408,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": false,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": "repl_compile_disagreement",
+      "id": "t2_extreme_value_repair",
+      "raw_claim": "A strictly concave function attains a maximum on a compact set.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "repl_compile_disagreement",
+      "theorem_name": "formalizer_strictly_concave_function_attains_maximum_on_compact",
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 8803.75983286649,
+        "planner_ms": 23457.903415896,
+        "prover_ms": 290151.567,
+        "total_ms": 322413.23
+      },
+      "tool_calls": 2,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 3108,
+          "latency_ms": 8803.76,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 392,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 493,
+          "latency_ms": 23457.903,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 266,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 2716,
+          "latency_ms": 6855.172,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 231,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": "max_turns_exhausted",
+      "id": "t2_monotone_sequence_converges",
+      "raw_claim": "A monotone sequence bounded above converges.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "max_turns_exhausted",
+      "theorem_name": "formalizer_monotone_sequence_bounded_above_converges",
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 11785.590667044744,
+        "planner_ms": 9771.654874784872,
+        "prover_ms": 549927.762,
+        "total_ms": 571485.008
+      },
+      "tool_calls": 8,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 6682,
+          "latency_ms": 11785.591,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 643,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 526,
+          "latency_ms": 9771.655,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 230,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 19032,
+          "latency_ms": 25250.022,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 2466,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": "schema_invalid",
+      "id": "t2_pareto_dominance_transitive",
+      "raw_claim": "If one continuation-value function dominates another and \u03b2 is nonnegative, Bellman operator monotonicity preserves that ranking state by state.",
+      "raw_planner_response": "{\n  \"clarifying_questions\": [],\n  \"textbook_defaults\": [\n    \"The Bellman operator is defined as $T v(s) = \\max_{a \\in A(s)} \\{ r(s, a) + \\beta v(s') \\}$\",\n    \"Dominance is defined as $v \\le w$ if $v(s) \\le w(s)$ for all $s$.\"\n  ],\n  \"plan_paragraph\": \"The goal is to prove that the Bellman operator is monotonic with respect to the continuation-value functions. Given $v \\le w$ and $\\beta \\ge 0$, we will apply the `BellmanOperator.monotone` lemma from the preamble, which directly establishes that $T v \\le T w$ state by state.\",\n  \"subgoals\": [\n    \"Apply `BellmanOperator.monotone` to show that if $v \\le w$ and $\\beta \\ge 0$, then $T v \\le T w$.\"\n  ],\n  \"needs_review\": false,\n  \"confidence\": 1.0\n}",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "planner",
+      "theorem_name": null,
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 0.0,
+        "planner_ms": 14617.0,
+        "prover_ms": 0.0,
+        "total_ms": 14617.0
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "planner": {
+          "error_code": "schema_invalid",
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 14617.0,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": null,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": false,
+          "usage_source": "estimated_chars"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": "schema_invalid",
+      "id": "t2_utilitarian_swf_pareto_monotone",
+      "raw_claim": "A constrained maximizer weakly dominates every feasible alternative in the objective ordering.",
+      "raw_planner_response": "{\n  \"clarifying_questions\": [],\n  \"textbook_defaults\": [\n    \"The objective ordering is represented by a partial order or preorder $\\le$ on the codomain of the objective function.\"\n  ],\n  \"plan_paragraph\": \"The proof will directly apply the definition of a constrained maximum, specifically using the `IsConstrainedMaximum.value_le` lemma, which states that for any feasible alternative, the objective value of the maximizer is at least as large as the objective value of that alternative.\",\n  \"subgoals\": [\n    \"Apply `IsConstrainedMaximum.value_le` to show that the objective value of the constrained maximizer is greater than or equal to the objective value of any feasible alternative.\"\n  ],\n  \"needs_review\": false,\n  \"confidence\": 1.0\n}",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "planner",
+      "theorem_name": null,
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 0.0,
+        "planner_ms": 4807.905,
+        "prover_ms": 0.0,
+        "total_ms": 4807.905
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "planner": {
+          "error_code": "schema_invalid",
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 4807.905,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": null,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": false,
+          "usage_source": "estimated_chars"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": null,
+      "id": "t2_bellman_monotone_value_function",
+      "raw_claim": "When a Bellman-style operator is contracting, the associated value function is its fixed point.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "verified",
+      "theorem_name": "formalizer_bellman_contracting_fixed_point",
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 10595.288292039186,
+        "planner_ms": 4607.788250083104,
+        "prover_ms": 19258.681,
+        "total_ms": 34461.758
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 6360,
+          "latency_ms": 10595.288,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 544,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 513,
+          "latency_ms": 4607.788,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 204,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "trivial_shortcut"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": null,
+      "id": "t2_expected_payoff_convex_mixture",
+      "raw_claim": "Convex preferences provide a convex utility representation on the full commodity space.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "verified",
+      "theorem_name": "formalizer_convex_preferences_provide_a_convex_utility_representation_on",
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 7886.930417036638,
+        "planner_ms": 3418.57404098846,
+        "prover_ms": 14320.132,
+        "total_ms": 25625.636
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 2809,
+          "latency_ms": 7886.93,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 245,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 445,
+          "latency_ms": 3418.574,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 134,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "trivial_shortcut"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": null,
+      "id": "t2_ces_crs",
+      "raw_claim": "A contraction theorem on a complete metric space delivers a fixed point that can serve as an equilibrium object.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "verified",
+      "theorem_name": "formalizer_contraction_theorem_fixed_point",
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 10309.411915950477,
+        "planner_ms": 17620.129709132016,
+        "prover_ms": 52763.129,
+        "total_ms": 80692.671
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 6478,
+          "latency_ms": 10309.412,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 478,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 517,
+          "latency_ms": 17620.13,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 204,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "trivial_shortcut"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": null,
+      "id": "t2_stone_geary_monotone_alpha",
+      "raw_claim": "A continuous utility representation remains continuous when attention is restricted to a feasible subset.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "verified",
+      "theorem_name": "formalizer_continuous_utility_restriction",
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 7381.450500106439,
+        "planner_ms": 4605.446750065312,
+        "prover_ms": 60999.009,
+        "total_ms": 72985.906
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 2831,
+          "latency_ms": 7381.451,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 225,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 450,
+          "latency_ms": 4605.447,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 206,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "trivial_shortcut"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": "schema_invalid",
+      "id": "t2_bellman_contraction",
+      "raw_claim": "A Bellman-style operator satisfying contraction conditions fits the contraction-mapping template used in recursive economics.",
+      "raw_planner_response": "{\n  \"clarifying_questions\": [],\n  \"textbook_defaults\": [\n    \"The operator acts on a complete metric space of bounded functions.\",\n    \"The contraction factor is $\\beta \\in (0, 1)$.\"\n  ],\n  \"plan_paragraph\": \"The goal is to show that a Bellman operator satisfying the contraction property is a contraction mapping, thereby ensuring the existence of a unique fixed point. I will use the `contraction_mapping` framework to apply the fixed-point theorem to the `bellman_operator` given its contraction property.\",\n  \"subgoals\": [\n    \"Apply `contraction_has_fixedPoint` to the Bellman operator using the provided contraction condition to establish the existence of a unique fixed point.\"\n  ],\n  \"needs_review\": false,\n  \"confidence\": 1.0\n}",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "planner",
+      "theorem_name": null,
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 0.0,
+        "planner_ms": 4252.985,
+        "prover_ms": 0.0,
+        "total_ms": 4252.985
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "planner": {
+          "error_code": "schema_invalid",
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 4252.985,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": null,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": false,
+          "usage_source": "estimated_chars"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": "max_turns_exhausted",
+      "id": "t2_phillips_curve_stagflation",
+      "raw_claim": "Complementary slackness forces a multiplier to vanish whenever the corresponding Kuhn-Tucker constraint is slack.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "max_turns_exhausted",
+      "theorem_name": "formalizer_complementary_slackness_forces_multiplier_vanish",
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 10596.932374872267,
+        "planner_ms": 5687.125083990395,
+        "prover_ms": 500575.894,
+        "total_ms": 516859.951
+      },
+      "tool_calls": 7,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 6403,
+          "latency_ms": 10596.932,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 594,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 471,
+          "latency_ms": 5687.125,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 186,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": "schema_invalid",
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 21041,
+          "latency_ms": 19814.528,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 1088,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": false,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": "max_turns_exhausted",
+      "id": "t2_indirect_utility_roys_identity",
+      "raw_claim": "A witness profile satisfying the equilibrium predicate is enough to establish Nash equilibrium existence.",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "max_turns_exhausted",
+      "theorem_name": "formalizer_witness_profile_satisfying_equilibrium_predicate_is_nash_exis",
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 11888.26800021343,
+        "planner_ms": 10007.625666912645,
+        "prover_ms": 721208.7,
+        "total_ms": 743104.594
+      },
+      "tool_calls": 8,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 2952,
+          "latency_ms": 11888.268,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 214,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 502,
+          "latency_ms": 10007.626,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 154,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 12332,
+          "latency_ms": 10519.939,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 695,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_mode": false,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": "schema_invalid",
+      "id": "t2_geometric_series_discount",
+      "raw_claim": "Policy improvement is reflexive for any evaluation criterion, providing a base case for policy-iteration arguments.",
+      "raw_planner_response": "{\n  \"clarifying_questions\": [],\n  \"textbook_defaults\": [\n    \"The evaluation criterion is represented by a partial order (typically $\\le$) on the space of policies or their associated values.\"\n  ],\n  \"plan_paragraph\": \"The claim asserts the reflexivity of the policy improvement relation. Given the preamble hint `policyImproves_refl` and the verified trace, this is a direct application of the reflexivity of the underlying ordering relation used to define policy improvement.\",\n  \"subgoals\": [\n    \"Apply `policyImproves_refl` or `le_rfl` to prove that any policy $\\pi$ satisfies the improvement criterion relative to itself.\"\n  ],\n  \"needs_review\": false,\n  \"confidence\": 1.0\n}",
+      "status": "failed",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 180,
+        "theorem_body": 300
+      },
+      "termination_reason": "planner",
+      "theorem_name": null,
+      "theorem_stub_reference": null,
+      "timing_breakdown": {
+        "formalizer_ms": 0.0,
+        "planner_ms": 29470.383,
+        "prover_ms": 0.0,
+        "total_ms": 29470.383
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "planner": {
+          "error_code": "schema_invalid",
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 29470.383,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": null,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": false,
+          "usage_source": "estimated_chars"
+        }
+      },
+      "verified_via": "full_pipeline"
+    }
+  ],
+  "sample_seed": null,
+  "sampling_mode": "full",
+  "selected_ids": [
+    "t2_contraction_mapping_fixed_point",
+    "t2_extreme_value_repair",
+    "t2_monotone_sequence_converges",
+    "t2_pareto_dominance_transitive",
+    "t2_utilitarian_swf_pareto_monotone",
+    "t2_bellman_monotone_value_function",
+    "t2_expected_payoff_convex_mixture",
+    "t2_ces_crs",
+    "t2_stone_geary_monotone_alpha",
+    "t2_bellman_contraction",
+    "t2_phillips_curve_stagflation",
+    "t2_indirect_utility_roys_identity",
+    "t2_geometric_series_discount"
+  ],
+  "target_timeouts": {
+    "apollo_lemma": 120,
+    "subgoal": 180,
+    "theorem_body": 300
+  },
+  "tokens_by_stage": {
+    "formalizer": {
+      "input_tokens": 44273,
+      "output_tokens": 4047
+    },
+    "planner": {
+      "input_tokens": 4430,
+      "output_tokens": 1838
+    },
+    "prover": {
+      "input_tokens": 61598,
+      "output_tokens": 4888
+    }
+  }
 }
