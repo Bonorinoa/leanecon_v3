@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from types import SimpleNamespace
 from pathlib import Path
 from urllib import error as urllib_error
@@ -385,11 +386,191 @@ def test_planner_user_prompt_includes_authoritative_theorem_stub(tmp_path: Path)
     user_prompt = driver.captured.get("user_prompt")
     assert isinstance(user_prompt, str)
     assert "Authoritative Lean 4 theorem stub" in user_prompt
+    assert "Benchmark mode constraints" in user_prompt
     assert "benchmark_measure_empty" in user_prompt
     assert "μ ∅ = 0" in user_prompt
     assert "Pinned preamble entries" in user_prompt
     assert "measure" in user_prompt
     assert packet.review_state == "approved"
+
+
+@pytest.mark.parametrize(
+    ("raw_text", "claim", "theorem_stub", "preamble_names", "expected_theorem"),
+    [
+        (
+            json.dumps(
+                {
+                    "textbook_defaults": [
+                        "The Bellman operator is defined on continuation values with a nonnegative discount factor."
+                    ],
+                    "plan_paragraph": "Apply the Bellman monotonicity lemma directly.",
+                    "subgoals": [
+                        "Apply `BellmanOperator.monotone` to show pointwise order preservation."
+                    ],
+                    "needs_review": False,
+                    "confidence": 1.0,
+                }
+            ),
+            "If one continuation-value function dominates another and β is nonnegative, Bellman operator monotonicity preserves that ranking state by state.",
+            (
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator\n\n"
+                "theorem benchmark_bellman_operator_monotone\n"
+                "    {S : Type*} {reward : S → ℝ} {transition : S → S} {β : ℝ}\n"
+                "    (hβ : 0 ≤ β) {v w : S → ℝ} (hvw : ∀ s, v s ≤ w s) :\n"
+                "    ∀ s, BellmanOperator reward transition β v s ≤ BellmanOperator reward transition β w s := by\n"
+                "  sorry\n"
+            ),
+            ["bellman_operator"],
+            "benchmark_bellman_operator_monotone",
+        ),
+        (
+            json.dumps(
+                {
+                    "textbook_defaults": [
+                        "The objective ordering is represented by the codomain order on the objective function."
+                    ],
+                    "plan_paragraph": "Use the constrained maximum certificate directly.",
+                    "subgoals": [
+                        "Apply `IsConstrainedMaximum.value_le` to compare the maximizer against any feasible alternative."
+                    ],
+                    "needs_review": False,
+                    "confidence": 1.0,
+                }
+            ),
+            "A constrained maximizer weakly dominates every feasible alternative in the objective ordering.",
+            (
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.Optimization.ConstrainedOptimization\n\n"
+                "theorem benchmark_constrained_maximum_value_le\n"
+                "    {α : Type*} {f : α → ℝ} {feasible : Set α} {x y : α}\n"
+                "    (hx : IsConstrainedMaximum f feasible x) (hy : y ∈ feasible) :\n"
+                "    f y ≤ f x := by\n"
+                "  sorry\n"
+            ),
+            ["constrained_optimization"],
+            "benchmark_constrained_maximum_value_le",
+        ),
+        (
+            json.dumps(
+                {
+                    "textbook_defaults": [
+                        "The operator acts on a complete metric space with a contraction constant in (0, 1)."
+                    ],
+                    "plan_paragraph": "Use the contraction-mapping template to obtain the fixed point.",
+                    "subgoals": [
+                        "Apply `contraction_has_fixedPoint` to the Bellman-style operator."
+                    ],
+                    "needs_review": False,
+                    "confidence": 1.0,
+                }
+            ),
+            "A Bellman-style operator satisfying contraction conditions fits the contraction-mapping template used in recursive economics.",
+            (
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.DynamicProgramming.ContractionMapping\n\n"
+                "theorem benchmark_contraction_template\n"
+                "    {α : Type*} [MetricSpace α] [CompleteSpace α] [Nonempty α]\n"
+                "    {K : NNReal} {f : α → α} (hf : ContractingWith K f) :\n"
+                "    ∃ x, Function.IsFixedPt f x := by\n"
+                "  sorry\n"
+            ),
+            ["contraction_mapping"],
+            "benchmark_contraction_template",
+        ),
+        (
+            json.dumps(
+                {
+                    "textbook_defaults": [
+                        "Policy improvement is defined by the underlying evaluation order."
+                    ],
+                    "plan_paragraph": "Use reflexivity of the policy-improvement relation.",
+                    "subgoals": [
+                        "Apply `policyImproves_refl` or `le_rfl`."
+                    ],
+                    "needs_review": False,
+                    "confidence": 1.0,
+                }
+            ),
+            "Policy improvement is reflexive for any evaluation criterion, providing a base case for policy-iteration arguments.",
+            (
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.DynamicProgramming.PolicyIteration\n\n"
+                "theorem benchmark_policy_self_improves\n"
+                "    {π : Type*} (criterion : π → ℝ) (policy : π) :\n"
+                "    PolicyImproves criterion policy policy := by\n"
+                "  sorry\n"
+            ),
+            ["policy_iteration"],
+            "benchmark_policy_self_improves",
+        ),
+    ],
+)
+def test_planner_repairs_frontier_schema_invalid_payloads_to_authoritative_stub(
+    tmp_path: Path,
+    raw_text: str,
+    claim: str,
+    theorem_stub: str,
+    preamble_names: list[str],
+    expected_theorem: str,
+) -> None:
+    retrieval = PlannerRetrievalService(
+        embedder=HashingTextEmbedder(),
+        trace_store=_make_trace_store(tmp_path),
+    )
+
+    class RepairableDriver:
+        def generate(self, **_: object) -> PlannerLLMResponse:
+            error = PlannerDriverError("Planner backend returned schema-invalid JSON: missing required keys")
+            setattr(
+                error,
+                "provider_metadata",
+                ProviderCallMetadata(response_text=raw_text, raw_planner_response=raw_text),
+            )
+            raise error
+
+    result = PlannerService(driver=RepairableDriver(), retrieval_service=retrieval).build_plan_with_telemetry(
+        claim,
+        theorem_stub=theorem_stub,
+        preamble_names=preamble_names,
+        benchmark_mode=True,
+    )
+
+    assert result.payload.subgoals[0].startswith(f"theorem {expected_theorem}")
+    assert result.usage.error_code == "schema_invalid"
+
+
+def test_planner_benchmark_mode_falls_back_when_subgoal_uses_wrong_theorem_name(tmp_path: Path) -> None:
+    retrieval = PlannerRetrievalService(
+        embedder=HashingTextEmbedder(),
+        trace_store=_make_trace_store(tmp_path),
+    )
+    driver = FakePlannerDriver(
+        {
+            "clarifying_questions": [],
+            "textbook_defaults": ["Assume the direct preamble lemma closes the goal."],
+            "plan_paragraph": "Close the benchmark claim directly.",
+            "subgoals": [
+                "theorem planner_wrong_name : True := by\n  sorry",
+            ],
+            "needs_review": False,
+            "confidence": 0.92,
+        }
+    )
+
+    packet = PlannerService(driver=driver, retrieval_service=retrieval).build_plan(
+        "Under an economic measure, the impossible event has zero mass.",
+        theorem_stub=(
+            "import Mathlib\n"
+            "theorem benchmark_measure_empty {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) :\n"
+            "    μ ∅ = 0 := by\n"
+            "  sorry\n"
+        ),
+        preamble_names=["measure"],
+        benchmark_mode=True,
+    )
+
+    assert packet.subgoals[0].startswith("theorem benchmark_measure_empty")
 
 
 def test_planner_context_uses_pinned_preamble_and_filters_irrelevant_memory(tmp_path: Path) -> None:
@@ -472,7 +653,7 @@ def test_hf_planner_driver_uses_chat_completion_and_normalizes_legacy_provider(m
                 usage=SimpleNamespace(prompt_tokens=111, completion_tokens=37),
             )
 
-    monkeypatch.setattr("huggingface_hub.InferenceClient", FakeInferenceClient)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(InferenceClient=FakeInferenceClient))
 
     backend = PlannerBackend(
         name="minimax-m2.7",
@@ -522,7 +703,7 @@ def test_hf_planner_driver_normalizes_fenced_json_and_object_fields(monkeypatch)
                 usage=SimpleNamespace(prompt_tokens=20, completion_tokens=10),
             )
 
-    monkeypatch.setattr("huggingface_hub.InferenceClient", FakeInferenceClient)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(InferenceClient=FakeInferenceClient))
 
     backend = PlannerBackend(
         name="hf-structured",

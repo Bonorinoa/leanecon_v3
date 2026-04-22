@@ -735,7 +735,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--claim-set", choices=CLAIM_SETS, action="append")
+    parser.add_argument("--claim-set", action="append")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--allow-unready", action="store_true")
     parser.add_argument("--benchmark-mode", action="store_true")

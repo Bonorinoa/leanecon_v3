@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import json
+import re
 import time
 from typing import Protocol
 from urllib import error as urllib_error
@@ -178,6 +179,13 @@ def _normalize_planner_payload(payload: dict[str, object]) -> dict[str, object]:
     normalized["needs_review"] = _coerce_bool(payload.get("needs_review"), default=False)
     normalized["confidence"] = _coerce_confidence(payload.get("confidence"), default=0.75)
     return normalized
+
+
+def _theorem_name_from_code(code: str | None) -> str | None:
+    if not code or not code.strip():
+        return None
+    match = re.search(r"(?m)^\s*(?:theorem|lemma)\s+([A-Za-z0-9_']+)\b", code)
+    return match.group(1) if match else None
 
 
 def _unwrap_driver_response(
@@ -551,12 +559,19 @@ def _fallback_subgoals(claim: str, context: PlannerContext, *, theorem_stub: str
     ]
 
 
-def _subgoals_need_upgrade(subgoals: list[str]) -> bool:
+def _subgoals_need_upgrade(
+    subgoals: list[str],
+    *,
+    theorem_stub: str | None = None,
+    benchmark_mode: bool = False,
+) -> bool:
+    theorem_name = _theorem_name_from_code(theorem_stub) if benchmark_mode else None
     return any(
         _is_generic_subgoal(subgoal)
         or "theorem " not in subgoal
         or ":= by" not in subgoal
         or "sorry" not in subgoal
+        or (theorem_name is not None and _theorem_name_from_code(subgoal) != theorem_name)
         for subgoal in subgoals
     )
 
@@ -618,6 +633,7 @@ class Planner:
             context,
             theorem_stub=theorem_stub,
             preamble_names=preamble_names,
+            benchmark_mode=benchmark_mode,
         )
         try:
             response, metadata = self._generate_with_retry(user_prompt)
@@ -639,7 +655,11 @@ class Planner:
                 },
             )
         repaired = bool(metadata and metadata.metadata.get("planner_repaired"))
-        upgraded_subgoals = repaired or _subgoals_need_upgrade(response.subgoals)
+        upgraded_subgoals = repaired or _subgoals_need_upgrade(
+            response.subgoals,
+            theorem_stub=theorem_stub,
+            benchmark_mode=benchmark_mode,
+        )
         subgoals = _dedupe_subgoals(
             _fallback_subgoals(claim, context, theorem_stub=theorem_stub) if upgraded_subgoals else response.subgoals
         )[:3]

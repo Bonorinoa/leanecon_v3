@@ -112,6 +112,7 @@ _register(
             "concepts": ["measure", "measurable_space", "economic_measure"],
             "textbook_source": "MWG App. M",
             "status": "proven",
+            "tactic_hints": ["exact economicMeasure_empty μ", "simp"],
             "related": ["topological_space", "continuous_preference"],
         },
     )
@@ -132,6 +133,7 @@ _register(
             "concepts": ["topological_space", "continuity", "commodity_space"],
             "textbook_source": "MWG Ch. 1",
             "status": "proven",
+            "tactic_hints": ["simpa using continuous_const"],
             "related": ["measure", "continuous_preference"],
         },
     )
@@ -154,6 +156,7 @@ _register(
             "concepts": ["continuous_preference", "utility_representation", "continuity"],
             "textbook_source": "MWG Ch. 1",
             "status": "proven",
+            "tactic_hints": ["exact hu.continuousOn"],
             "related": ["topological_space", "convex_preference"],
         },
     )
@@ -174,6 +177,7 @@ _register(
             "concepts": ["convex_preference", "convex_on", "mixtures"],
             "textbook_source": "MWG Ch. 3",
             "status": "proven",
+            "tactic_hints": ["exact hu"],
             "related": ["continuous_preference", "constrained_optimization"],
         },
     )
@@ -197,6 +201,7 @@ _register(
             "concepts": ["constrained_optimization", "feasible_set", "argmax_certificate"],
             "textbook_source": "MWG Ch. 3",
             "status": "proven",
+            "tactic_hints": ["exact hx.1", "exact hx.2 hy"],
             "related": ["convex_preference", "kuhn_tucker"],
         },
     )
@@ -217,6 +222,10 @@ _register(
             "concepts": ["kuhn_tucker", "complementary_slackness", "shadow_price"],
             "textbook_source": "MWG Ch. 5",
             "status": "proven",
+            "tactic_hints": [
+                "exact hkt.slackness i",
+                "exact KuhnTuckerPoint.complementary_slackness hkt i",
+            ],
             "related": ["constrained_optimization", "fixed_point_theorem"],
         },
     )
@@ -238,6 +247,10 @@ _register(
             "concepts": ["fixed_point_theorem", "contraction_mapping", "equilibrium_existence"],
             "textbook_source": "MWG Ch. 17",
             "status": "proven",
+            "tactic_hints": [
+                "exact exists_fixedPoint_of_contractingWith hf",
+                "exact fixedPoint_isFixedPt hf",
+            ],
             "related": ["kuhn_tucker", "contraction_mapping", "nash_existence"],
         },
     )
@@ -258,6 +271,7 @@ _register(
             "concepts": ["nash_existence", "nash_equilibrium", "witness_certificate"],
             "textbook_source": "MWG Ch. 8",
             "status": "proven",
+            "tactic_hints": ["exact ⟨h.witness, h.is_nash⟩", "exact nash_exists_of_witness h"],
             "related": ["fixed_point_theorem", "policy_iteration"],
         },
     )
@@ -280,6 +294,7 @@ _register(
             "concepts": ["bellman_operator", "dynamic_programming", "monotone_operator"],
             "textbook_source": "SLP Ch. 4",
             "status": "proven",
+            "tactic_hints": ["exact BellmanOperator.monotone hβ hvw"],
             "related": ["contraction_mapping", "value_function", "policy_iteration"],
         },
     )
@@ -300,6 +315,7 @@ _register(
             "concepts": ["contraction_mapping", "fixed_point", "recursive_solution"],
             "textbook_source": "SLP Ch. 4",
             "status": "proven",
+            "tactic_hints": ["exact contraction_has_fixedPoint hf"],
             "related": ["fixed_point_theorem", "bellman_operator", "value_function"],
         },
     )
@@ -322,6 +338,9 @@ _register(
             "concepts": ["value_function", "fixed_point", "bellman_solution"],
             "textbook_source": "SLP Ch. 4",
             "status": "proven",
+            "tactic_hints": [
+                "simpa [ValueFunction] using ContractingWith.fixedPoint_isFixedPt (f := T) hT"
+            ],
             "related": ["bellman_operator", "contraction_mapping", "policy_iteration"],
         },
     )
@@ -342,6 +361,7 @@ _register(
             "concepts": ["policy_iteration", "policy_improvement", "recursive_choice"],
             "textbook_source": "SLP Ch. 4",
             "status": "proven",
+            "tactic_hints": ["exact policyImproves_refl criterion policy", "exact le_rfl"],
             "related": ["bellman_operator", "value_function", "nash_existence"],
         },
     )

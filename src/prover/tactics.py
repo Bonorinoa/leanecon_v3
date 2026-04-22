@@ -142,9 +142,10 @@ def should_decompose(
         return False
     if action is not None and action.action_type == "decompose":
         return True
-    if direct_candidates_available and no_progress_streak < 2:
+    if direct_candidates_available and no_progress_streak < 3:
         return False
-    if failed_turns_for_target < 2 or no_progress_streak < 1:
+    required_failed_turns = 3 if direct_candidates_available else 2
+    if failed_turns_for_target < required_failed_turns or no_progress_streak < 1:
         return False
     return True
 

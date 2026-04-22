@@ -32,7 +32,7 @@ def _packet(
             "selected_imports": ["Mathlib"],
             "open_statements": [],
             "subgoals": subgoals or [],
-            "selected_preamble": selected_preamble or ["bellman_operator"],
+            "selected_preamble": ["bellman_operator"] if selected_preamble is None else selected_preamble,
             "vacuity": {"is_vacuous": False},
             "faithfulness": FaithfulnessAssessment(
                 score=5.0,
@@ -398,6 +398,7 @@ async def test_prover_self_corrects_after_lean_feedback(tmp_path, monkeypatch) -
             theorem_name="self_correct_claim",
             claim="A claim that requires one failed tactic before norm_num succeeds.",
             lean_code="import Mathlib\n\ntheorem self_correct_claim : 1 + 1 = 2 := by\n  sorry\n",
+            selected_preamble=[],
         ),
         "job_self_correct",
     )
@@ -406,7 +407,17 @@ async def test_prover_self_corrects_after_lean_feedback(tmp_path, monkeypatch) -
     assert len(result.trace) >= 2
     assert result.trace[0].success is False
     assert "unknown tactic" in result.trace[0].tool_result
-    assert result.trace[1].tool_arguments["tactic"] == "norm_num"
+    assert any(
+        (
+            step.tool_name == "apply_tactic"
+            and (step.tool_arguments or {}).get("tactic") == "norm_num"
+        )
+        or (
+            step.action_type == "direct_definable_closure"
+            and (step.tool_arguments or {}).get("proof") == "norm_num"
+        )
+        for step in result.trace[1:]
+    )
 
     recorded = store.list_recent(limit=1)[0]
     assert recorded.outcome == "verified"
@@ -545,9 +556,97 @@ def test_prover_recursion_depth_allows_three_and_rejects_four() -> None:
         total_extracted=0,
         max_recursion_depth=1,
     )
+    assert not should_decompose(
+        failed_turns_for_target=2,
+        action=None,
+        allow_decomposition=True,
+        current_depth=0,
+        total_extracted=0,
+        no_progress_streak=2,
+        direct_candidates_available=True,
+    )
+    assert should_decompose(
+        failed_turns_for_target=3,
+        action=None,
+        allow_decomposition=True,
+        current_depth=0,
+        total_extracted=0,
+        no_progress_streak=3,
+        direct_candidates_available=True,
+    )
 
     with pytest.raises(ValidationError):
         ProverTarget(name="depth_four", statement="True", kind="apollo_lemma", recursion_depth=4)
+
+
+@pytest.mark.anyio
+async def test_prover_recovers_repl_compile_disagreement_with_compile_normalization(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+
+    def _compile_needs_norm_num(code: str, **_: object) -> dict[str, object]:
+        has_sorry = "sorry" in code
+        success = "norm_num" in code and not has_sorry
+        errors = [] if success else ["unsolved proof"]
+        return {
+            "success": success,
+            "has_sorry": has_sorry,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else errors,
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", _compile_needs_norm_num)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "The REPL thinks `trivial` closes the goal.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Retry the same locally-solved tactic.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                    },
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="compile_recovery_claim",
+            claim="A claim whose local REPL closure needs a cheap global normalization pass.",
+            lean_code="import Mathlib\n\ntheorem compile_recovery_claim : 1 + 1 = 2 := by\n  sorry\n",
+            selected_preamble=[],
+        ),
+        "job_compile_recovery",
+        max_turns=4,
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "norm_num" in result.verified_code
+    assert any((step.tool_arguments or {}).get("proof") == "norm_num" for step in result.trace)
 
 
 @pytest.mark.anyio
@@ -977,6 +1076,7 @@ async def test_prover_preserves_max_turns_exhausted_error_code(tmp_path, monkeyp
             theorem_name="max_turns_claim",
             claim="A claim that exhausts the turn budget.",
             lean_code="import Mathlib\n\ntheorem max_turns_claim : True := by\n  sorry\n",
+            selected_preamble=[],
         ),
         "job_max_turns",
         max_turns=3,

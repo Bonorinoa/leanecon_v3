@@ -31,6 +31,7 @@ def build_user_prompt(
     *,
     theorem_stub: str | None = None,
     preamble_names: list[str] | None = None,
+    benchmark_mode: bool = False,
 ) -> str:
     """Build the user prompt with retrieval context and the runtime contract."""
 
@@ -70,4 +71,14 @@ def build_user_prompt(
             "- `confidence`: float in [0.0, 1.0].",
         ]
     )
+    if benchmark_mode and theorem_stub:
+        sections.extend(
+            [
+                "",
+                "Benchmark mode constraints:",
+                "- Treat the theorem stub as authoritative and keep the theorem signature unchanged.",
+                "- Emit theorem-shaped Lean subgoals only; do not emit prose bullets, tactic-only lines, or generic placeholders.",
+                "- If the safest plan is direct closure, restate the exact stub as the subgoal rather than inventing helper theorem names.",
+            ]
+        )
     return "\n".join(sections)

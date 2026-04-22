@@ -939,6 +939,27 @@ class Prover:
                     repeated_solved = self._repeated_solved_repl_tactic(trace=trace, target=target)
                     if repeated_solved:
                         if soft_repair_used:
+                            recovered = self._try_repl_compile_recovery(
+                                packet=packet,
+                                target=target,
+                                current_code=self.file_controller.build_final_code(job_id, session.read_code()),
+                                timeout=timeout,
+                            )
+                            if recovered is not None:
+                                session.write_code(recovered["code"])
+                                self._record_direct_definable_closure(
+                                    trace=trace,
+                                    audit_events=audit_events,
+                                    backend=active_backend,
+                                    target=target,
+                                    turn=turn,
+                                    current_code=session.read_code(),
+                                    lean_feedback=lean_feedback,
+                                    proof=recovered["proof"],
+                                    source=recovered["source"],
+                                    rationale=recovered["rationale"],
+                                )
+                                return True, session.read_code(), None
                             disagreement_fail = self._detect_repl_compile_disagreement(
                                 trace=trace,
                                 target=target,
@@ -977,6 +998,34 @@ class Prover:
                             )
                             failed_turns = 0
                             continue
+
+                has_targeted_recovery = self._has_direct_candidates(
+                    packet=packet,
+                    current_code=current_code,
+                ) or self._has_targeted_fast_path(current_code)
+                if has_targeted_recovery and (failed_turns > 0 or no_progress_streak > 0):
+                    recovery_close = self._try_direct_definable_closure(
+                        packet=packet,
+                        target=target,
+                        current_code=current_code,
+                        timeout=timeout,
+                        include_fallback_tactics=True,
+                    )
+                    if recovery_close is not None:
+                        session.write_code(recovery_close["code"])
+                        self._record_direct_definable_closure(
+                            trace=trace,
+                            audit_events=audit_events,
+                            backend=active_backend,
+                            target=target,
+                            turn=turn,
+                            current_code=session.read_code(),
+                            lean_feedback=lean_feedback,
+                            proof=recovery_close["proof"],
+                            source=recovery_close["source"],
+                            rationale=recovery_close["rationale"],
+                        )
+                        return True, session.read_code(), None
 
                 direct_close = self._try_direct_definable_closure(
                     packet=packet,
@@ -1187,7 +1236,7 @@ class Prover:
                     current_depth=target.recursion_depth,
                     total_extracted=self._extracted_lemmas,
                     no_progress_streak=no_progress_streak,
-                    direct_candidates_available=self._has_direct_candidates(packet),
+                    direct_candidates_available=has_targeted_recovery,
                     max_recursion_depth=max_recursion_depth,
                 ):
                     decomposed, new_code = await self._run_decomposition(
@@ -1432,7 +1481,6 @@ class Prover:
 
         for entry in self._selected_preamble_entries(packet):
             metadata = _load_metadata(entry)
-            candidates.extend(self._specialized_direct_candidates(entry.name))
             hint_candidates = [
                 (hint, entry.name, f"Metadata tactic hint from `{entry.name}`.")
                 for hint in _entry_tactic_hints(entry, metadata)
@@ -1466,42 +1514,24 @@ class Prover:
             deduped.append((normalized, source, rationale))
         return deduped
 
-    def _specialized_direct_candidates(self, preamble_name: str) -> list[tuple[str, str, str]]:
-        mapping: dict[str, list[str]] = {
-            "bellman_operator": ["exact BellmanOperator.monotone hβ hvw"],
-            "contraction_mapping": ["exact contraction_has_fixedPoint hf"],
-            "fixed_point_theorem": [
-                "exact exists_fixedPoint_of_contractingWith hf",
-                "exact fixedPoint_isFixedPt hf",
-            ],
-            "value_function": [
-                "simpa [ValueFunction] using ContractingWith.fixedPoint_isFixedPt (f := T) hT",
-            ],
-            "policy_iteration": [
-                "exact policyImproves_refl criterion policy",
-                "exact le_rfl",
-            ],
-            "measure": ["exact economicMeasure_empty μ", "simp"],
-            "topological_space": ["simpa using continuous_const"],
-            "continuous_preference": ["exact hu.continuousOn"],
-            "convex_preference": ["exact hu"],
-            "constrained_optimization": ["exact hx.1", "exact hx.2 hy"],
-            "kuhn_tucker": [
-                "exact hkt.slackness i",
-                "exact KuhnTuckerPoint.complementary_slackness hkt i",
-            ],
-            "nash_existence": [
-                "exact ⟨h.witness, h.is_nash⟩",
-                "exact nash_exists_of_witness h",
-            ],
-        }
-        return [
-            (proof, preamble_name, f"Specialized direct proof for `{preamble_name}`.")
-            for proof in mapping.get(preamble_name, [])
-        ]
+    def _has_direct_candidates(self, *, packet: FormalizationPacket, current_code: str) -> bool:
+        return bool(
+            self._direct_candidate_proofs(
+                packet=packet,
+                current_code=current_code,
+                include_fallback_tactics=False,
+            )
+        )
 
-    def _has_direct_candidates(self, packet: FormalizationPacket) -> bool:
-        return bool(self._selected_preamble_entries(packet))
+    def _has_targeted_fast_path(self, current_code: str) -> bool:
+        if direct_hypothesis_name(current_code):
+            return True
+        normalized = current_code.lower()
+        return (
+            any(char.isdigit() for char in normalized)
+            or "nkpc" in normalized
+            or any(token in normalized for token in ("field", "div", "/", "+", "-", "*", "^"))
+        )
 
     def _try_direct_definable_closure(
         self,
@@ -1581,6 +1611,62 @@ class Prover:
                 },
             )
         )
+
+    def _try_compile_normalization_pass(
+        self,
+        *,
+        theorem_name: str,
+        current_code: str,
+        timeout: int,
+    ) -> dict[str, str] | None:
+        attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
+        for tactic in suggest_fast_path_tactics(current_code):
+            try:
+                candidate_code = _replace_named_theorem_body(current_code, theorem_name, tactic)
+            except ValueError:
+                return None
+            try:
+                result = compile_check(candidate_code, timeout=attempt_timeout)
+            except Exception:
+                continue
+            if result.get("success"):
+                return {
+                    "code": candidate_code,
+                    "proof": tactic,
+                    "rationale": f"Recovered via low-cost normalization tactic `{tactic}`.",
+                }
+        return None
+
+    def _try_repl_compile_recovery(
+        self,
+        *,
+        packet: FormalizationPacket,
+        target: ProverTarget,
+        current_code: str,
+        timeout: int,
+    ) -> dict[str, str] | None:
+        direct_close = self._try_direct_definable_closure(
+            packet=packet,
+            target=target,
+            current_code=current_code,
+            timeout=timeout,
+            include_fallback_tactics=False,
+        )
+        if direct_close is not None:
+            return direct_close
+        normalization = self._try_compile_normalization_pass(
+            theorem_name=self._target_theorem_name(packet, target),
+            current_code=current_code,
+            timeout=timeout,
+        )
+        if normalization is not None:
+            return {
+                "code": normalization["code"],
+                "proof": normalization["proof"],
+                "source": "compile_normalization",
+                "rationale": normalization["rationale"],
+            }
+        return None
 
     def _progress_fingerprint(
         self,

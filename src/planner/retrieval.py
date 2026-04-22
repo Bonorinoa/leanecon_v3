@@ -135,6 +135,11 @@ def _entry_tactic_hints(entry: PreambleEntry, metadata: dict[str, object]) -> li
         values = [str(value) for value in hints]
         if values:
             return values
+    planner_hints = entry.planner_metadata.get("tactic_hints")
+    if isinstance(planner_hints, list):
+        values = [str(value) for value in planner_hints]
+        if values:
+            return values
     if entry.planner_tactic_hint:
         return [entry.planner_tactic_hint]
     return []
