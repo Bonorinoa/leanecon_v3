@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import UTC, datetime
-import json
+import os
 from pathlib import Path
 import random
 import re
+import shutil
+import sys
 from typing import Any
 
 from evals.common import load_claims, write_summary
@@ -30,6 +32,178 @@ DEFAULT_SAMPLE_SEED = 17
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _supports_color(stream: Any) -> bool:
+    return bool(getattr(stream, "isatty", lambda: False)()) and os.environ.get("NO_COLOR") is None
+
+
+def _style(text: str, code: str, *, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def _format_duration_ms(value: float | int | None) -> str:
+    ms = float(value or 0.0)
+    if ms >= 1000:
+        return f"{ms / 1000:.1f}s"
+    return f"{ms:.0f}ms"
+
+
+def _format_usd(value: float | int | None) -> str:
+    return f"${float(value or 0.0):.4f}"
+
+
+def _format_ratio(numerator: int, denominator: int) -> str:
+    if denominator <= 0:
+        return "0.0% (0/0)"
+    return f"{(numerator / denominator) * 100:.1f}% ({numerator}/{denominator})"
+
+
+def _truncate(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    if len(text) <= width:
+        return text
+    if width <= 3:
+        return text[:width]
+    return f"{text[: width - 3]}..."
+
+
+def _render_table(headers: list[str], rows: list[list[str]]) -> str:
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(value))
+    border = "+-" + "-+-".join("-" * width for width in widths) + "-+"
+    header_row = "| " + " | ".join(header.ljust(widths[index]) for index, header in enumerate(headers)) + " |"
+    body = [
+        "| " + " | ".join(value.ljust(widths[index]) for index, value in enumerate(row)) + " |"
+        for row in rows
+    ]
+    return "\n".join([border, header_row, border, *body, border])
+
+
+def _summary_average_latency_ms(summary: dict[str, Any], stage: str) -> float:
+    executed = summary.get("executed", True)
+    results = summary.get("results", [])
+    if not executed or not results:
+        return 0.0
+    total = sum(float((result.get("timing_breakdown") or {}).get(stage) or 0.0) for result in results)
+    return round(total / len(results), 3)
+
+
+def _summary_total_cost(summary: dict[str, Any]) -> float:
+    return round(sum(float(value or 0.0) for value in summary.get("cost_by_stage", {}).values()), 8)
+
+
+class _TerminalReporter:
+    def __init__(self, stream: Any = None) -> None:
+        self.stream = stream or sys.stdout
+        self.color = _supports_color(self.stream)
+        self.width = max(shutil.get_terminal_size((100, 20)).columns, 80)
+
+    def _emit(self, line: str = "") -> None:
+        print(line, file=self.stream)
+
+    def section(self, title: str) -> None:
+        label = _style(title, "1;36", enabled=self.color)
+        self._emit()
+        self._emit(label)
+
+    def claim_set_started(
+        self,
+        claim_set: str,
+        *,
+        claims_total: int,
+        benchmark_mode: bool,
+        selection_info: dict[str, Any],
+        readiness: dict[str, Any],
+    ) -> None:
+        self.section(f"[{claim_set}] starting")
+        mode = "benchmark" if benchmark_mode else "live"
+        selection = str(selection_info.get("sampling_mode") or "full")
+        if selection_info.get("sample_seed") is not None:
+            selection = f"{selection} (seed={selection_info['sample_seed']})"
+        rows = [
+            ["Mode", mode],
+            ["Claims", str(claims_total)],
+            ["Sampling", selection],
+            ["Readiness", "ready" if readiness.get("ready") else "blocked"],
+        ]
+        self._emit(_render_table(["Field", "Value"], rows))
+        blockers = readiness.get("blockers") or []
+        if blockers:
+            self._emit(f"Blockers: {', '.join(str(blocker) for blocker in blockers)}")
+
+    def claim_finished(self, index: int, total: int, result: dict[str, Any]) -> None:
+        status = str(result.get("status") or "unknown")
+        failure_code = result.get("failure_code")
+        status_label = status
+        if status == "verified":
+            status_label = _style("verified", "32", enabled=self.color)
+        elif failure_code:
+            status_label = _style("failed", "31", enabled=self.color)
+        else:
+            status_label = _style(status, "33", enabled=self.color)
+        progress_width = min(18, max(10, self.width // 8))
+        complete = int(round((index / total) * progress_width)) if total else 0
+        bar = f"[{'#' * complete}{'-' * (progress_width - complete)}]"
+        claim_id = _truncate(str(result.get("id") or ""), 30)
+        total_ms = float((result.get("timing_breakdown") or {}).get("total_ms") or 0.0)
+        detail = str(result.get("verified_via") or result.get("termination_reason") or "")
+        if failure_code:
+            detail = str(failure_code)
+        self._emit(f"{bar} {index:>2}/{total:<2} {status_label:<8} {claim_id:<30} {_format_duration_ms(total_ms):>7} {detail}")
+
+    def skipped_claim_set(self, claim_set: str, blockers: list[str]) -> None:
+        label = _style("skipped", "33", enabled=self.color)
+        self._emit(f"{label}: {claim_set} blocked by {', '.join(blockers)}")
+
+    def claim_set_completed(self, summary: dict[str, Any], output_path: Path) -> None:
+        self.section(f"[{summary['claim_set']}] summary")
+        rows = [
+            ["Pass@1", _format_ratio(int(summary.get("claims_passed") or 0), int(summary.get("claims_total") or 0))],
+            ["Failures", str(int(summary.get("claims_failed") or 0))],
+            ["Avg total latency", _format_duration_ms(_summary_average_latency_ms(summary, "total_ms"))],
+            ["Total cost", _format_usd(_summary_total_cost(summary))],
+            ["Output", str(output_path)],
+        ]
+        self._emit(_render_table(["Metric", "Value"], rows))
+
+        latency_rows = [
+            ["planner", _format_duration_ms(_summary_average_latency_ms(summary, "planner_ms"))],
+            ["formalizer", _format_duration_ms(_summary_average_latency_ms(summary, "formalizer_ms"))],
+            ["prover", _format_duration_ms(_summary_average_latency_ms(summary, "prover_ms"))],
+            ["total", _format_duration_ms(_summary_average_latency_ms(summary, "total_ms"))],
+        ]
+        self._emit(_render_table(["Stage", "Avg latency"], latency_rows))
+
+        failure_counts = summary.get("failure_counts", {})
+        if failure_counts:
+            failure_rows = [
+                [str(code), str(count)]
+                for code, count in sorted(failure_counts.items(), key=lambda item: (-int(item[1]), str(item[0])))
+            ]
+            self._emit(_render_table(["Failure code", "Count"], failure_rows))
+        else:
+            self._emit("Failures: none")
+
+    def combined_completed(self, summary: dict[str, Any], output_path: Path) -> None:
+        self.section("[local_gate] combined")
+        rows = [
+            [str(item["claim_set"]), _format_ratio(int(item.get("claims_passed") or 0), int(item.get("claims_total") or 0))]
+            for item in summary.get("claim_sets", [])
+        ]
+        rows.append(
+            [
+                "local_gate",
+                _format_ratio(int(summary.get("claims_passed") or 0), int(summary.get("claims_total") or 0)),
+            ]
+        )
+        self._emit(_render_table(["Claim set", "Pass@1"], rows))
+        self._emit(f"Output: {output_path}")
 
 
 def _sanitize_job_id(value: str) -> str:
@@ -238,6 +412,7 @@ async def _run_claim_set_async(
     limit: int | None,
     stratified: bool,
     sample_seed: int | None,
+    reporter: _TerminalReporter | None,
 ) -> dict[str, Any]:
     claims, selection_info = _select_claims(
         load_claims(claim_set),
@@ -246,8 +421,18 @@ async def _run_claim_set_async(
         sample_seed=sample_seed,
     )
     readiness = _preflight(planner_service, formalizer_service, prover_instance)
+    if reporter is not None:
+        reporter.claim_set_started(
+            claim_set,
+            claims_total=len(claims),
+            benchmark_mode=benchmark_mode,
+            selection_info=selection_info,
+            readiness=readiness,
+        )
     target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
     if enforce_readiness and not readiness["ready"]:
+        if reporter is not None:
+            reporter.skipped_claim_set(claim_set, [str(blocker) for blocker in readiness["blockers"]])
         return {
             "claim_set": claim_set,
             "mode": "live_pipeline",
@@ -323,6 +508,8 @@ async def _run_claim_set_async(
                     },
                 }
             )
+            if reporter is not None:
+                reporter.claim_finished(len(results), len(claims), results[-1])
             continue
 
         try:
@@ -426,6 +613,8 @@ async def _run_claim_set_async(
                 **({"raw_planner_response": raw_planner_response} if planner_schema_invalid else {}),
             }
         )
+        if reporter is not None:
+            reporter.claim_finished(len(results), len(claims), results[-1])
 
     claims_passed = sum(1 for item in results if item["status"] == "verified")
     claims_total = len(results)
@@ -473,6 +662,7 @@ def run_claim_set(
     limit: int | None = None,
     stratified: bool = False,
     sample_seed: int | None = None,
+    reporter: _TerminalReporter | None = None,
 ) -> dict[str, Any]:
     return asyncio.run(
         _run_claim_set_async(
@@ -485,6 +675,7 @@ def run_claim_set(
             limit=limit,
             stratified=stratified,
             sample_seed=sample_seed,
+            reporter=reporter,
         )
     )
 
@@ -542,7 +733,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--claim-set", choices=CLAIM_SETS, action="append")
     parser.add_argument("--output-dir", type=Path, default=None)
@@ -551,9 +742,10 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--stratified", action="store_true")
     parser.add_argument("--sample-seed", type=int, default=DEFAULT_SAMPLE_SEED)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     selected = tuple(args.claim_set or CLAIM_SETS)
+    reporter = _TerminalReporter()
     summaries = [
         run_claim_set(
             claim_set,
@@ -562,18 +754,16 @@ def main() -> int:
             limit=args.limit,
             stratified=args.stratified,
             sample_seed=args.sample_seed if args.limit is not None else None,
+            reporter=reporter,
         )
         for claim_set in selected
     ]
     for summary in summaries:
         path = write_summary(summary["claim_set"], summary, args.output_dir)
-        print(
-            f"{summary['claim_set']}: pass@1={summary['pass_at_1']:.3f} "
-            f"({summary['claims_passed']}/{summary['claims_total']}) -> {path}"
-        )
+        reporter.claim_set_completed(summary, path)
     combined = _combine_summaries(summaries)
     combined_path = write_summary("local_gate", combined, args.output_dir)
-    print(f"local_gate: pass@1={combined['pass_at_1']:.3f} ({combined['claims_passed']}/{combined['claims_total']}) -> {combined_path}")
+    reporter.combined_completed(combined, combined_path)
     if not combined["readiness"]["ready"]:
         return 1
     return 0 if combined["claims_failed"] == 0 else 1

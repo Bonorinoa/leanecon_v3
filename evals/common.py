@@ -8,6 +8,8 @@ from typing import Any
 
 from src.config import BENCHMARK_BASELINE_DIR, EVAL_CLAIMS_DIR
 
+STANDARD_BENCHMARK_CLAIM_SETS = ("tier0_smoke", "tier1_core", "tier2_frontier")
+
 
 def claim_set_path(name: str) -> Path:
     path = EVAL_CLAIMS_DIR / f"{name}.jsonl"
@@ -28,6 +30,13 @@ def baseline_path(name: str, output_dir: Path | None = None) -> Path:
     directory = output_dir or BENCHMARK_BASELINE_DIR
     directory.mkdir(parents=True, exist_ok=True)
     return directory / f"{name}.json"
+
+
+def load_summary(name: str, output_dir: Path | None = None) -> dict[str, Any]:
+    path = baseline_path(name, output_dir)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing benchmark summary: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def write_summary(name: str, payload: dict[str, Any], output_dir: Path | None = None) -> Path:

@@ -290,3 +290,65 @@ def test_local_gate_seeded_sampling_is_reproducible(monkeypatch) -> None:
     assert summary_a["sample_seed"] == 17
     assert len(summary_a["selected_ids"]) == 3
     assert summary_a["selected_ids"] == summary_b["selected_ids"]
+
+
+def test_local_gate_main_emits_readable_terminal_summary(monkeypatch, tmp_path, capsys) -> None:
+    import evals.local_gate as local_gate_module
+
+    def fake_summary(claim_set: str, *, passed: int, total: int, failures: dict[str, int]) -> dict[str, object]:
+        failed = total - passed
+        return {
+            "claim_set": claim_set,
+            "benchmark_mode": True,
+            "claims_total": total,
+            "claims_passed": passed,
+            "claims_failed": failed,
+            "pass_at_1": passed / total,
+            "executed": True,
+            "readiness": {"ready": True, "blockers": [], "checks": {}},
+            "tokens_by_stage": {},
+            "cost_by_stage": {"planner": 0.01 if passed else 0.0},
+            "cost_by_model": {},
+            "failure_counts": failures,
+            "results": [
+                {
+                    "id": f"{claim_set}_{index}",
+                    "status": "verified" if index < passed else "failed",
+                    "failure_code": None if index < passed else "max_turns_exhausted",
+                    "verified_via": "full_pipeline",
+                    "timing_breakdown": {
+                        "planner_ms": 1000.0,
+                        "formalizer_ms": 2000.0,
+                        "prover_ms": 3000.0,
+                        "total_ms": 6000.0,
+                    },
+                }
+                for index in range(total)
+            ],
+        }
+
+    summaries = iter(
+        [
+            fake_summary("tier0_smoke", passed=3, total=3, failures={}),
+            fake_summary("tier1_core", passed=1, total=2, failures={"max_turns_exhausted": 1}),
+        ]
+    )
+
+    monkeypatch.setattr(local_gate_module, "run_claim_set", lambda *args, **kwargs: next(summaries))
+    monkeypatch.setattr(
+        local_gate_module,
+        "write_summary",
+        lambda name, payload, output_dir=None: (output_dir or tmp_path) / f"{name}.json",
+    )
+
+    exit_code = local_gate_module.main(
+        ["--benchmark-mode", "--claim-set", "tier0_smoke", "--claim-set", "tier1_core", "--output-dir", str(tmp_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "[tier0_smoke] summary" in output
+    assert "| Metric" in output
+    assert "| Stage" in output
+    assert "| Failure code" in output
+    assert "[local_gate] combined" in output
