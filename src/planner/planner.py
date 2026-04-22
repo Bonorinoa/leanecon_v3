@@ -6,8 +6,11 @@ from dataclasses import dataclass
 import json
 import time
 from typing import Protocol
+from urllib import error as urllib_error
+from urllib.parse import urlparse
+from urllib import request as urllib_request
 
-from src.config import HF_TOKEN, PLANNER_BACKEND, PLANNER_MODEL, PLANNER_PROVIDER
+from src.config import HF_TOKEN, OLLAMA_API_KEY, OLLAMA_HOST, PLANNER_BACKEND, PLANNER_MODEL, PLANNER_PROVIDER, PLANNER_TIMEOUT
 from src.observability.errors import classify_exception
 from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerContext, PlannerLLMResponse, PlannerPacket, slugify_claim
@@ -53,6 +56,12 @@ class DriverRegistry:
                 PLANNER_PROVIDER,
                 "Primary structured-output planner backend via Hugging Face Inference Providers.",
             ),
+            "ollama-cloud": PlannerBackend(
+                "ollama-cloud",
+                PLANNER_MODEL,
+                PLANNER_PROVIDER,
+                "Structured-output planner backend via Ollama Cloud remote chat API.",
+            ),
         }
         self._aliases = {
             "minimax-m2.7": "hf-structured",
@@ -80,6 +89,25 @@ def _extract_json_payload(raw_text: str) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise PlannerDriverError("Planner backend returned non-object JSON.")
     return payload
+
+
+def _normalize_planner_payload(payload: dict[str, object]) -> dict[str, object]:
+    normalized = dict(payload)
+    questions = normalized.get("clarifying_questions")
+    if not isinstance(questions, list):
+        normalized["clarifying_questions"] = []
+    defaults = normalized.get("textbook_defaults")
+    cleaned_defaults = [str(item).strip() for item in defaults] if isinstance(defaults, list) else []
+    cleaned_defaults = [item for item in cleaned_defaults if item]
+    if not cleaned_defaults:
+        normalized["textbook_defaults"] = [
+            "Respect the authoritative theorem stub and the retrieved LeanEcon preamble assumptions."
+        ]
+    if "needs_review" not in normalized:
+        normalized["needs_review"] = False
+    if "confidence" not in normalized:
+        normalized["confidence"] = 0.75
+    return normalized
 
 
 def _unwrap_driver_response(
@@ -147,7 +175,7 @@ class HuggingFacePlannerDriver:
         self,
         *,
         token: str = HF_TOKEN,
-        timeout: float = 120.0,
+        timeout: float = PLANNER_TIMEOUT,
         provider: str = PLANNER_PROVIDER,
     ) -> None:
         self.token = token
@@ -183,7 +211,7 @@ class HuggingFacePlannerDriver:
             raise PlannerDriverError("Planner chat-completion response did not contain text content.")
         payload = _extract_json_payload(content)
         try:
-            response = PlannerLLMResponse.model_validate(payload)
+            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(payload))
         except Exception as error:
             raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
         usage = getattr(raw, "usage", None)
@@ -227,7 +255,7 @@ class HuggingFacePlannerDriver:
         response_text = str(generated_text if generated_text is not None else raw_text)
         payload = _extract_json_payload(response_text)
         try:
-            response = PlannerLLMResponse.model_validate(payload)
+            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(payload))
         except Exception as error:
             raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
         metadata = ProviderCallMetadata(
@@ -280,6 +308,98 @@ class HuggingFacePlannerDriver:
                 )
         except Exception as error:
             raise PlannerDriverError(f"Planner backend invocation failed for {backend.model}: {error}") from error
+
+
+class OllamaPlannerDriver:
+    """Ollama Cloud planner driver using the documented `/api/chat` schema format."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str = OLLAMA_API_KEY,
+        host: str = OLLAMA_HOST,
+        timeout: float = PLANNER_TIMEOUT,
+    ) -> None:
+        self.api_key = api_key
+        self.host = host.rstrip("/")
+        self.timeout = timeout
+
+    @property
+    def api_url(self) -> str:
+        if self.host.endswith("/api"):
+            return f"{self.host}/chat"
+        return f"{self.host}/api/chat"
+
+    @property
+    def uses_local_host(self) -> bool:
+        parsed = urlparse(self.host)
+        host = (parsed.hostname or "").strip().lower()
+        return host in {"127.0.0.1", "localhost", "::1"}
+
+    def generate(
+        self,
+        *,
+        backend: PlannerBackend,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> tuple[PlannerLLMResponse, ProviderCallMetadata]:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        body = {
+            "model": backend.model,
+            "messages": messages,
+            "format": _planner_response_format()["json_schema"]["schema"],
+            "options": {
+                "temperature": 0.2,
+                "num_predict": 1200,
+            },
+            "stream": False,
+            "think": False,
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key and not self.uses_local_host:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        request = urllib_request.Request(
+            self.api_url,
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=self.timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib_error.HTTPError:
+            raise
+        except urllib_error.URLError:
+            raise
+        except json.JSONDecodeError as error:
+            raise PlannerDriverError(f"Ollama planner returned invalid JSON payload: {error}") from error
+        except Exception as error:
+            raise PlannerDriverError(f"Ollama planner request failed: {error}") from error
+
+        content = payload.get("message", {}).get("content")
+        if not isinstance(content, str):
+            raise PlannerDriverError("Ollama planner response did not contain assistant text content.")
+        parsed = _extract_json_payload(content)
+        try:
+            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(parsed))
+        except Exception as error:
+            raise PlannerDriverError(f"Planner backend returned schema-invalid JSON: {error}") from error
+        metadata = ProviderCallMetadata(
+            input_tokens=int(payload.get("prompt_eval_count")) if payload.get("prompt_eval_count") is not None else None,
+            output_tokens=int(payload.get("eval_count")) if payload.get("eval_count") is not None else None,
+            usage_source="provider",
+            prompt_text=json.dumps(messages, ensure_ascii=True),
+            response_text=content,
+            metadata={
+                "done_reason": payload.get("done_reason"),
+                "total_duration": payload.get("total_duration"),
+                "load_duration": payload.get("load_duration"),
+            },
+        )
+        return response, metadata
 
 
 def _is_generic_subgoal(subgoal: str) -> bool:
@@ -599,7 +719,9 @@ class Planner:
     ) -> None:
         self.registry = DriverRegistry()
         self.backend = self.registry.get(backend)
-        self.driver = driver or HuggingFacePlannerDriver()
+        self.driver = driver or (
+            OllamaPlannerDriver() if self.backend.name == "ollama-cloud" else HuggingFacePlannerDriver()
+        )
         self.retrieval_service = retrieval_service or PlannerRetrievalService(embedder=embedder)
         self.system_prompt = build_system_prompt()
 

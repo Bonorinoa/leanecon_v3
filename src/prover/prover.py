@@ -11,7 +11,15 @@ import urllib.error
 import urllib.request
 from typing import Any, Protocol
 
-from src.config import FORMALIZER_TIMEOUT, HF_TOKEN, MISTRAL_API_KEY, MISTRAL_BASE_URL, PROVER_BACKEND, PROVER_PROVIDER
+from src.config import (
+    BENCHMARK_MAX_RECURSION_DEPTH,
+    FORMALIZER_TIMEOUT,
+    HF_TOKEN,
+    MISTRAL_API_KEY,
+    MISTRAL_BASE_URL,
+    PROVER_BACKEND,
+    PROVER_PROVIDER,
+)
 from src.formalizer.models import FormalizationPacket
 from src.lean import LeanREPLSession, compile_check, lean_run_code
 from src.memory import ProofTraceStore, trace_store as default_trace_store
@@ -569,7 +577,7 @@ class Prover:
         working_code = packet.lean_code
         resolved_target_timeouts = self._resolve_target_timeouts(timeout=timeout, target_timeouts=target_timeouts)
         final_compile_timeout = self._final_compile_timeout(resolved_target_timeouts)
-        max_recursion_depth = 1 if benchmark_mode else 3
+        max_recursion_depth = BENCHMARK_MAX_RECURSION_DEPTH if benchmark_mode else 3
         self._extracted_lemmas = 0
         self._reset_budget_tracker()
         self.file_controller.initialize(job_id, working_code)

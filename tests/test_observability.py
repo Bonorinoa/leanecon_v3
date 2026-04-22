@@ -20,6 +20,7 @@ def test_pricing_lookup_and_complete_usage(monkeypatch) -> None:
     )
 
     assert lookup_pricing("mistral", "labs-leanstral-2603") is not None
+    assert lookup_pricing("ollama", "gemma4:31b-cloud") is not None
     assert usage.input_tokens is not None
     assert usage.output_tokens is not None
     assert usage.estimated_cost_usd == 0.0

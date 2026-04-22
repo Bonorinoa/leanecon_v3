@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from pathlib import Path
+from urllib import error as urllib_error
 
 import pytest
 
 from src.memory.models import ProofTrace
 from src.memory.store import ProofTraceStore
-from src.planner import HuggingFacePlannerDriver, PlannerBackend, PlannerLLMResponse, PlannerService
+from src.planner import HuggingFacePlannerDriver, OllamaPlannerDriver, PlannerBackend, PlannerLLMResponse, PlannerService
 from src.planner.planner import PlannerDriverError
 from src.planner.retrieval import HashingTextEmbedder, PlannerRetrievalService
 
@@ -382,3 +383,237 @@ def test_hf_planner_driver_uses_chat_completion_and_normalizes_legacy_provider(m
     assert captured["messages"][0]["role"] == "system"
     assert captured["messages"][1]["role"] == "user"
     assert captured["response_format"]["type"] == "json_schema"
+
+
+def test_ollama_planner_driver_posts_chat_schema(monkeypatch) -> None:
+    payload = {
+        "clarifying_questions": [],
+        "textbook_defaults": ["Assume standard benchmark conditions."],
+        "plan_paragraph": "Use the retrieved measure lemma to close the stub directly and preserve the target $\\mu(\\emptyset)=0$.",
+        "subgoals": [
+            "exact economicMeasure_empty (μ := μ)",
+        ],
+        "needs_review": False,
+        "confidence": 1.0,
+    }
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "message": {"role": "assistant", "content": json.dumps(payload)},
+                    "prompt_eval_count": 88,
+                    "eval_count": 17,
+                    "done_reason": "stop",
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        captured["authorization"] = request.get_header("Authorization")
+        captured["headers"] = {key.lower(): value for key, value in request.header_items()}
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    backend = PlannerBackend(
+        name="ollama-cloud",
+        model="gemma4:31b",
+        provider="ollama",
+        notes="test backend",
+    )
+    response, metadata = OllamaPlannerDriver(api_key="ollama_test", host="https://ollama.com").generate(
+        backend=backend,
+        system_prompt="Return only JSON.",
+        user_prompt="Claim: impossible event has zero mass",
+    )
+
+    assert response.plan_paragraph.startswith("Use the retrieved measure lemma")
+    assert captured["url"] == "https://ollama.com/api/chat"
+    assert captured["authorization"] == "Bearer ollama_test"
+    assert captured["headers"]["content-type"] == "application/json"
+    assert captured["body"]["model"] == "gemma4:31b"
+    assert captured["body"]["stream"] is False
+    assert captured["body"]["format"]["type"] == "object"
+    assert metadata is not None
+    assert metadata.input_tokens == 88
+    assert metadata.output_tokens == 17
+
+
+def test_ollama_planner_driver_propagates_http_errors(monkeypatch) -> None:
+    def fake_urlopen(request, timeout: float):
+        raise urllib_error.HTTPError(request.full_url, 401, "unauthorized", {}, None)
+
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    backend = PlannerBackend(
+        name="ollama-cloud",
+        model="gemma4:31b",
+        provider="ollama",
+        notes="test backend",
+    )
+
+    with pytest.raises(urllib_error.HTTPError):
+        OllamaPlannerDriver(api_key="ollama_test", host="https://ollama.com").generate(
+            backend=backend,
+            system_prompt="Return only JSON.",
+            user_prompt="Claim: 1 + 1 = 2",
+        )
+
+
+def test_ollama_planner_driver_omits_auth_for_local_host(monkeypatch) -> None:
+    payload = {
+        "clarifying_questions": [],
+        "textbook_defaults": ["Assume standard benchmark conditions."],
+        "plan_paragraph": "Close the target via the retrieved measure lemma and preserve $\\mu(\\emptyset)=0$.",
+        "subgoals": [
+            "exact economicMeasure_empty (μ := μ)",
+        ],
+        "needs_review": False,
+        "confidence": 1.0,
+    }
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "message": {"role": "assistant", "content": json.dumps(payload)},
+                    "prompt_eval_count": 88,
+                    "eval_count": 17,
+                    "done_reason": "stop",
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float):
+        captured["authorization"] = request.get_header("Authorization")
+        return FakeResponse()
+
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    backend = PlannerBackend(
+        name="ollama-cloud",
+        model="gemma4:31b-cloud",
+        provider="ollama",
+        notes="test backend",
+    )
+    OllamaPlannerDriver(api_key="ollama_test", host="http://127.0.0.1:11434").generate(
+        backend=backend,
+        system_prompt="Return only JSON.",
+        user_prompt="Claim: impossible event has zero mass",
+    )
+
+    assert captured["authorization"] is None
+
+
+def test_ollama_planner_driver_backfills_empty_textbook_defaults(monkeypatch) -> None:
+    payload = {
+        "clarifying_questions": [],
+        "textbook_defaults": [],
+        "plan_paragraph": "Close the target via the retrieved measure lemma and preserve $\\mu(\\emptyset)=0$.",
+        "subgoals": [
+            "exact economicMeasure_empty (μ := μ)",
+        ],
+        "needs_review": False,
+        "confidence": 1.0,
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "message": {"role": "assistant", "content": json.dumps(payload)},
+                    "prompt_eval_count": 88,
+                    "eval_count": 17,
+                    "done_reason": "stop",
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float):
+        return FakeResponse()
+
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    backend = PlannerBackend(
+        name="ollama-cloud",
+        model="gemma4:31b-cloud",
+        provider="ollama",
+        notes="test backend",
+    )
+    response, _ = OllamaPlannerDriver(api_key="ollama_test", host="http://127.0.0.1:11434").generate(
+        backend=backend,
+        system_prompt="Return only JSON.",
+        user_prompt="Claim: impossible event has zero mass",
+    )
+
+    assert response.textbook_defaults == [
+        "Respect the authoritative theorem stub and the retrieved LeanEcon preamble assumptions."
+    ]
+
+
+def test_ollama_planner_driver_backfills_missing_required_fields(monkeypatch) -> None:
+    payload = {
+        "plan_paragraph": "The restricted utility map preserves continuity on the subset $s \\subseteq \\alpha$.",
+        "subgoals": [
+            "exact hu.continuousOn s",
+        ],
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "message": {"role": "assistant", "content": json.dumps(payload)},
+                    "prompt_eval_count": 88,
+                    "eval_count": 17,
+                    "done_reason": "stop",
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float):
+        return FakeResponse()
+
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    backend = PlannerBackend(
+        name="ollama-cloud",
+        model="gemma4:31b-cloud",
+        provider="ollama",
+        notes="test backend",
+    )
+    response, _ = OllamaPlannerDriver(api_key="ollama_test", host="http://127.0.0.1:11434").generate(
+        backend=backend,
+        system_prompt="Return only JSON.",
+        user_prompt="Claim: continuity on a subset",
+    )
+
+    assert response.clarifying_questions == []
+    assert response.needs_review is False
+    assert response.confidence == 0.75

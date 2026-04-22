@@ -60,16 +60,23 @@ def _mistral_key_invalid(value: str) -> bool:
     return not stripped or _looks_like_placeholder(stripped)
 
 
+def _ollama_key_invalid(value: str) -> bool:
+    stripped = value.strip()
+    return not stripped or _looks_like_placeholder(stripped)
+
+
 def validate_runtime_secrets(
     *,
     runtime_env: str,
     planner_backend: str,
     planner_model: str,
+    planner_provider: str,
     prover_backend: str,
     prover_provider: str,
     formalizer_backend: str,
     hf_token: str,
     mistral_api_key: str,
+    ollama_api_key: str,
 ) -> None:
     """Raise early for missing secrets in non-local environments."""
 
@@ -81,6 +88,10 @@ def validate_runtime_secrets(
     if planner_backend in {"hf-structured", "minimax-m2.7", "trinity-large-thinking", "gemma-4-31b-it"}:
         if _hf_token_invalid(hf_token):
             failures.append(f"HF_TOKEN is required for planner backend `{planner_backend}` using model `{planner_model}`.")
+    if planner_backend == "ollama-cloud" and _ollama_key_invalid(ollama_api_key):
+        failures.append(
+            f"OLLAMA_API_KEY is required for planner backend `{planner_backend}` using model `{planner_model}`."
+        )
 
     prover_uses_hf = prover_backend == "goedel-prover-v2" or (
         prover_backend == "leanstral" and prover_provider not in {"", "auto", "mistral"}
@@ -119,10 +130,13 @@ MAX_TOTAL_TOOL_CALLS = int(os.getenv("MAX_TOTAL_TOOL_CALLS", "40"))
 MAX_SEARCH_TOOL_CALLS = int(os.getenv("MAX_SEARCH_TOOL_CALLS", "12"))
 JOB_TTL_SECONDS = int(os.getenv("JOB_TTL_SECONDS", "3600"))
 JOB_MAX_CONCURRENT = int(os.getenv("JOB_MAX_CONCURRENT", "2"))
+BENCHMARK_MAX_RECURSION_DEPTH = int(os.getenv("LEANECON_BENCHMARK_MAX_RECURSION_DEPTH", "1"))
 
 PLANNER_BACKEND = os.getenv("LEANECON_PLANNER_BACKEND", "hf-structured")
 PLANNER_MODEL = os.getenv("LEANECON_PLANNER_MODEL", "OBLITERATUS/gemma-4-E4B-it-OBLITERATED")
 PLANNER_PROVIDER = os.getenv("LEANECON_PLANNER_PROVIDER", "auto").strip() or "auto"
+PLANNER_TIMEOUT = float(os.getenv("LEANECON_PLANNER_TIMEOUT", "120"))
+OLLAMA_HOST = os.getenv("LEANECON_OLLAMA_HOST", "https://ollama.com").strip().rstrip("/")
 EMBEDDING_MODEL = os.getenv("LEANECON_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 FORMALIZER_BACKEND = os.getenv("LEANECON_FORMALIZER_BACKEND", "leanstral")
 FORMALIZER_MODEL = os.getenv("LEANECON_FORMALIZER_MODEL", "labs-leanstral-2603")
@@ -130,6 +144,7 @@ PROVER_BACKEND = os.getenv("LEANECON_PROVER_BACKEND", "leanstral").strip() or "l
 PROVER_MODEL = os.getenv("LEANECON_PROVER_MODEL", "hf:Goedel-LM/Goedel-Prover-V2-32B")
 PROVER_PROVIDER = os.getenv("LEANECON_PROVER_PROVIDER", "auto").strip() or "auto"
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "").strip()
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
 MISTRAL_BASE_URL = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
 FORMALIZER_TIMEOUT = float(os.getenv("LEANECON_FORMALIZER_TIMEOUT", "120"))
@@ -146,11 +161,13 @@ validate_runtime_secrets(
     runtime_env=LEANECON_ENV,
     planner_backend=PLANNER_BACKEND,
     planner_model=PLANNER_MODEL,
+    planner_provider=PLANNER_PROVIDER,
     prover_backend=PROVER_BACKEND,
     prover_provider=PROVER_PROVIDER,
     formalizer_backend=FORMALIZER_BACKEND,
     hf_token=HF_TOKEN,
     mistral_api_key=MISTRAL_API_KEY,
+    ollama_api_key=OLLAMA_API_KEY,
 )
 
 JOB_STATES = {

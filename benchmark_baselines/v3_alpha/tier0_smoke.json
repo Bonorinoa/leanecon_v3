@@ -1,32 +1,31 @@
 {
   "benchmark_mode": true,
   "claim_set": "tier0_smoke",
-  "claims_failed": 1,
-  "claims_passed": 2,
+  "claims_failed": 0,
+  "claims_passed": 3,
   "claims_total": 3,
   "cost_by_model": {
-    "huggingface:MiniMaxAI/MiniMax-M2.7": {
-      "estimated_cost_usd": 2.45e-06,
-      "model": "MiniMaxAI/MiniMax-M2.7",
-      "provider": "huggingface"
-    },
     "mistral:labs-leanstral-2603": {
       "estimated_cost_usd": 0.0,
       "model": "labs-leanstral-2603",
       "provider": "mistral"
+    },
+    "ollama:gemma4:31b-cloud": {
+      "estimated_cost_usd": 0.0,
+      "model": "gemma4:31b-cloud",
+      "provider": "ollama"
     }
   },
   "cost_by_stage": {
     "formalizer": 0.0,
-    "planner": 2.45e-06
+    "planner": 0.0,
+    "prover": 0.0
   },
   "executed": true,
-  "failure_counts": {
-    "schema_invalid": 1
-  },
-  "generated_at": "2026-04-21T04:55:41.926369+00:00",
+  "failure_counts": {},
+  "generated_at": "2026-04-21T15:59:40.777423+00:00",
   "mode": "live_pipeline",
-  "pass_at_1": 0.666667,
+  "pass_at_1": 1.0,
   "readiness": {
     "blockers": [],
     "checks": {
@@ -47,24 +46,24 @@
       "status": "verified",
       "target_timeouts": {
         "apollo_lemma": 120,
-        "subgoal": 180,
-        "theorem_body": 300
+        "subgoal": 120,
+        "theorem_body": 120
       },
       "termination_reason": "verified",
       "theorem_name": "benchmark_one_plus_one",
       "theorem_stub_reference": "import Mathlib\n\ntheorem benchmark_one_plus_one : 1 + 1 = 2 := by\n  sorry\n",
       "timing_breakdown": {
-        "formalizer_ms": 28287.457291968167,
-        "planner_ms": 20971.999875037,
-        "prover_ms": 47440.053,
-        "total_ms": 96699.51
+        "formalizer_ms": 15799.220707966015,
+        "planner_ms": 129969.93337501772,
+        "prover_ms": 172695.174,
+        "total_ms": 318464.328
       },
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
           "input_tokens": null,
-          "latency_ms": 28287.457,
+          "latency_ms": 15799.221,
           "model": "labs-leanstral-2603",
           "output_tokens": null,
           "provider": "mistral",
@@ -74,17 +73,30 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 2.45e-06,
-          "input_tokens": 3927,
-          "latency_ms": 20972.0,
-          "model": "MiniMaxAI/MiniMax-M2.7",
-          "output_tokens": 972,
-          "provider": "huggingface",
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 1655,
+          "latency_ms": 129969.933,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 127,
+          "provider": "ollama",
           "stage": "planner",
           "success": true,
           "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 830,
+          "latency_ms": 1621.041,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 110,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
         }
-      }
+      },
+      "verified_via": "full_pipeline"
     },
     {
       "benchmark_mode": true,
@@ -94,64 +106,123 @@
       "status": "verified",
       "target_timeouts": {
         "apollo_lemma": 120,
-        "subgoal": 180,
-        "theorem_body": 300
+        "subgoal": 120,
+        "theorem_body": 120
       },
-      "termination_reason": "trivial_shortcut",
+      "termination_reason": "verified",
       "theorem_name": "benchmark_budget_constraint",
       "theorem_stub_reference": "import Mathlib\nopen Real\n\ntheorem benchmark_budget_constraint\n    (m p1 p2 x1 x2 : \u211d)\n    (hm : m > 0) (hp1 : p1 > 0) (hp2 : p2 > 0)\n    (hspend : p1 * x1 + p2 * x2 = m) :\n    p1 * x1 + p2 * x2 = m := by\n  sorry\n",
       "timing_breakdown": {
-        "formalizer_ms": 0.0,
-        "planner_ms": 0.0,
-        "prover_ms": 0.0,
-        "total_ms": 0.0
+        "formalizer_ms": 14454.574458068237,
+        "planner_ms": 4730.764374835417,
+        "prover_ms": 62957.345,
+        "total_ms": 82142.684
       },
-      "trivial_shortcut": {
-        "hypothesis": "hspend",
-        "tactic": "exact hspend"
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 14454.574,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 1966,
+          "latency_ms": 4730.764,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 119,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 1024,
+          "latency_ms": 1591.3,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 102,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
       },
-      "usage_by_stage": {}
+      "verified_via": "full_pipeline"
     },
     {
       "benchmark_mode": true,
-      "failure_code": "schema_invalid",
+      "failure_code": null,
       "id": "t0_budget_set_membership",
       "raw_claim": "Under an economic measure, the impossible event has zero mass.",
-      "status": "failed",
+      "status": "verified",
       "target_timeouts": {
         "apollo_lemma": 120,
-        "subgoal": 180,
-        "theorem_body": 300
+        "subgoal": 120,
+        "theorem_body": 120
       },
-      "termination_reason": "planner",
-      "theorem_name": null,
+      "termination_reason": "verified",
+      "theorem_name": "benchmark_measure_empty",
       "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Primitives.Measure\n\ntheorem benchmark_measure_empty\n    {\u03b1 : Type*} [MeasurableSpace \u03b1] (\u03bc : EconomicMeasure \u03b1) :\n    \u03bc \u2205 = 0 := by\n  sorry\n",
       "timing_breakdown": {
-        "formalizer_ms": 0.0,
-        "planner_ms": 14226.945,
-        "prover_ms": 0.0,
-        "total_ms": 14226.945
+        "formalizer_ms": 12842.866207938641,
+        "planner_ms": 280714.89683305845,
+        "prover_ms": 57323.133,
+        "total_ms": 350880.896
       },
       "usage_by_stage": {
-        "planner": {
-          "error_code": "schema_invalid",
+        "formalizer": {
+          "error_code": null,
           "estimated_cost_usd": 0.0,
           "input_tokens": null,
-          "latency_ms": 14226.945,
-          "model": "MiniMaxAI/MiniMax-M2.7",
+          "latency_ms": 12842.866,
+          "model": "labs-leanstral-2603",
           "output_tokens": null,
-          "provider": "huggingface",
-          "stage": "planner",
-          "success": false,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
           "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 1930,
+          "latency_ms": 280714.897,
+          "model": "gemma4:31b-cloud",
+          "output_tokens": 153,
+          "provider": "ollama",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 953,
+          "latency_ms": 1543.404,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 117,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
         }
-      }
+      },
+      "verified_via": "full_pipeline"
     }
   ],
   "target_timeouts": {
     "apollo_lemma": 120,
-    "subgoal": 180,
-    "theorem_body": 300
+    "subgoal": 120,
+    "theorem_body": 120
   },
   "tokens_by_stage": {
     "formalizer": {
@@ -159,8 +230,12 @@
       "output_tokens": 0
     },
     "planner": {
-      "input_tokens": 3927,
-      "output_tokens": 972
+      "input_tokens": 5551,
+      "output_tokens": 399
+    },
+    "prover": {
+      "input_tokens": 2807,
+      "output_tokens": 329
     }
   }
 }

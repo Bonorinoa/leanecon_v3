@@ -39,11 +39,13 @@ def test_validate_runtime_secrets_allows_local_missing_credentials() -> None:
         runtime_env="local",
         planner_backend="hf-structured",
         planner_model="OBLITERATUS/gemma-4-E4B-it-OBLITERATED",
+        planner_provider="auto",
         prover_backend="leanstral",
         prover_provider="auto",
         formalizer_backend="leanstral",
         hf_token="",
         mistral_api_key="",
+        ollama_api_key="",
     )
 
 
@@ -53,9 +55,27 @@ def test_validate_runtime_secrets_requires_active_non_local_credentials() -> Non
             runtime_env="prod",
             planner_backend="hf-structured",
             planner_model="OBLITERATUS/gemma-4-E4B-it-OBLITERATED",
+            planner_provider="auto",
             prover_backend="leanstral",
             prover_provider="auto",
             formalizer_backend="leanstral",
             hf_token="",
             mistral_api_key="",
+            ollama_api_key="",
+        )
+
+
+def test_validate_runtime_secrets_requires_ollama_key_for_non_local_ollama_planner() -> None:
+    with pytest.raises(RuntimeError, match="OLLAMA_API_KEY"):
+        validate_runtime_secrets(
+            runtime_env="prod",
+            planner_backend="ollama-cloud",
+            planner_model="gemma4:31b",
+            planner_provider="ollama",
+            prover_backend="leanstral",
+            prover_provider="auto",
+            formalizer_backend="leanstral",
+            hf_token="hf_valid",
+            mistral_api_key="mistral_valid",
+            ollama_api_key="",
         )

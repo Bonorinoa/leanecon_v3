@@ -30,6 +30,15 @@ _BUILTIN_PRICING: dict[str, dict[str, dict[str, float]]] = {
             "input_per_million": 0.0,
             "output_per_million": 0.0,
         }
+    },
+    # Ollama Cloud publishes subscription / usage-tier pricing rather than
+    # stable per-token public rates. We track these as zero-cost sentinels so
+    # benchmark readiness can treat the model as price-known.
+    "ollama": {
+        "gemma4:31b-cloud": {
+            "input_per_million": 0.0,
+            "output_per_million": 0.0,
+        }
     }
 }
 

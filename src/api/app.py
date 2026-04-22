@@ -33,6 +33,7 @@ from src.config import (
     HF_TOKEN,
     LEAN_WORKSPACE,
     MISTRAL_API_KEY,
+    OLLAMA_API_KEY,
     PLANNER_PROVIDER,
     PROVER_PROVIDER,
 )
@@ -68,6 +69,8 @@ def _claim_set_counts() -> dict[str, int]:
 def _credential_status(platform: str) -> bool:
     if platform == "huggingface":
         return bool(HF_TOKEN)
+    if platform == "ollama":
+        return bool(OLLAMA_API_KEY)
     if platform == "mistral":
         return bool(MISTRAL_API_KEY)
     return True
@@ -98,11 +101,12 @@ def _backend_status() -> dict[str, Any]:
     planner_backend = planner.backend
     formalizer_backend = formalizer.backend
     prover_backend = prover.primary_backend
+    planner_platform = "ollama" if planner_backend.name == "ollama-cloud" else "huggingface"
     return {
         "planner": _backend_entry(
             "planner",
             backend_name=planner_backend.name,
-            platform="huggingface",
+            platform=planner_platform,
             provider=planner_backend.provider,
             model=planner_backend.model,
         ),

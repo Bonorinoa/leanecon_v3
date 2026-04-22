@@ -120,9 +120,14 @@ def _preflight(
     formalizer_backend = formalizer_service.backend
     prover_backend = prover_instance.primary_backend
     planner_provider = planner_backend.provider
+    planner_platform = "ollama" if planner_backend.name == "ollama-cloud" else "huggingface"
     prover_provider = PROVER_PROVIDER if prover_backend.provider == "huggingface" else prover_backend.provider
     checks = {
-        "planner_provider_configured": normalize_huggingface_provider(planner_provider) in {"auto", planner_provider.strip()},
+        "planner_provider_configured": (
+            bool(planner_provider.strip())
+            if planner_platform == "ollama"
+            else normalize_huggingface_provider(planner_provider) in {"auto", planner_provider.strip()}
+        ),
         "prover_provider_configured": prover_backend.provider != "huggingface"
         or normalize_huggingface_provider(prover_provider) in {"auto", prover_provider.strip()},
         "planner_price_known": True,
@@ -130,7 +135,7 @@ def _preflight(
         "prover_price_known": True,
     }
     if BENCHMARK_REQUIRE_PRICING:
-        checks["planner_price_known"] = lookup_pricing("huggingface", planner_backend.model) is not None
+        checks["planner_price_known"] = lookup_pricing(planner_platform, planner_backend.model) is not None
         checks["formalizer_price_known"] = lookup_pricing(formalizer_backend.provider, formalizer_backend.model) is not None
         checks["prover_price_known"] = lookup_pricing(
             "huggingface" if prover_backend.provider == "huggingface" else prover_provider,

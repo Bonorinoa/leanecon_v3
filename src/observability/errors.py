@@ -22,7 +22,7 @@ def classify_exception(exc: BaseException) -> str:
         return "auth"
     if "auto-router" in message or "non-hugging face api key" in message:
         return "auth"
-    if "timeout" in message:
+    if "timeout" in message or "timed out" in message:
         return "timeout"
     if "schema" in message or "json" in message:
         return "schema_invalid"
