@@ -132,6 +132,8 @@ def should_decompose(
     allow_decomposition: bool,
     current_depth: int,
     total_extracted: int,
+    no_progress_streak: int = 1,
+    direct_candidates_available: bool = False,
     max_recursion_depth: int = 3,
 ) -> bool:
     if not allow_decomposition:
@@ -140,7 +142,11 @@ def should_decompose(
         return False
     if action is not None and action.action_type == "decompose":
         return True
-    return failed_turns_for_target >= 2
+    if direct_candidates_available and no_progress_streak < 2:
+        return False
+    if failed_turns_for_target < 2 or no_progress_streak < 1:
+        return False
+    return True
 
 
 def summarize_lesson(

@@ -20,6 +20,7 @@ def _packet(
     claim: str,
     lean_code: str,
     subgoals: list[dict[str, str]] | None = None,
+    selected_preamble: list[str] | None = None,
 ) -> FormalizationPacket:
     return FormalizationPacket.model_validate(
         {
@@ -31,7 +32,7 @@ def _packet(
             "selected_imports": ["Mathlib"],
             "open_statements": [],
             "subgoals": subgoals or [],
-            "selected_preamble": ["bellman_operator"],
+            "selected_preamble": selected_preamble or ["bellman_operator"],
             "vacuity": {"is_vacuous": False},
             "faithfulness": FaithfulnessAssessment(
                 score=5.0,
@@ -152,6 +153,127 @@ def _fake_compile(code: str, **_: object) -> dict[str, object]:
         "stderr": "\n".join(errors),
         "exit_code": 0 if success else 1,
     }
+
+
+@pytest.mark.anyio
+async def test_prover_benchmark_mode_uses_direct_definable_closure_for_preamble_hits(
+    tmp_path, monkeypatch
+) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+
+    def fake_compile(code: str, **_: object) -> dict[str, object]:
+        success = "exact valueFunction_isFixedPt" in code and "sorry" not in code
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver({}),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="benchmark_value_function_fixed",
+            claim="The value function selected from a contracting dynamic problem is fixed.",
+            lean_code=(
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.DynamicProgramming.ValueFunction\n\n"
+                "theorem benchmark_value_function_fixed\n"
+                "    {V : Type*} [MetricSpace V] [CompleteSpace V] [Nonempty V]\n"
+                "    {K : NNReal} (T : V → V) (hT : ContractingWith K T) :\n"
+                "    Function.IsFixedPt T (ValueFunction T hT) := by\n"
+                "  sorry\n"
+            ),
+            selected_preamble=["value_function"],
+        ),
+        "job_direct_preamble_closure",
+        benchmark_mode=True,
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "exact valueFunction_isFixedPt" in result.verified_code
+    assert any(step.action_type == "direct_definable_closure" for step in result.trace)
+
+
+@pytest.mark.anyio
+async def test_prover_reports_no_progress_stall_for_unchanged_repl_state(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    class NoProgressReplSession(FakeReplSession):
+        def apply_tactic(self, tactic: str, timeout=None):
+            self.tactics.append(tactic)
+            return SimpleNamespace(
+                has_errors=lambda: False,
+                goals=[f"goal:{self.theorem_name}"],
+                proof_status="InProgress",
+                proof_state=len(self.tactics) + 1,
+            )
+
+        def materialize_proof(self):
+            return self.code
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", NoProgressReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Keep trying a tactic that does not move the proof state.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "simp"}},
+                    }
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="no_progress_claim",
+            claim="A claim whose REPL tactic leaves the proof state unchanged.",
+            lean_code="import Mathlib\n\ntheorem no_progress_claim : True := by\n  sorry\n",
+        ),
+        "job_no_progress",
+        max_turns=3,
+    )
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.reason == "no_progress_stall"
 
 
 @pytest.mark.anyio

@@ -72,6 +72,17 @@ SHORTCUT_FALLBACK_TACTICS: tuple[tuple[str, str], ...] = (
     ("linarith", "Linear-arithmetic closure via `linarith`."),
 )
 
+_PROGRESS_CODE_WINDOW = 240
+_HINT_FIRST_PREAMBLES = frozenset(
+    {
+        "continuous_preference",
+        "convex_preference",
+        "constrained_optimization",
+        "kuhn_tucker",
+        "value_function",
+    }
+)
+
 
 class ProverDriverError(RuntimeError):
     """Raised when a prover backend cannot complete a request."""
@@ -345,6 +356,17 @@ def _replace_named_theorem_body(code: str, theorem_name: str, replacement: str) 
     return f"{code[:body_start]}{replacement_block}\n"
 
 
+def _proof_body_fingerprint(code: str, theorem_name: str) -> str:
+    try:
+        body_code = _replace_named_theorem_body(code, theorem_name, "__FINGERPRINT__")
+    except ValueError:
+        return code[-_PROGRESS_CODE_WINDOW:]
+    marker = "__FINGERPRINT__"
+    if marker not in body_code:
+        return code[-_PROGRESS_CODE_WINDOW:]
+    return body_code.split(marker, 1)[1][: _PROGRESS_CODE_WINDOW]
+
+
 def _extract_theorem_block(code: str) -> str:
     for marker in ("/--", "theorem ", "lemma "):
         match = re.search(rf"(?m)^{re.escape(marker)}", code)
@@ -560,6 +582,16 @@ class Prover:
         self.memory_writer = ProverMemoryWriter(self.trace_store)
         self.lsp_client = lsp_client or default_lean_lsp_client
         self._extracted_lemmas = 0
+
+    def _selected_preamble_entries(self, packet: FormalizationPacket) -> list[Any]:
+        from src.preamble_library import PREAMBLE_LIBRARY
+
+        entries: list[Any] = []
+        for name in packet.selected_preamble:
+            entry = PREAMBLE_LIBRARY.get(name)
+            if entry is not None:
+                entries.append(entry)
+        return entries
 
     async def prove(
         self,
@@ -850,6 +882,27 @@ class Prover:
         provider_usage: list[TokenUsage],
         audit_events: list[AuditEvent],
     ) -> tuple[bool, str, ProverFailure | None]:
+        direct_close = self._try_direct_definable_closure(
+            packet=packet,
+            target=target,
+            current_code=current_code,
+            timeout=timeout,
+        )
+        if direct_close is not None:
+            self._record_direct_definable_closure(
+                trace=trace,
+                audit_events=audit_events,
+                backend=self.primary_backend,
+                target=target,
+                turn=1,
+                current_code=direct_close["code"],
+                lean_feedback=[],
+                proof=direct_close["proof"],
+                source=direct_close["source"],
+                rationale=direct_close["rationale"],
+            )
+            return True, direct_close["code"], None
+
         session = _ActiveProofSession(
             current_code,
             timeout,
@@ -860,6 +913,8 @@ class Prover:
         invalid_output_count = 0
         active_backend = self.primary_backend
         soft_repair_used = False
+        no_progress_streak = 0
+        last_progress_fingerprint: tuple[str, tuple[str, ...], str] | None = None
 
         try:
             for turn in range(1, max_turns + 1):
@@ -922,6 +977,29 @@ class Prover:
                             )
                             failed_turns = 0
                             continue
+
+                direct_close = self._try_direct_definable_closure(
+                    packet=packet,
+                    target=target,
+                    current_code=current_code,
+                    timeout=timeout,
+                )
+                if direct_close is not None:
+                    direct_code = direct_close["code"]
+                    session.write_code(direct_code)
+                    self._record_direct_definable_closure(
+                        trace=trace,
+                        audit_events=audit_events,
+                        backend=active_backend,
+                        target=target,
+                        turn=turn,
+                        current_code=session.read_code(),
+                        lean_feedback=lean_feedback,
+                        proof=direct_close["proof"],
+                        source=direct_close["source"],
+                        rationale=direct_close["rationale"],
+                    )
+                    return True, direct_code, None
 
                 prompt = _build_prompt(
                     packet=packet,
@@ -1029,6 +1107,15 @@ class Prover:
                         )
                     )
                     failed_turns += 1
+                    fingerprint = self._progress_fingerprint(
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        outcome="provider_error",
+                    )
+                    no_progress_streak = (
+                        no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
+                    )
+                    last_progress_fingerprint = fingerprint
                     continue
 
                 if active_backend.name not in attempted_backends:
@@ -1070,12 +1157,21 @@ class Prover:
                     if invalid_output_count >= 2 and active_backend.name != self.fallback_backend.name:
                         active_backend = self.fallback_backend
                         invalid_output_count = 0
+                    fingerprint = self._progress_fingerprint(
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        outcome="schema_invalid",
+                    )
+                    no_progress_streak = (
+                        no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
+                    )
+                    last_progress_fingerprint = fingerprint
                     continue
 
                 if repeated_noop_action(trace, action):
                     return False, current_code, ProverFailure(
-                        reason="repeated_noop_action",
-                        message="The prover repeated the same failed action twice.",
+                        reason="no_progress_stall",
+                        message="The prover repeated a failed action without changing code or goals.",
                         error_code="unsolved_goals",
                         target_name=target.name,
                         turn=turn,
@@ -1090,6 +1186,8 @@ class Prover:
                     allow_decomposition=allow_decomposition,
                     current_depth=target.recursion_depth,
                     total_extracted=self._extracted_lemmas,
+                    no_progress_streak=no_progress_streak,
+                    direct_candidates_available=self._has_direct_candidates(packet),
                     max_recursion_depth=max_recursion_depth,
                 ):
                     decomposed, new_code = await self._run_decomposition(
@@ -1179,8 +1277,36 @@ class Prover:
                 )
                 if tool_result.is_error:
                     failed_turns += 1
+                    fingerprint = self._progress_fingerprint(
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        outcome=step.error_code or action.tool.name,
+                    )
+                    no_progress_streak = (
+                        no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
+                    )
+                    last_progress_fingerprint = fingerprint
+                    if "no_progress_stall:" in tool_result.content:
+                        return False, session.read_code(), ProverFailure(
+                            reason="no_progress_stall",
+                            message="REPL tactics stopped making progress on the active goal.",
+                            error_code="unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=session.get_goals(),
+                        )
                     continue
                 failed_turns = 0
+                fingerprint = self._progress_fingerprint(
+                    session=session,
+                    theorem_name=self._target_theorem_name(packet, target),
+                    outcome=action.tool.name,
+                )
+                no_progress_streak = (
+                    no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
+                )
+                last_progress_fingerprint = fingerprint
 
             return False, session.read_code(), ProverFailure(
                 reason="max_turns_exhausted",
@@ -1285,6 +1411,190 @@ class Prover:
             for trace in examples
         ]
 
+    def _direct_candidate_proofs(
+        self,
+        *,
+        packet: FormalizationPacket,
+        current_code: str,
+        include_fallback_tactics: bool = False,
+    ) -> list[tuple[str, str, str]]:
+        from src.planner.retrieval import _entry_tactic_hints, _load_metadata
+
+        candidates: list[tuple[str, str, str]] = []
+        hypothesis = direct_hypothesis_name(current_code)
+        if hypothesis:
+            candidates.extend(
+                [
+                    (f"exact {hypothesis}", "direct_hypothesis", f"Goal matches `{hypothesis}`."),
+                    (f"simpa using {hypothesis}", "direct_hypothesis", f"Normalize using `{hypothesis}`."),
+                ]
+            )
+
+        for entry in self._selected_preamble_entries(packet):
+            metadata = _load_metadata(entry)
+            candidates.extend(self._specialized_direct_candidates(entry.name))
+            hint_candidates = [
+                (hint, entry.name, f"Metadata tactic hint from `{entry.name}`.")
+                for hint in _entry_tactic_hints(entry, metadata)
+            ]
+            lemma_candidates: list[tuple[str, str, str]] = []
+            for lemma_name in entry.planner_proven_lemmas:
+                lemma_candidates.append(
+                    (f"exact {lemma_name}", entry.name, f"Exact preamble lemma `{lemma_name}` closes the goal.")
+                )
+                lemma_candidates.append(
+                    (f"simpa using {lemma_name}", entry.name, f"Simplify using preamble lemma `{lemma_name}`.")
+                )
+            if entry.name in _HINT_FIRST_PREAMBLES:
+                candidates.extend(hint_candidates)
+                candidates.extend(lemma_candidates)
+            else:
+                candidates.extend(lemma_candidates)
+                candidates.extend(hint_candidates)
+
+        if include_fallback_tactics:
+            for tactic, rationale in SHORTCUT_FALLBACK_TACTICS:
+                candidates.append((tactic, "fallback_tactic", rationale))
+
+        deduped: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for proof, source, rationale in candidates:
+            normalized = proof.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append((normalized, source, rationale))
+        return deduped
+
+    def _specialized_direct_candidates(self, preamble_name: str) -> list[tuple[str, str, str]]:
+        mapping: dict[str, list[str]] = {
+            "bellman_operator": ["exact BellmanOperator.monotone hβ hvw"],
+            "contraction_mapping": ["exact contraction_has_fixedPoint hf"],
+            "fixed_point_theorem": [
+                "exact exists_fixedPoint_of_contractingWith hf",
+                "exact fixedPoint_isFixedPt hf",
+            ],
+            "value_function": [
+                "simpa [ValueFunction] using ContractingWith.fixedPoint_isFixedPt (f := T) hT",
+            ],
+            "policy_iteration": [
+                "exact policyImproves_refl criterion policy",
+                "exact le_rfl",
+            ],
+            "measure": ["exact economicMeasure_empty μ", "simp"],
+            "topological_space": ["simpa using continuous_const"],
+            "continuous_preference": ["exact hu.continuousOn"],
+            "convex_preference": ["exact hu"],
+            "constrained_optimization": ["exact hx.1", "exact hx.2 hy"],
+            "kuhn_tucker": [
+                "exact hkt.slackness i",
+                "exact KuhnTuckerPoint.complementary_slackness hkt i",
+            ],
+            "nash_existence": [
+                "exact ⟨h.witness, h.is_nash⟩",
+                "exact nash_exists_of_witness h",
+            ],
+        }
+        return [
+            (proof, preamble_name, f"Specialized direct proof for `{preamble_name}`.")
+            for proof in mapping.get(preamble_name, [])
+        ]
+
+    def _has_direct_candidates(self, packet: FormalizationPacket) -> bool:
+        return bool(self._selected_preamble_entries(packet))
+
+    def _try_direct_definable_closure(
+        self,
+        *,
+        packet: FormalizationPacket,
+        target: ProverTarget,
+        current_code: str,
+        timeout: int,
+        include_fallback_tactics: bool = False,
+    ) -> dict[str, Any] | None:
+        attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
+        theorem_name = self._target_theorem_name(packet, target)
+        for proof, source, rationale in self._direct_candidate_proofs(
+            packet=packet,
+            current_code=current_code,
+            include_fallback_tactics=include_fallback_tactics,
+        ):
+            try:
+                candidate_code = _replace_named_theorem_body(current_code, theorem_name, proof)
+            except ValueError:
+                return None
+            try:
+                result = compile_check(candidate_code, timeout=attempt_timeout)
+            except Exception:
+                continue
+            if result.get("success"):
+                return {
+                    "code": candidate_code,
+                    "proof": proof,
+                    "source": source,
+                    "rationale": rationale,
+                }
+        return None
+
+    def _record_direct_definable_closure(
+        self,
+        *,
+        trace: list[ProverTraceStep],
+        audit_events: list[AuditEvent],
+        backend: ProverBackend,
+        target: ProverTarget,
+        turn: int,
+        current_code: str,
+        lean_feedback: list[str],
+        proof: str,
+        source: str,
+        rationale: str,
+    ) -> None:
+        trace.append(
+            ProverTraceStep(
+                turn=turn,
+                backend=backend.name,
+                target_name=target.name,
+                action_type="direct_definable_closure",
+                success=True,
+                rationale=rationale,
+                tool_name="compile_check",
+                tool_arguments={"proof": proof},
+                tool_result=f"Closed via `{proof.splitlines()[0]}` using `{source}`.",
+                lean_feedback=lean_feedback,
+                goals=[],
+                code_snapshot=current_code,
+            )
+        )
+        audit_events.append(
+            AuditEvent(
+                stage="prover",
+                event_type="direct_definable_closure",
+                provider=backend.provider,
+                model=backend.model,
+                success=True,
+                metadata={
+                    "turn": turn,
+                    "target_name": target.name,
+                    "proof": proof,
+                    "source": source,
+                },
+            )
+        )
+
+    def _progress_fingerprint(
+        self,
+        *,
+        session: _ActiveProofSession,
+        theorem_name: str,
+        outcome: str,
+    ) -> tuple[str, tuple[str, ...], str]:
+        return (
+            _proof_body_fingerprint(session.read_code(), theorem_name),
+            tuple(session.get_goals()),
+            outcome,
+        )
+
     def _first_turn_hints(self, packet: FormalizationPacket) -> list[str]:
         from src.planner.retrieval import _entry_tactic_hints, _load_metadata
         from src.preamble_library import PREAMBLE_LIBRARY
@@ -1339,35 +1649,21 @@ class Prover:
         current_code: str,
         timeout: int,
     ) -> dict[str, Any] | None:
-        attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
-        candidates: list[tuple[str, str]] = []
-        hypothesis = direct_hypothesis_name(current_code)
-        if hypothesis:
-            candidates.append(
-                (f"exact {hypothesis}", f"Goal matches hypothesis `{hypothesis}`")
-            )
-        for tactic, rationale in SHORTCUT_FALLBACK_TACTICS:
-            candidates.append((tactic, rationale))
-
-        for tactic, rationale in candidates:
-            try:
-                candidate_code = _replace_named_theorem_body(
-                    current_code, packet.theorem_name, tactic
-                )
-            except ValueError:
-                return None
-            try:
-                result = compile_check(candidate_code, timeout=attempt_timeout)
-            except Exception:
-                continue
-            if result.get("success"):
-                return {
-                    "code": candidate_code,
-                    "tactic": tactic,
-                    "hypothesis": hypothesis or "library",
-                    "rationale": rationale,
-                }
-        return None
+        shortcut = self._try_direct_definable_closure(
+            packet=packet,
+            target=ProverTarget(name="theorem_body", statement=packet.theorem_name, kind="theorem_body"),
+            current_code=current_code,
+            timeout=timeout,
+            include_fallback_tactics=True,
+        )
+        if shortcut is None:
+            return None
+        return {
+            "code": shortcut["code"],
+            "tactic": shortcut["proof"],
+            "hypothesis": shortcut["source"],
+            "rationale": shortcut["rationale"],
+        }
 
     def _resolve_target_timeouts(
         self,
@@ -1499,7 +1795,16 @@ class Prover:
             goals = session.get_goals()
             return ToolResult(call.id, "\n".join(goals) if goals else "All goals solved.")
         if tool.name == "apply_tactic":
+            before_code = session.read_code()
+            before_goals = session.get_goals()
             success, message = session.apply_tactic(str(tool.arguments.get("tactic", "")))
+            if success and not session.solved:
+                if before_code.strip() == session.read_code().strip() and before_goals == session.get_goals():
+                    return ToolResult(
+                        call.id,
+                        f"no_progress_stall: `{tool.arguments.get('tactic', '')}` did not change code or goals.",
+                        is_error=True,
+                    )
             return ToolResult(call.id, message, is_error=not success)
         if tool.name == "memory_retrieve":
             payload = self._memory_examples(packet)

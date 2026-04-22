@@ -258,3 +258,35 @@ def test_local_gate_uses_trivial_shortcut_and_skips_pipeline(monkeypatch) -> Non
     assert shortcut_results[0]["verified_via"] == "trivial_shortcut"
     assert shortcut_results[0]["usage_by_stage"] == {}
     assert len(fake_prover.calls) == summary["claims_total"] - 1
+
+
+def test_local_gate_seeded_sampling_is_reproducible(monkeypatch) -> None:
+    import evals.local_gate as local_gate_module
+
+    monkeypatch.setattr(local_gate_module, "_try_claim_trivial_shortcut", lambda _stub: None)
+
+    summary_a = run_claim_set(
+        "tier1_core",
+        planner_service=_planner_service(),
+        formalizer_service=FakeFormalizerService(),
+        prover_instance=FakeProver(),
+        enforce_readiness=False,
+        benchmark_mode=True,
+        limit=3,
+        sample_seed=17,
+    )
+    summary_b = run_claim_set(
+        "tier1_core",
+        planner_service=_planner_service(),
+        formalizer_service=FakeFormalizerService(),
+        prover_instance=FakeProver(),
+        enforce_readiness=False,
+        benchmark_mode=True,
+        limit=3,
+        sample_seed=17,
+    )
+
+    assert summary_a["sampling_mode"] == "seeded_random"
+    assert summary_a["sample_seed"] == 17
+    assert len(summary_a["selected_ids"]) == 3
+    assert summary_a["selected_ids"] == summary_b["selected_ids"]

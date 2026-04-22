@@ -7,6 +7,7 @@ import asyncio
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import random
 import re
 from typing import Any
 
@@ -21,9 +22,10 @@ from src.prover import DEFAULT_PROVER, Prover, ProverTargetTimeouts
 from src.prover.prover import _replace_named_theorem_body
 from src.prover.tactics import direct_hypothesis_name
 
-CLAIM_SETS = ("tier0_smoke", "tier1_core", "tier2_frontier")
+CLAIM_SETS = ("tier0_smoke", "tier1_core", "tier2_frontier", "prover_easy_definable")
 LIVE_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=300, subgoal=180, apollo_lemma=120)
 BENCHMARK_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=120, subgoal=120, apollo_lemma=120)
+DEFAULT_SAMPLE_SEED = 17
 
 
 def _timestamp() -> str:
@@ -178,11 +180,28 @@ def _select_claims(
     *,
     limit: int | None,
     stratified: bool,
-) -> list[dict[str, Any]]:
+    sample_seed: int | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if limit is None or limit >= len(claims):
-        return claims
+        return claims, {
+            "sampling_mode": "full",
+            "sample_seed": sample_seed,
+            "selected_ids": [str(claim["id"]) for claim in claims],
+        }
+    if sample_seed is not None:
+        selected = random.Random(sample_seed).sample(claims, limit)
+        return selected, {
+            "sampling_mode": "seeded_random",
+            "sample_seed": sample_seed,
+            "selected_ids": [str(claim["id"]) for claim in selected],
+        }
     if not stratified:
-        return claims[:limit]
+        selected = claims[:limit]
+        return selected, {
+            "sampling_mode": "head",
+            "sample_seed": sample_seed,
+            "selected_ids": [str(claim["id"]) for claim in selected],
+        }
     buckets: dict[str, list[dict[str, Any]]] = {}
     for claim in claims:
         preambles = claim.get("preamble_names") or []
@@ -201,7 +220,11 @@ def _select_claims(
                 break
         if not progressed:
             break
-    return selected
+    return selected, {
+        "sampling_mode": "stratified",
+        "sample_seed": sample_seed,
+        "selected_ids": [str(claim["id"]) for claim in selected],
+    }
 
 
 async def _run_claim_set_async(
@@ -214,8 +237,14 @@ async def _run_claim_set_async(
     benchmark_mode: bool,
     limit: int | None,
     stratified: bool,
+    sample_seed: int | None,
 ) -> dict[str, Any]:
-    claims = _select_claims(load_claims(claim_set), limit=limit, stratified=stratified)
+    claims, selection_info = _select_claims(
+        load_claims(claim_set),
+        limit=limit,
+        stratified=stratified,
+        sample_seed=sample_seed,
+    )
     readiness = _preflight(planner_service, formalizer_service, prover_instance)
     target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
     if enforce_readiness and not readiness["ready"]:
@@ -230,6 +259,7 @@ async def _run_claim_set_async(
             "claims_failed": len(claims),
             "pass_at_1": 0.0,
             "executed": False,
+            **selection_info,
             "readiness": readiness,
             "tokens_by_stage": {},
             "cost_by_stage": {},
@@ -261,6 +291,9 @@ async def _run_claim_set_async(
         result_status = "failed"
         theorem_name: str | None = None
         verified_via = "full_pipeline"
+        tool_calls = 0
+        decomposition_steps = 0
+        decomposition_depth = 0
 
         shortcut = None if benchmark_mode else _try_claim_trivial_shortcut(theorem_stub)
         if shortcut is not None:
@@ -333,6 +366,9 @@ async def _run_claim_set_async(
             if prove_result.failure is not None:
                 failure_code = prove_result.failure.error_code or prove_result.failure.reason
             result_status = prove_result.status
+            tool_calls = int((prove_result.tool_budget or {}).get("total_tool_calls") or 0)
+            decomposition_steps = sum(1 for step in prove_result.trace if step.action_type == "decompose")
+            decomposition_depth = max((target.recursion_depth for target in prove_result.targets), default=0)
         except StageExecutionError as exc:
             usage = _usage_dict(exc.usage)
             if exc.stage == "planner":
@@ -375,6 +411,9 @@ async def _run_claim_set_async(
                 "target_timeouts": target_timeouts.model_dump(mode="json"),
                 "theorem_stub_reference": theorem_stub,
                 "timing_breakdown": stage_timings,
+                "tool_calls": tool_calls,
+                "decomposition_steps": decomposition_steps,
+                "decomposition_depth": decomposition_depth,
                 "usage_by_stage": {
                     key: value
                     for key, value in {
@@ -390,16 +429,29 @@ async def _run_claim_set_async(
 
     claims_passed = sum(1 for item in results if item["status"] == "verified")
     claims_total = len(results)
+    average_tool_calls = round(sum(int(item.get("tool_calls") or 0) for item in results) / claims_total, 3) if claims_total else 0.0
+    average_decomposition_steps = round(
+        sum(int(item.get("decomposition_steps") or 0) for item in results) / claims_total,
+        3,
+    ) if claims_total else 0.0
+    average_decomposition_depth = round(
+        sum(int(item.get("decomposition_depth") or 0) for item in results) / claims_total,
+        3,
+    ) if claims_total else 0.0
     return {
         "claim_set": claim_set,
         "mode": "live_pipeline",
         "benchmark_mode": benchmark_mode,
         "target_timeouts": target_timeouts.model_dump(mode="json"),
         "generated_at": _timestamp(),
+        **selection_info,
         "claims_total": claims_total,
         "claims_passed": claims_passed,
         "claims_failed": claims_total - claims_passed,
         "pass_at_1": round(claims_passed / claims_total, 6) if claims_total else 0.0,
+        "average_tool_calls": average_tool_calls,
+        "average_decomposition_steps": average_decomposition_steps,
+        "average_decomposition_depth": average_decomposition_depth,
         "executed": True,
         "readiness": readiness,
         "tokens_by_stage": tokens_by_stage,
@@ -420,6 +472,7 @@ def run_claim_set(
     benchmark_mode: bool = False,
     limit: int | None = None,
     stratified: bool = False,
+    sample_seed: int | None = None,
 ) -> dict[str, Any]:
     return asyncio.run(
         _run_claim_set_async(
@@ -431,6 +484,7 @@ def run_claim_set(
             benchmark_mode=benchmark_mode,
             limit=limit,
             stratified=stratified,
+            sample_seed=sample_seed,
         )
     )
 
@@ -496,6 +550,7 @@ def main() -> int:
     parser.add_argument("--benchmark-mode", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--stratified", action="store_true")
+    parser.add_argument("--sample-seed", type=int, default=DEFAULT_SAMPLE_SEED)
     args = parser.parse_args()
 
     selected = tuple(args.claim_set or CLAIM_SETS)
@@ -506,6 +561,7 @@ def main() -> int:
             benchmark_mode=args.benchmark_mode,
             limit=args.limit,
             stratified=args.stratified,
+            sample_seed=args.sample_seed if args.limit is not None else None,
         )
         for claim_set in selected
     ]
