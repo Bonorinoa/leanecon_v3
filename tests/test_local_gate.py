@@ -260,6 +260,36 @@ def test_local_gate_uses_trivial_shortcut_and_skips_pipeline(monkeypatch) -> Non
     assert len(fake_prover.calls) == summary["claims_total"] - 1
 
 
+def test_local_gate_blocks_unreachable_planner_endpoint(monkeypatch) -> None:
+    import evals.local_gate as local_gate_module
+
+    monkeypatch.setattr(local_gate_module, "_try_claim_trivial_shortcut", lambda _stub: None)
+
+    planner_service = _planner_service()
+    monkeypatch.setattr(
+        planner_service,
+        "connectivity_check",
+        lambda: (
+            False,
+            "Local Ollama planner endpoint unreachable at http://127.0.0.1:11434 (connect: operation not permitted)",
+        ),
+    )
+
+    summary = run_claim_set(
+        "tier0_smoke",
+        planner_service=planner_service,
+        formalizer_service=FakeFormalizerService(),
+        prover_instance=FakeProver(),
+        enforce_readiness=True,
+        benchmark_mode=True,
+    )
+
+    assert summary["executed"] is False
+    assert summary["failure_counts"] == {"planner_endpoint_reachable": 1}
+    assert summary["readiness"]["checks"]["planner_endpoint_reachable"] is False
+    assert "Local Ollama planner endpoint unreachable" in summary["readiness"]["details"]["planner_endpoint_reachable"]
+
+
 def test_local_gate_seeded_sampling_is_reproducible(monkeypatch) -> None:
     import evals.local_gate as local_gate_module
 

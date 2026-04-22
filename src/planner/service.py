@@ -45,6 +45,9 @@ class PlannerService:
     def backend(self):
         return self._planner.backend
 
+    def connectivity_check(self) -> tuple[bool, str | None]:
+        return self._planner.connectivity_check()
+
     def build_plan_with_telemetry(
         self,
         claim: str,

@@ -269,6 +269,11 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
 
 def test_health_metrics_and_prometheus(monkeypatch, tmp_path) -> None:
     api_module = _configure_api(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        api_module.planner,
+        "connectivity_check",
+        lambda: (False, "Local Ollama planner endpoint unreachable at http://127.0.0.1:11434"),
+    )
     client = TestClient(api_module.app)
 
     health = client.get("/health")
@@ -277,11 +282,15 @@ def test_health_metrics_and_prometheus(monkeypatch, tmp_path) -> None:
 
     assert health.status_code == 200
     assert health.json()["runtime"]["backends"]["planner"]["provider_pinned"] in {True, False}
+    assert health.json()["runtime"]["backends"]["planner"]["available"] is False
+    assert health.json()["runtime"]["backends"]["planner"]["endpoint_reachable"] is False
+    assert "Local Ollama planner endpoint unreachable" in health.json()["runtime"]["backends"]["planner"]["availability_reason"]
     assert "recent_success_rate_last_100" in health.json()["runtime"]
 
     assert metrics.status_code == 200
     metrics_payload = metrics.json()
     assert "backend_status" in metrics_payload
+    assert metrics_payload["backend_status"]["planner"]["available"] is False
     assert "usage_totals" in metrics_payload
     assert "recent" in metrics_payload
 

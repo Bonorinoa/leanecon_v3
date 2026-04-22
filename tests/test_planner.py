@@ -10,6 +10,7 @@ import pytest
 
 from src.memory.models import ProofTrace
 from src.memory.store import ProofTraceStore
+from src.observability.errors import StageExecutionError
 from src.observability.models import ProviderCallMetadata
 from src.planner import HuggingFacePlannerDriver, OllamaPlannerDriver, PlannerBackend, PlannerLLMResponse, PlannerService
 from src.planner.planner import PlannerDriverError
@@ -855,6 +856,36 @@ def test_ollama_planner_driver_omits_auth_for_local_host(monkeypatch) -> None:
     )
 
     assert captured["authorization"] is None
+
+
+def test_planner_fast_fails_when_local_ollama_endpoint_is_unreachable(monkeypatch, tmp_path: Path) -> None:
+    retrieval = PlannerRetrievalService(
+        embedder=HashingTextEmbedder(),
+        trace_store=_make_trace_store(tmp_path),
+    )
+    urlopen_calls: list[tuple[str, float]] = []
+    sleep_calls: list[float] = []
+
+    def fake_urlopen(request, timeout: float):
+        urlopen_calls.append((request.full_url, timeout))
+        raise urllib_error.URLError("connect: operation not permitted")
+
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+    monkeypatch.setattr("src.planner.planner.time.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    service = PlannerService(
+        backend="ollama-cloud",
+        driver=OllamaPlannerDriver(api_key="ollama_test", host="http://127.0.0.1:11434", timeout=360),
+        retrieval_service=retrieval,
+    )
+
+    with pytest.raises(StageExecutionError) as exc_info:
+        service.build_plan_with_telemetry("Show the empty event has zero measure.")
+
+    assert exc_info.value.error_code == "provider_unavailable"
+    assert "local Ollama planner endpoint unreachable" in exc_info.value.message
+    assert urlopen_calls == [("http://127.0.0.1:11434/api/tags", 1.0)]
+    assert sleep_calls == []
 
 
 def test_ollama_planner_driver_backfills_empty_textbook_defaults(monkeypatch) -> None:

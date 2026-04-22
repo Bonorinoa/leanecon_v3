@@ -325,12 +325,14 @@ def _preflight(
     planner_provider = planner_backend.provider
     planner_platform = "ollama" if planner_backend.name == "ollama-cloud" else "huggingface"
     prover_provider = PROVER_PROVIDER if prover_backend.provider == "huggingface" else prover_backend.provider
+    planner_endpoint_reachable, planner_endpoint_message = planner_service.connectivity_check()
     checks = {
         "planner_provider_configured": (
             bool(planner_provider.strip())
             if planner_platform == "ollama"
             else normalize_huggingface_provider(planner_provider) in {"auto", planner_provider.strip()}
         ),
+        "planner_endpoint_reachable": planner_endpoint_reachable,
         "prover_provider_configured": prover_backend.provider != "huggingface"
         or normalize_huggingface_provider(prover_provider) in {"auto", prover_provider.strip()},
         "planner_price_known": True,
@@ -346,7 +348,8 @@ def _preflight(
         ) is not None
     ready = all(checks.values())
     blockers = [name for name, status in checks.items() if not status]
-    return {"ready": ready, "checks": checks, "blockers": blockers}
+    details = {"planner_endpoint_reachable": planner_endpoint_message} if planner_endpoint_message else {}
+    return {"ready": ready, "checks": checks, "blockers": blockers, "details": details}
 
 
 def _select_claims(

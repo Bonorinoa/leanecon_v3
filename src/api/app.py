@@ -76,14 +76,23 @@ def _credential_status(platform: str) -> bool:
     return True
 
 
-def _backend_entry(name: str, *, backend_name: str, platform: str, provider: str, model: str) -> dict[str, Any]:
+def _backend_entry(
+    name: str,
+    *,
+    backend_name: str,
+    platform: str,
+    provider: str,
+    model: str,
+    endpoint_reachable: bool | None = None,
+    availability_reason: str | None = None,
+) -> dict[str, Any]:
     provider_pinned = is_provider_pinned(platform, provider)
     price_key = "huggingface" if platform == "huggingface" else platform
     price_known = lookup_pricing(price_key, model) is not None
     credentials_present = _credential_status(platform)
-    available = credentials_present
+    available = credentials_present and (endpoint_reachable if endpoint_reachable is not None else True)
     benchmark_ready = available and (price_known or not BENCHMARK_REQUIRE_PRICING)
-    return {
+    payload = {
         "name": name,
         "backend": backend_name,
         "platform": platform,
@@ -95,6 +104,11 @@ def _backend_entry(name: str, *, backend_name: str, platform: str, provider: str
         "available": available,
         "benchmark_ready": benchmark_ready,
     }
+    if endpoint_reachable is not None:
+        payload["endpoint_reachable"] = endpoint_reachable
+    if availability_reason:
+        payload["availability_reason"] = availability_reason
+    return payload
 
 
 def _backend_status() -> dict[str, Any]:
@@ -102,6 +116,7 @@ def _backend_status() -> dict[str, Any]:
     formalizer_backend = formalizer.backend
     prover_backend = prover.primary_backend
     planner_platform = "ollama" if planner_backend.name == "ollama-cloud" else "huggingface"
+    planner_endpoint_reachable, planner_availability_reason = planner.connectivity_check()
     return {
         "planner": _backend_entry(
             "planner",
@@ -109,6 +124,8 @@ def _backend_status() -> dict[str, Any]:
             platform=planner_platform,
             provider=planner_backend.provider,
             model=planner_backend.model,
+            endpoint_reachable=planner_endpoint_reachable,
+            availability_reason=planner_availability_reason,
         ),
         "formalizer": _backend_entry(
             "formalizer",

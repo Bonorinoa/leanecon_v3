@@ -31,6 +31,10 @@ class PlannerDriverError(RuntimeError):
     """Raised when the planner driver cannot complete a request."""
 
 
+class PlannerConnectivityError(PlannerDriverError):
+    """Raised when a planner endpoint is known to be unreachable."""
+
+
 @dataclass(frozen=True)
 class PlannerBackend:
     name: str
@@ -421,6 +425,8 @@ class OllamaPlannerDriver:
         self.api_key = api_key
         self.host = host.rstrip("/")
         self.timeout = timeout
+        self._connectivity_checked_at = 0.0
+        self._connectivity_error: str | None = None
 
     @property
     def api_url(self) -> str:
@@ -429,10 +435,41 @@ class OllamaPlannerDriver:
         return f"{self.host}/api/chat"
 
     @property
+    def tags_url(self) -> str:
+        if self.host.endswith("/api"):
+            return f"{self.host}/tags"
+        return f"{self.host}/api/tags"
+
+    @property
     def uses_local_host(self) -> bool:
         parsed = urlparse(self.host)
         host = (parsed.hostname or "").strip().lower()
         return host in {"127.0.0.1", "localhost", "::1"}
+
+    def connectivity_status(self) -> tuple[bool, str | None]:
+        if not self.uses_local_host:
+            return True, None
+        now = time.monotonic()
+        if now - self._connectivity_checked_at <= 10.0:
+            return self._connectivity_error is None, self._connectivity_error
+        request = urllib_request.Request(self.tags_url, method="GET")
+        timeout = min(float(self.timeout), 1.0)
+        try:
+            with urllib_request.urlopen(request, timeout=timeout):
+                self._connectivity_error = None
+        except Exception as error:
+            self._connectivity_error = (
+                f"Planner provider unavailable: local Ollama planner endpoint unreachable at {self.host} ({error})"
+            )
+        self._connectivity_checked_at = now
+        return self._connectivity_error is None, self._connectivity_error
+
+    def _ensure_local_connectivity(self) -> None:
+        ok, message = self.connectivity_status()
+        if not ok:
+            raise PlannerConnectivityError(
+                message or f"Planner provider unavailable: local Ollama planner endpoint unreachable at {self.host}"
+            )
 
     def generate(
         self,
@@ -441,6 +478,7 @@ class OllamaPlannerDriver:
         system_prompt: str,
         user_prompt: str,
     ) -> tuple[PlannerLLMResponse, ProviderCallMetadata]:
+        self._ensure_local_connectivity()
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -615,6 +653,11 @@ class Planner:
         self.retrieval_service = retrieval_service or PlannerRetrievalService(embedder=embedder)
         self.system_prompt = build_system_prompt()
 
+    def connectivity_check(self) -> tuple[bool, str | None]:
+        if self.backend.name == "ollama-cloud" and isinstance(self.driver, OllamaPlannerDriver):
+            return self.driver.connectivity_status()
+        return True, None
+
     def build_plan_with_metadata(
         self,
         claim: str,
@@ -707,6 +750,8 @@ class Planner:
                     )
                 )
             except Exception as exc:
+                if isinstance(exc, PlannerConnectivityError):
+                    raise
                 last_error = exc
                 error_code = classify_exception(exc)
                 metadata = _planner_error_metadata(exc)
