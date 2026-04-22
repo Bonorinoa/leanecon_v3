@@ -32,7 +32,7 @@ def _packet(
             "selected_imports": ["Mathlib"],
             "open_statements": [],
             "subgoals": subgoals or [],
-            "selected_preamble": ["bellman_operator"] if selected_preamble is None else selected_preamble,
+            "selected_preamble": [] if selected_preamble is None else selected_preamble,
             "vacuity": {"is_vacuous": False},
             "faithfulness": FaithfulnessAssessment(
                 score=5.0,
@@ -57,8 +57,10 @@ def _packet(
 class ScriptedDriver:
     def __init__(self, scripts: dict[str, list[dict[str, object]]]) -> None:
         self.scripts = {name: list(entries) for name, entries in scripts.items()}
+        self.call_count = 0
 
     def next_action(self, *, backend, prompt: str) -> ProverAction:
+        self.call_count += 1
         payload = json.loads(prompt)
         target_name = str(payload["target"]["name"])
         if target_name not in self.scripts or not self.scripts[target_name]:
@@ -1086,3 +1088,449 @@ async def test_prover_preserves_max_turns_exhausted_error_code(tmp_path, monkeyp
     assert result.failure is not None
     assert result.failure.error_code == "max_turns_exhausted"
     assert result.termination_reason == "max_turns_exhausted"
+
+
+@pytest.mark.anyio
+async def test_prover_scaffolds_monotone_goal_before_metadata_branch_closure(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    class MonotoneScaffoldRepl(FakeReplSession):
+        def start_proof(self, theorem_with_sorry: str, timeout=None):
+            self.code = theorem_with_sorry
+            self.theorem_name = _theorem_name(theorem_with_sorry)
+            self.tactics = []
+            return SimpleNamespace(
+                state_id=1,
+                goals=["⊢ Monotone (BellmanOperator reward transition β)"],
+                is_solved=False,
+            )
+
+        def apply_tactic(self, tactic: str, timeout=None):
+            self.tactics.append(tactic)
+            if tactic == "intro x y hxy":
+                return SimpleNamespace(
+                    has_errors=lambda: False,
+                    goals=["⊢ BellmanOperator reward transition β x ≤ BellmanOperator reward transition β y"],
+                    proof_status="InProgress",
+                    proof_state=len(self.tactics) + 1,
+                )
+            if tactic == "exact BellmanOperator.monotone hβ hxy":
+                return SimpleNamespace(
+                    has_errors=lambda: False,
+                    goals=[],
+                    proof_status="Completed",
+                    proof_state=len(self.tactics) + 1,
+                )
+            return FakeErrorResponse(f"unsupported tactic `{tactic}`")
+
+    def _compile_monotone_scaffold(code: str, **_: object) -> dict[str, object]:
+        success = (
+            "intro x y hxy" in code
+            and "exact BellmanOperator.monotone hβ hxy" in code
+            and "sorry" not in code
+        )
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", MonotoneScaffoldRepl)
+    monkeypatch.setattr(prover_module, "compile_check", _compile_monotone_scaffold)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    driver = ScriptedDriver({})
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="benchmark_blackwell_order_preserving",
+            claim="A Bellman-style operator is order preserving.",
+            lean_code=(
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator\n\n"
+                "theorem benchmark_blackwell_order_preserving\n"
+                "    {S : Type*} {reward : S → ℝ} {transition : S → S} {β : ℝ}\n"
+                "    (hβ : 0 ≤ β) :\n"
+                "    Monotone (BellmanOperator reward transition β) := by\n"
+                "  sorry\n"
+            ),
+            selected_preamble=["bellman_operator"],
+        ),
+        "job_monotone_scaffold",
+        max_turns=4,
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "intro x y hxy" in result.verified_code
+    assert "exact BellmanOperator.monotone hβ hxy" in result.verified_code
+    assert any(step.action_type == "deterministic_scaffold" for step in result.trace)
+    assert any(step.action_type == "deterministic_branch_tactic" for step in result.trace)
+    assert driver.call_count == 0
+
+
+@pytest.mark.anyio
+async def test_prover_scaffolds_conjunction_goal_and_closes_both_branches(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    class ConjunctionRepl(FakeReplSession):
+        def start_proof(self, theorem_with_sorry: str, timeout=None):
+            self.code = theorem_with_sorry
+            self.theorem_name = _theorem_name(theorem_with_sorry)
+            self.tactics = []
+            self.branch = "root"
+            return SimpleNamespace(
+                state_id=1,
+                goals=["⊢ ContinuousOn u feasible ∧ u y ≤ u x"],
+                is_solved=False,
+            )
+
+        def apply_tactic(self, tactic: str, timeout=None):
+            self.tactics.append(tactic)
+            if tactic == "constructor":
+                self.branch = "left"
+                return SimpleNamespace(
+                    has_errors=lambda: False,
+                    goals=["⊢ ContinuousOn u feasible", "⊢ u y ≤ u x"],
+                    proof_status="InProgress",
+                    proof_state=len(self.tactics) + 1,
+                )
+            if self.branch == "left" and tactic in {"exact hu.continuousOn", "exact continuousPreference_continuousOn hu feasible"}:
+                self.branch = "right"
+                return SimpleNamespace(
+                    has_errors=lambda: False,
+                    goals=["⊢ u y ≤ u x"],
+                    proof_status="InProgress",
+                    proof_state=len(self.tactics) + 1,
+                )
+            if self.branch == "right" and tactic in {"exact hx.2 hy", "exact IsConstrainedMaximum.value_le hx hy"}:
+                self.branch = "done"
+                return SimpleNamespace(
+                    has_errors=lambda: False,
+                    goals=[],
+                    proof_status="Completed",
+                    proof_state=len(self.tactics) + 1,
+                )
+            return FakeErrorResponse(f"unsupported tactic `{tactic}`")
+
+    def _compile_conjunction(code: str, **_: object) -> dict[str, object]:
+        success = (
+            "constructor" in code
+            and (
+                "exact continuousPreference_continuousOn hu feasible" in code
+                or "exact hu.continuousOn" in code
+            )
+            and (
+                "exact IsConstrainedMaximum.value_le hx hy" in code
+                or "exact hx.2 hy" in code
+            )
+            and "sorry" not in code
+        )
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", ConjunctionRepl)
+    monkeypatch.setattr(prover_module, "compile_check", _compile_conjunction)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver({}),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="benchmark_continuous_argmax_certificate",
+            claim="Continuous argmax certificates split into continuity and value branches.",
+            lean_code=(
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.Preferences.ContinuousPreference\n"
+                "import LeanEcon.Preamble.Foundations.Optimization.ConstrainedOptimization\n\n"
+                "theorem benchmark_continuous_argmax_certificate\n"
+                "    {α : Type*} [TopologicalSpace α] [TopologicalSpace ℝ]\n"
+                "    {u : α → ℝ} {feasible : Set α} {x y : α}\n"
+                "    (hu : ContinuousPreference u)\n"
+                "    (hx : IsConstrainedMaximum u feasible x)\n"
+                "    (hy : y ∈ feasible) :\n"
+                "    ContinuousOn u feasible ∧ u y ≤ u x := by\n"
+                "  sorry\n"
+            ),
+            selected_preamble=["continuous_preference", "constrained_optimization"],
+        ),
+        "job_conjunction_scaffold",
+        max_turns=5,
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "constructor" in result.verified_code
+    assert (
+        "exact continuousPreference_continuousOn hu feasible" in result.verified_code
+        or "exact hu.continuousOn" in result.verified_code
+    )
+    assert (
+        "exact IsConstrainedMaximum.value_le hx hy" in result.verified_code
+        or "exact hx.2 hy" in result.verified_code
+    )
+    assert any(step.action_type == "deterministic_scaffold" for step in result.trace)
+    assert sum(1 for step in result.trace if step.action_type == "deterministic_branch_tactic") >= 2
+
+
+@pytest.mark.anyio
+async def test_prover_prefers_existential_witness_scaffold_from_metadata(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    class ExistentialRepl(FakeReplSession):
+        def start_proof(self, theorem_with_sorry: str, timeout=None):
+            self.code = theorem_with_sorry
+            self.theorem_name = _theorem_name(theorem_with_sorry)
+            self.tactics = []
+            return SimpleNamespace(
+                state_id=1,
+                goals=["⊢ ∃ x, Function.IsFixedPt f x"],
+                is_solved=False,
+            )
+
+        def apply_tactic(self, tactic: str, timeout=None):
+            self.tactics.append(tactic)
+            if tactic == "refine ⟨ContractingWith.fixedPoint (f := f) hf, ?_⟩":
+                return SimpleNamespace(
+                    has_errors=lambda: False,
+                    goals=["⊢ Function.IsFixedPt f (ContractingWith.fixedPoint (f := f) hf)"],
+                    proof_status="InProgress",
+                    proof_state=len(self.tactics) + 1,
+                )
+            if tactic in {
+                "exact ContractingWith.fixedPoint_isFixedPt (f := f) hf",
+                "exact fixedPoint_isFixedPt hf",
+            }:
+                return SimpleNamespace(
+                    has_errors=lambda: False,
+                    goals=[],
+                    proof_status="Completed",
+                    proof_state=len(self.tactics) + 1,
+                )
+            return FakeErrorResponse(f"unsupported tactic `{tactic}`")
+
+    def _compile_existential(code: str, **_: object) -> dict[str, object]:
+        success = (
+            "refine ⟨ContractingWith.fixedPoint (f := f) hf, ?_⟩" in code
+            and (
+                "exact ContractingWith.fixedPoint_isFixedPt (f := f) hf" in code
+                or "exact fixedPoint_isFixedPt hf" in code
+            )
+            and "sorry" not in code
+        )
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", ExistentialRepl)
+    monkeypatch.setattr(prover_module, "compile_check", _compile_existential)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver({}),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="benchmark_fixed_point_exists",
+            claim="A contraction admits a fixed point.",
+            lean_code=(
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.Equilibrium.FixedPointTheorem\n\n"
+                "theorem benchmark_fixed_point_exists\n"
+                "    {α : Type*} [MetricSpace α] [CompleteSpace α] [Nonempty α]\n"
+                "    {K : NNReal} {f : α → α} (hf : ContractingWith K f) :\n"
+                "    ∃ x, Function.IsFixedPt f x := by\n"
+                "  sorry\n"
+            ),
+            selected_preamble=["fixed_point_theorem"],
+        ),
+        "job_existential_scaffold",
+        max_turns=4,
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "refine ⟨ContractingWith.fixedPoint (f := f) hf, ?_⟩" in result.verified_code
+    assert "exact ContractingWith.fixedPoint_isFixedPt (f := f) hf" in result.verified_code
+    scaffold_steps = [step for step in result.trace if step.action_type == "deterministic_scaffold"]
+    assert scaffold_steps
+    assert scaffold_steps[0].tool_arguments["tactic"] == "refine ⟨ContractingWith.fixedPoint (f := f) hf, ?_⟩"
+
+
+@pytest.mark.anyio
+async def test_prover_wrapper_aware_direct_closure_uses_simpa_on_known_lemma(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+
+    def _compile_wrapper_direct(code: str, **_: object) -> dict[str, object]:
+        success = "simpa [Monotone] using BellmanOperator.monotone hβ" in code and "sorry" not in code
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", _compile_wrapper_direct)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    driver = ScriptedDriver({})
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="benchmark_blackwell_order_preserving",
+            claim="A Bellman-style operator is order preserving.",
+            lean_code=(
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator\n\n"
+                "theorem benchmark_blackwell_order_preserving\n"
+                "    {S : Type*} {reward : S → ℝ} {transition : S → S} {β : ℝ}\n"
+                "    (hβ : 0 ≤ β) :\n"
+                "    Monotone (BellmanOperator reward transition β) := by\n"
+                "  sorry\n"
+            ),
+            selected_preamble=["bellman_operator"],
+        ),
+        "job_wrapper_direct",
+        max_turns=3,
+        benchmark_mode=True,
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "simpa [Monotone] using BellmanOperator.monotone hβ" in result.verified_code
+    assert any(step.action_type == "direct_definable_closure" for step in result.trace)
+    assert driver.call_count == 0
+
+
+@pytest.mark.anyio
+async def test_prover_fails_fast_after_repeated_schema_invalid_actions(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    def _always_fail_compile(code: str, **_: object) -> dict[str, object]:
+        return {
+            "success": False,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "unsolved proof",
+            "errors": ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "unsolved proof",
+            "exit_code": 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", _always_fail_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    driver = ScriptedDriver(
+        {
+            "theorem_body": [
+                {"action_type": "tool", "rationale": "Invalid tool action.", "tool": {"name": "bad_tool", "arguments": {}}},
+                {"action_type": "tool", "rationale": "Repeat the same invalid action.", "tool": {"name": "bad_tool", "arguments": {}}},
+                {"action_type": "tool", "rationale": "Repeat again; prover should stop here.", "tool": {"name": "bad_tool", "arguments": {}}},
+            ]
+        }
+    )
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=driver,
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="schema_invalid_repeat_claim",
+            claim="Repeated invalid provider actions should fail fast.",
+            lean_code="import Mathlib\n\ntheorem schema_invalid_repeat_claim : True := by\n  sorry\n",
+            selected_preamble=[],
+        ),
+        "job_schema_invalid_repeat",
+        max_turns=6,
+    )
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.reason in {"no_progress_stall", "max_turns_exhausted"}
+    assert driver.call_count < 6

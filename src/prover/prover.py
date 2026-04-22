@@ -49,11 +49,18 @@ from src.prover.models import (
     ProverTraceStep,
 )
 from src.prover.tactics import (
+    classify_goal_shape,
     direct_hypothesis_name,
     failure_feedback_messages,
+    goal_shape_scaffold,
+    intro_names_from_body,
+    normalized_diagnostic_signature,
+    normalized_goal_text,
     repeated_noop_action,
     should_decompose,
     suggest_fast_path_tactics,
+    theorem_goal_statement,
+    theorem_parameter_names,
     validate_action,
 )
 from src.providers import normalize_huggingface_provider
@@ -82,6 +89,7 @@ _HINT_FIRST_PREAMBLES = frozenset(
         "value_function",
     }
 )
+_WRAPPER_SIMPA_SHAPES = frozenset({"Monotone", "Antitone", "StrictMono", "StrictAnti"})
 
 
 class ProverDriverError(RuntimeError):
@@ -914,7 +922,15 @@ class Prover:
         active_backend = self.primary_backend
         soft_repair_used = False
         no_progress_streak = 0
-        last_progress_fingerprint: tuple[str, tuple[str, ...], str] | None = None
+        last_progress_fingerprint: tuple[str, tuple[str, ...], tuple[str, ...], str] | None = None
+        force_deterministic_recovery = False
+        seen_failures: dict[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str], int] = {}
+        scaffold_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]] = set()
+        branch_tactic_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]] = set()
+        last_failure_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = None
+        repeated_failure_streak = 0
+        last_schema_invalid_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = None
+        schema_invalid_repeats = 0
 
         try:
             for turn in range(1, max_turns + 1):
@@ -944,6 +960,7 @@ class Prover:
                                 target=target,
                                 current_code=self.file_controller.build_final_code(job_id, session.read_code()),
                                 timeout=timeout,
+                                include_fallback_tactics=force_deterministic_recovery,
                             )
                             if recovered is not None:
                                 session.write_code(recovered["code"])
@@ -1003,52 +1020,60 @@ class Prover:
                     packet=packet,
                     current_code=current_code,
                 ) or self._has_targeted_fast_path(current_code)
-                if has_targeted_recovery and (failed_turns > 0 or no_progress_streak > 0):
-                    recovery_close = self._try_direct_definable_closure(
-                        packet=packet,
-                        target=target,
-                        current_code=current_code,
-                        timeout=timeout,
-                        include_fallback_tactics=True,
-                    )
-                    if recovery_close is not None:
-                        session.write_code(recovery_close["code"])
-                        self._record_direct_definable_closure(
-                            trace=trace,
-                            audit_events=audit_events,
-                            backend=active_backend,
-                            target=target,
-                            turn=turn,
-                            current_code=session.read_code(),
-                            lean_feedback=lean_feedback,
-                            proof=recovery_close["proof"],
-                            source=recovery_close["source"],
-                            rationale=recovery_close["rationale"],
-                        )
-                        return True, session.read_code(), None
-
-                direct_close = self._try_direct_definable_closure(
+                recovery_forced = force_deterministic_recovery
+                repaired, repaired_code, repaired_failure = self._apply_deterministic_repair(
                     packet=packet,
                     target=target,
-                    current_code=current_code,
+                    session=session,
+                    trace=trace,
+                    audit_events=audit_events,
+                    backend=active_backend,
+                    turn=turn,
                     timeout=timeout,
+                    lean_feedback=lean_feedback,
+                    include_fallback_tactics=force_deterministic_recovery or failed_turns > 0 or no_progress_streak > 0,
+                    scaffold_attempts=scaffold_attempts,
+                    branch_tactic_attempts=branch_tactic_attempts,
                 )
-                if direct_close is not None:
-                    direct_code = direct_close["code"]
-                    session.write_code(direct_code)
-                    self._record_direct_definable_closure(
-                        trace=trace,
-                        audit_events=audit_events,
-                        backend=active_backend,
-                        target=target,
+                force_deterministic_recovery = False
+                if repaired_failure is not None:
+                    return False, session.read_code(), repaired_failure
+                if recovery_forced and repaired_code is None:
+                    repeated_error_code = "unsolved_goals"
+                    if last_failure_signature is not None and last_failure_signature[1].startswith("schema_invalid:"):
+                        repeated_error_code = "schema_invalid"
+                    return False, session.read_code(), ProverFailure(
+                        reason="no_progress_stall",
+                        message="Deterministic recovery could not change the repeated failing proof state.",
+                        error_code=repeated_error_code,
+                        target_name=target.name,
                         turn=turn,
-                        current_code=session.read_code(),
+                        backend=active_backend.name,
                         lean_feedback=lean_feedback,
-                        proof=direct_close["proof"],
-                        source=direct_close["source"],
-                        rationale=direct_close["rationale"],
                     )
-                    return True, direct_code, None
+                if repaired_code is not None:
+                    if repaired:
+                        last_failure_signature = None
+                        repeated_failure_streak = 0
+                        return True, repaired_code, None
+                    latest_step = trace[-1]
+                    if latest_step.success:
+                        failed_turns = 0
+                        last_failure_signature = None
+                        repeated_failure_streak = 0
+                    else:
+                        failed_turns += 1
+                    fingerprint = self._progress_fingerprint(
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        outcome=latest_step.error_code or latest_step.action_type,
+                        lean_feedback=lean_feedback,
+                    )
+                    no_progress_streak = (
+                        no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
+                    )
+                    last_progress_fingerprint = fingerprint
+                    continue
 
                 prompt = _build_prompt(
                     packet=packet,
@@ -1156,19 +1181,53 @@ class Prover:
                         )
                     )
                     failed_turns += 1
+                    failure_signature = self._failure_signature_key(
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        lean_feedback=lean_feedback,
+                        action_key=f"provider_error:{error_code}",
+                    )
+                    failure_repeats = self._register_failure_signature(
+                        seen_failures=seen_failures,
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        lean_feedback=lean_feedback,
+                        action_key=f"provider_error:{error_code}",
+                    )
+                    if failure_signature == last_failure_signature:
+                        repeated_failure_streak += 1
+                    else:
+                        last_failure_signature = failure_signature
+                        repeated_failure_streak = 1
+                    failure_repeats = max(failure_repeats, repeated_failure_streak)
                     fingerprint = self._progress_fingerprint(
                         session=session,
                         theorem_name=self._target_theorem_name(packet, target),
                         outcome="provider_error",
+                        lean_feedback=lean_feedback,
                     )
                     no_progress_streak = (
                         no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
                     )
                     last_progress_fingerprint = fingerprint
+                    if failure_repeats >= 3:
+                        return False, session.read_code(), ProverFailure(
+                            reason="no_progress_stall",
+                            message="Provider failures repeated on the same proof state.",
+                            error_code=error_code or "unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=lean_feedback,
+                        )
+                    if failure_repeats == 2:
+                        force_deterministic_recovery = True
                     continue
 
                 if active_backend.name not in attempted_backends:
                     attempted_backends.append(active_backend.name)
+                last_failure_signature = None
+                repeated_failure_streak = 0
 
                 validation_error = validate_action(action, self.registry)
                 if validation_error is not None:
@@ -1206,16 +1265,55 @@ class Prover:
                     if invalid_output_count >= 2 and active_backend.name != self.fallback_backend.name:
                         active_backend = self.fallback_backend
                         invalid_output_count = 0
+                    failure_signature = self._failure_signature_key(
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        lean_feedback=lean_feedback,
+                        action_key=f"schema_invalid:{validation_error}",
+                    )
+                    failure_repeats = self._register_failure_signature(
+                        seen_failures=seen_failures,
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        lean_feedback=lean_feedback,
+                        action_key=f"schema_invalid:{validation_error}",
+                    )
+                    if failure_signature == last_failure_signature:
+                        repeated_failure_streak += 1
+                    else:
+                        last_failure_signature = failure_signature
+                        repeated_failure_streak = 1
+                    failure_repeats = max(failure_repeats, repeated_failure_streak)
+                    if failure_signature == last_schema_invalid_signature:
+                        schema_invalid_repeats += 1
+                    else:
+                        last_schema_invalid_signature = failure_signature
+                        schema_invalid_repeats = 1
                     fingerprint = self._progress_fingerprint(
                         session=session,
                         theorem_name=self._target_theorem_name(packet, target),
                         outcome="schema_invalid",
+                        lean_feedback=lean_feedback,
                     )
                     no_progress_streak = (
                         no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
                     )
                     last_progress_fingerprint = fingerprint
+                    if failure_repeats >= 3 or schema_invalid_repeats >= 3:
+                        return False, session.read_code(), ProverFailure(
+                            reason="no_progress_stall",
+                            message="Provider repeated schema-invalid actions on the same proof state.",
+                            error_code="schema_invalid",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=lean_feedback,
+                        )
+                    if failure_repeats == 2:
+                        force_deterministic_recovery = True
                     continue
+                last_schema_invalid_signature = None
+                schema_invalid_repeats = 0
 
                 if repeated_noop_action(trace, action):
                     return False, current_code, ProverFailure(
@@ -1326,10 +1424,33 @@ class Prover:
                 )
                 if tool_result.is_error:
                     failed_turns += 1
+                    failure_action_key = (
+                        f"{action.tool.name}:{action.tool.arguments}:{step.error_code or tool_result.content}"
+                    )
+                    failure_signature = self._failure_signature_key(
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        lean_feedback=lean_feedback,
+                        action_key=failure_action_key,
+                    )
+                    failure_repeats = self._register_failure_signature(
+                        seen_failures=seen_failures,
+                        session=session,
+                        theorem_name=self._target_theorem_name(packet, target),
+                        lean_feedback=lean_feedback,
+                        action_key=failure_action_key,
+                    )
+                    if failure_signature == last_failure_signature:
+                        repeated_failure_streak += 1
+                    else:
+                        last_failure_signature = failure_signature
+                        repeated_failure_streak = 1
+                    failure_repeats = max(failure_repeats, repeated_failure_streak)
                     fingerprint = self._progress_fingerprint(
                         session=session,
                         theorem_name=self._target_theorem_name(packet, target),
                         outcome=step.error_code or action.tool.name,
+                        lean_feedback=lean_feedback,
                     )
                     no_progress_streak = (
                         no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
@@ -1345,12 +1466,27 @@ class Prover:
                             backend=active_backend.name,
                             lean_feedback=session.get_goals(),
                         )
+                    if failure_repeats >= 3:
+                        return False, session.read_code(), ProverFailure(
+                            reason="no_progress_stall",
+                            message="The same failed tactic repeated on the same proof state.",
+                            error_code=step.error_code or "unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=session.get_goals(),
+                        )
+                    if failure_repeats == 2:
+                        force_deterministic_recovery = True
                     continue
                 failed_turns = 0
+                last_failure_signature = None
+                repeated_failure_streak = 0
                 fingerprint = self._progress_fingerprint(
                     session=session,
                     theorem_name=self._target_theorem_name(packet, target),
                     outcome=action.tool.name,
+                    lean_feedback=lean_feedback,
                 )
                 no_progress_streak = (
                     no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
@@ -1460,6 +1596,19 @@ class Prover:
             for trace in examples
         ]
 
+    def _lemma_application_candidates(self, lemma_name: str, arg_names: list[str]) -> list[str]:
+        expressions = [lemma_name]
+        for name in arg_names:
+            expressions.append(f"{lemma_name} {name}")
+        for left_index, left in enumerate(arg_names):
+            for right in arg_names[left_index + 1 :]:
+                expressions.append(f"{lemma_name} {left} {right}")
+        deduped: list[str] = []
+        for expression in expressions:
+            if expression not in deduped:
+                deduped.append(expression)
+        return deduped
+
     def _direct_candidate_proofs(
         self,
         *,
@@ -1470,6 +1619,21 @@ class Prover:
         from src.planner.retrieval import _entry_tactic_hints, _load_metadata
 
         candidates: list[tuple[str, str, str]] = []
+        theorem_goal = theorem_goal_statement(current_code) or ""
+        goal_shape = classify_goal_shape(theorem_goal)
+        parameter_names = theorem_parameter_names(current_code)
+        intro_names = intro_names_from_body(current_code)
+        arg_names: list[str] = []
+        ordered_names = [
+            *(name for name in parameter_names if name.startswith("h")),
+            *intro_names,
+            *(name for name in parameter_names if not name.startswith("h")),
+        ]
+        for name in ordered_names:
+            if name in arg_names:
+                continue
+            if name in intro_names or name.startswith("h") or name[:1].islower():
+                arg_names.append(name)
         hypothesis = direct_hypothesis_name(current_code)
         if hypothesis:
             candidates.extend(
@@ -1486,13 +1650,31 @@ class Prover:
                 for hint in _entry_tactic_hints(entry, metadata)
             ]
             lemma_candidates: list[tuple[str, str, str]] = []
+            rewrite_tokens = [str(name) for name in entry.definitions if str(name).strip()]
             for lemma_name in entry.planner_proven_lemmas:
-                lemma_candidates.append(
-                    (f"exact {lemma_name}", entry.name, f"Exact preamble lemma `{lemma_name}` closes the goal.")
-                )
-                lemma_candidates.append(
-                    (f"simpa using {lemma_name}", entry.name, f"Simplify using preamble lemma `{lemma_name}`.")
-                )
+                for expression in self._lemma_application_candidates(lemma_name, arg_names):
+                    lemma_candidates.append(
+                        (f"exact {expression}", entry.name, f"Exact preamble lemma `{expression}` closes the goal.")
+                    )
+                    lemma_candidates.append(
+                        (f"simpa using {expression}", entry.name, f"Simplify using preamble lemma `{expression}`.")
+                    )
+                    if rewrite_tokens:
+                        lemma_candidates.append(
+                            (
+                                f"simpa [{', '.join(rewrite_tokens)}] using {expression}",
+                                entry.name,
+                                f"Normalize definitional wrappers before using `{expression}`.",
+                            )
+                        )
+                    if goal_shape.wrapper in _WRAPPER_SIMPA_SHAPES:
+                        lemma_candidates.append(
+                            (
+                                f"simpa [{goal_shape.wrapper}] using {expression}",
+                                entry.name,
+                                f"Normalize the `{goal_shape.wrapper}` wrapper before using `{expression}`.",
+                            )
+                        )
             if entry.name in _HINT_FIRST_PREAMBLES:
                 candidates.extend(hint_candidates)
                 candidates.extend(lemma_candidates)
@@ -1525,6 +1707,8 @@ class Prover:
 
     def _has_targeted_fast_path(self, current_code: str) -> bool:
         if direct_hypothesis_name(current_code):
+            return True
+        if classify_goal_shape(theorem_goal_statement(current_code) or "").kind != "other":
             return True
         normalized = current_code.lower()
         return (
@@ -1644,13 +1828,14 @@ class Prover:
         target: ProverTarget,
         current_code: str,
         timeout: int,
+        include_fallback_tactics: bool = False,
     ) -> dict[str, str] | None:
         direct_close = self._try_direct_definable_closure(
             packet=packet,
             target=target,
             current_code=current_code,
             timeout=timeout,
-            include_fallback_tactics=False,
+            include_fallback_tactics=include_fallback_tactics,
         )
         if direct_close is not None:
             return direct_close
@@ -1668,18 +1853,286 @@ class Prover:
             }
         return None
 
+    def _metadata_tactic_hints(self, packet: FormalizationPacket) -> list[str]:
+        from src.planner.retrieval import _entry_tactic_hints, _load_metadata
+
+        hints: list[str] = []
+        for entry in self._selected_preamble_entries(packet):
+            metadata = _load_metadata(entry)
+            for hint in _entry_tactic_hints(entry, metadata):
+                normalized = hint.strip()
+                if normalized and normalized not in hints:
+                    hints.append(normalized)
+        return hints
+
+    def _state_fingerprint(
+        self,
+        *,
+        session: _ActiveProofSession,
+        theorem_name: str,
+        lean_feedback: list[str],
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+        return (
+            _proof_body_fingerprint(session.read_code(), theorem_name),
+            tuple(session.get_goals()),
+            normalized_diagnostic_signature(lean_feedback),
+        )
+
     def _progress_fingerprint(
         self,
         *,
         session: _ActiveProofSession,
         theorem_name: str,
         outcome: str,
-    ) -> tuple[str, tuple[str, ...], str]:
-        return (
-            _proof_body_fingerprint(session.read_code(), theorem_name),
-            tuple(session.get_goals()),
-            outcome,
+        lean_feedback: list[str],
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...], str]:
+        state = self._state_fingerprint(
+            session=session,
+            theorem_name=theorem_name,
+            lean_feedback=lean_feedback,
         )
+        return (*state, outcome)
+
+    def _failure_signature_key(
+        self,
+        *,
+        session: _ActiveProofSession,
+        theorem_name: str,
+        lean_feedback: list[str],
+        action_key: str,
+    ) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]:
+        return (
+            self._state_fingerprint(
+                session=session,
+                theorem_name=theorem_name,
+                lean_feedback=lean_feedback,
+            ),
+            action_key,
+        )
+
+    def _register_failure_signature(
+        self,
+        *,
+        seen_failures: dict[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str], int],
+        session: _ActiveProofSession,
+        theorem_name: str,
+        lean_feedback: list[str],
+        action_key: str,
+    ) -> int:
+        signature = self._failure_signature_key(
+            session=session,
+            theorem_name=theorem_name,
+            lean_feedback=lean_feedback,
+            action_key=action_key,
+        )
+        seen_failures[signature] = seen_failures.get(signature, 0) + 1
+        return seen_failures[signature]
+
+    def _active_goal_matches_theorem_goal(self, session: _ActiveProofSession) -> bool:
+        goals = session.get_goals()
+        if not goals:
+            return False
+        theorem_goal = theorem_goal_statement(session.read_code())
+        if theorem_goal is None:
+            return False
+        return normalized_goal_text(goals[0]) == normalized_goal_text(theorem_goal)
+
+    def _deterministic_branch_tactics(
+        self,
+        *,
+        packet: FormalizationPacket,
+        current_code: str,
+        include_fallback_tactics: bool,
+    ) -> list[str]:
+        intro_names = set(intro_names_from_body(current_code))
+        ranked: list[tuple[tuple[int, int, int, int], str]] = []
+        for proof, _source, rationale in self._direct_candidate_proofs(
+            packet=packet,
+            current_code=current_code,
+            include_fallback_tactics=include_fallback_tactics,
+        ):
+            prefix_rank = 0 if proof.startswith(("exact ", "simpa ")) else 1
+            intro_rank = 0 if any(name in proof for name in intro_names) else 1
+            hint_rank = 0 if "Metadata tactic hint" in rationale and proof.startswith(("exact ", "simpa ", "refine ")) else 1
+            ranked.append(((prefix_rank, intro_rank, hint_rank, len(proof)), proof))
+        tactics: list[str] = []
+        for _score, proof in sorted(ranked, key=lambda item: item[0]):
+            if proof not in tactics:
+                tactics.append(proof)
+        return tactics
+
+    def _apply_deterministic_repair(
+        self,
+        *,
+        packet: FormalizationPacket,
+        target: ProverTarget,
+        session: _ActiveProofSession,
+        trace: list[ProverTraceStep],
+        audit_events: list[AuditEvent],
+        backend: ProverBackend,
+        turn: int,
+        timeout: int,
+        lean_feedback: list[str],
+        include_fallback_tactics: bool,
+        scaffold_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]],
+        branch_tactic_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]],
+    ) -> tuple[bool, str | None, ProverFailure | None]:
+        theorem_name = self._target_theorem_name(packet, target)
+        goals = session.get_goals()
+        if goals:
+            state_key = self._state_fingerprint(
+                session=session,
+                theorem_name=theorem_name,
+                lean_feedback=lean_feedback,
+            )
+            goal_shape = goal_shape_scaffold(
+                goals[0],
+                tactic_hints=self._metadata_tactic_hints(packet),
+            )
+            scaffold_tactic = goal_shape.scaffold_tactic if goal_shape is not None else None
+            if scaffold_tactic is not None and (state_key, scaffold_tactic) not in scaffold_attempts:
+                scaffold_attempts.add((state_key, scaffold_tactic))
+                tool = ProverToolInvocation(name="apply_tactic", arguments={"tactic": scaffold_tactic})
+                tool_result = self._execute_tool(
+                    session=session,
+                    tool=tool,
+                    packet=packet,
+                    target=target,
+                )
+                trace.append(
+                    ProverTraceStep(
+                        turn=turn,
+                        backend=backend.name,
+                        target_name=target.name,
+                        action_type="deterministic_scaffold",
+                        success=not tool_result.is_error,
+                        rationale=f"Apply a generic `{goal_shape.kind}` scaffold before another provider turn.",
+                        tool_name="apply_tactic",
+                        tool_arguments={"tactic": scaffold_tactic},
+                        tool_result=tool_result.content,
+                        lean_feedback=lean_feedback,
+                        goals=session.get_goals(),
+                        code_snapshot=session.read_code(),
+                        error_code=self._tool_error_code("apply_tactic", tool_result.content) if tool_result.is_error else None,
+                    )
+                )
+                audit_events.append(
+                    AuditEvent(
+                        stage="prover",
+                        event_type="deterministic_scaffold",
+                        provider=backend.provider,
+                        model=backend.model,
+                        success=not tool_result.is_error,
+                        error_code=self._tool_error_code("apply_tactic", tool_result.content) if tool_result.is_error else None,
+                        error_message=tool_result.content if tool_result.is_error else None,
+                        metadata={"turn": turn, "target_name": target.name, "tactic": scaffold_tactic},
+                    )
+                )
+                if tool_result.is_error and "no_progress_stall:" in tool_result.content:
+                    return False, session.read_code(), ProverFailure(
+                        reason="no_progress_stall",
+                        message="Deterministic scaffolding did not change the active goal.",
+                        error_code="unsolved_goals",
+                        target_name=target.name,
+                        turn=turn,
+                        backend=backend.name,
+                        lean_feedback=session.get_goals(),
+                    )
+                return False, session.read_code(), None
+
+        if include_fallback_tactics or self._has_direct_candidates(packet=packet, current_code=session.read_code()):
+            recovery = self._try_repl_compile_recovery(
+                packet=packet,
+                target=target,
+                current_code=session.read_code(),
+                timeout=timeout,
+                include_fallback_tactics=include_fallback_tactics,
+            )
+            if recovery is not None:
+                session.write_code(recovery["code"])
+                self._record_direct_definable_closure(
+                    trace=trace,
+                    audit_events=audit_events,
+                    backend=backend,
+                    target=target,
+                    turn=turn,
+                    current_code=session.read_code(),
+                    lean_feedback=lean_feedback,
+                    proof=recovery["proof"],
+                    source=recovery["source"],
+                    rationale=recovery["rationale"],
+                )
+                return True, session.read_code(), None
+
+        if session.get_goals() and not self._active_goal_matches_theorem_goal(session):
+            state_key = self._state_fingerprint(
+                session=session,
+                theorem_name=theorem_name,
+                lean_feedback=lean_feedback,
+            )
+            attempted_branch_tactic = False
+            for tactic in self._deterministic_branch_tactics(
+                packet=packet,
+                current_code=session.read_code(),
+                include_fallback_tactics=include_fallback_tactics,
+            ):
+                if (state_key, tactic) in branch_tactic_attempts:
+                    continue
+                attempted_branch_tactic = True
+                branch_tactic_attempts.add((state_key, tactic))
+                tool = ProverToolInvocation(name="apply_tactic", arguments={"tactic": tactic})
+                tool_result = self._execute_tool(
+                    session=session,
+                    tool=tool,
+                    packet=packet,
+                    target=target,
+                )
+                trace.append(
+                    ProverTraceStep(
+                        turn=turn,
+                        backend=backend.name,
+                        target_name=target.name,
+                        action_type="deterministic_branch_tactic",
+                        success=not tool_result.is_error,
+                        rationale="Apply a metadata-backed branch tactic before another provider turn.",
+                        tool_name="apply_tactic",
+                        tool_arguments={"tactic": tactic},
+                        tool_result=tool_result.content,
+                        lean_feedback=lean_feedback,
+                        goals=session.get_goals(),
+                        code_snapshot=session.read_code(),
+                        error_code=self._tool_error_code("apply_tactic", tool_result.content) if tool_result.is_error else None,
+                        repl_local_solved=not tool_result.is_error and bool(session.solved),
+                    )
+                )
+                audit_events.append(
+                    AuditEvent(
+                        stage="prover",
+                        event_type="deterministic_branch_tactic",
+                        provider=backend.provider,
+                        model=backend.model,
+                        success=not tool_result.is_error,
+                        error_code=self._tool_error_code("apply_tactic", tool_result.content) if tool_result.is_error else None,
+                        error_message=tool_result.content if tool_result.is_error else None,
+                        metadata={"turn": turn, "target_name": target.name, "tactic": tactic},
+                    )
+                )
+                if tool_result.is_error and "no_progress_stall:" in tool_result.content:
+                    return False, session.read_code(), ProverFailure(
+                        reason="no_progress_stall",
+                        message="Deterministic branch tactics stopped making progress on the active goal.",
+                        error_code="unsolved_goals",
+                        target_name=target.name,
+                        turn=turn,
+                        backend=backend.name,
+                        lean_feedback=session.get_goals(),
+                    )
+                if not tool_result.is_error:
+                    return False, session.read_code(), None
+            if attempted_branch_tactic:
+                return False, session.read_code(), None
+
+        return False, None, None
 
     def _first_turn_hints(self, packet: FormalizationPacket) -> list[str]:
         from src.planner.retrieval import _entry_tactic_hints, _load_metadata

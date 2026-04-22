@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, Literal
 
 from src.prover.models import ProverAction, ProverTraceStep
 from src.tools import ToolRegistry
@@ -24,9 +25,35 @@ ALLOWED_TOOL_NAMES = frozenset(
 )
 
 
-def direct_hypothesis_name(theorem_code: str) -> str | None:
-    # Locate the theorem signature up to `:= by` (handles both multi-line stubs
-    # and single-line formalizer output).
+@dataclass(frozen=True)
+class GoalShape:
+    kind: Literal["intro", "constructor", "exists", "wrapper", "other"]
+    wrapper: str | None = None
+    scaffold_tactic: str | None = None
+
+
+def normalized_goal_text(goal: str) -> str:
+    text = " ".join(str(goal).replace("\n", " ").split())
+    if "⊢" in text:
+        text = text.split("⊢", 1)[1].strip()
+    return text
+
+
+def _top_level_symbol_index(text: str, symbol: str) -> int:
+    depth = 0
+    for index, char in enumerate(text):
+        if char in "([{":
+            depth += 1
+            continue
+        if char in ")]}":
+            depth = max(0, depth - 1)
+            continue
+        if depth == 0 and text.startswith(symbol, index):
+            return index
+    return -1
+
+
+def theorem_goal_statement(theorem_code: str) -> str | None:
     sig_match = re.search(
         r"(?:theorem|lemma)\s+[A-Za-z0-9_']+(.*?):=\s*by",
         theorem_code,
@@ -39,13 +66,12 @@ def direct_hypothesis_name(theorem_code: str) -> str | None:
     last_colon = -1
     i = 0
     while i < len(signature):
-        ch = signature[i]
-        if ch in "([{":
+        char = signature[i]
+        if char in "([{":
             depth += 1
-        elif ch in ")]}":
-            depth -= 1
-        elif ch == ":" and depth == 0:
-            # Skip `:=` that we might have captured partially.
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+        elif char == ":" and depth == 0:
             if i + 1 < len(signature) and signature[i + 1] == "=":
                 i += 2
                 continue
@@ -53,10 +79,109 @@ def direct_hypothesis_name(theorem_code: str) -> str | None:
         i += 1
     if last_colon == -1:
         return None
-    goal = " ".join(signature[last_colon + 1 :].split())
-    binders = signature[:last_colon]
+    return normalized_goal_text(signature[last_colon + 1 :])
+
+
+def theorem_parameter_names(theorem_code: str) -> list[str]:
+    goal = theorem_goal_statement(theorem_code)
+    sig_match = re.search(
+        r"(?:theorem|lemma)\s+[A-Za-z0-9_']+(.*?):=\s*by",
+        theorem_code,
+        re.DOTALL,
+    )
+    if sig_match is None:
+        return []
+    signature = sig_match.group(1)
+    if goal and goal in signature:
+        signature = signature.rsplit(goal, 1)[0]
+    names: list[str] = []
+    for match in re.finditer(r"[\(\{](?P<names>[^:\)\}\[\]]+)\s*:", signature):
+        for raw_name in match.group("names").split():
+            name = raw_name.strip()
+            if not name or name == "_" or name.startswith("["):
+                continue
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def intro_names_from_body(theorem_code: str) -> list[str]:
+    names: list[str] = []
+    for line in theorem_code.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("intro "):
+            continue
+        for raw_name in stripped[len("intro ") :].split():
+            name = raw_name.strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+def goal_identifiers(goal: str) -> list[str]:
+    identifiers: list[str] = []
+    for match in re.finditer(r"[A-Za-z_][A-Za-z0-9_']*", normalized_goal_text(goal)):
+        name = match.group(0)
+        if name not in identifiers:
+            identifiers.append(name)
+    return identifiers
+
+
+def classify_goal_shape(goal: str) -> GoalShape:
+    normalized = normalized_goal_text(goal)
+    if not normalized:
+        return GoalShape(kind="other")
+    if _top_level_symbol_index(normalized, "∧") != -1:
+        return GoalShape(kind="constructor", scaffold_tactic="constructor")
+    if normalized.startswith("∃ ") or normalized.startswith("Exists "):
+        return GoalShape(kind="exists", scaffold_tactic="refine ⟨_, ?_⟩")
+    for wrapper in ("ContinuousOn", "Continuous"):
+        if normalized.startswith(f"{wrapper} ") or normalized.startswith(f"{wrapper}("):
+            return GoalShape(kind="wrapper", wrapper=wrapper)
+    for wrapper in ("Monotone", "Antitone", "StrictMono", "StrictAnti"):
+        if normalized.startswith(f"{wrapper} ") or normalized.startswith(f"{wrapper}("):
+            return GoalShape(kind="intro", wrapper=wrapper, scaffold_tactic="intro x y hxy")
+    if normalized.startswith("∀") or normalized.lower().startswith("forall "):
+        return GoalShape(kind="intro", scaffold_tactic="repeat intro")
+    return GoalShape(kind="other")
+
+
+def goal_shape_scaffold(goal: str, *, tactic_hints: list[str] | None = None) -> GoalShape | None:
+    shape = classify_goal_shape(goal)
+    if shape.kind != "exists":
+        return shape if shape.kind != "other" else None
+    for hint in tactic_hints or []:
+        stripped = hint.strip()
+        if stripped.startswith("refine ⟨") or stripped.startswith("refine <"):
+            return GoalShape(kind="exists", scaffold_tactic=stripped)
+    return shape
+
+
+def normalized_diagnostic_signature(messages: list[str]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for message in messages:
+        text = re.sub(r"\s+", " ", str(message).strip().lower())
+        text = re.sub(r"`[^`]+`", "`_`", text)
+        if text and text not in normalized:
+            normalized.append(text[:120])
+    return tuple(normalized[:3])
+
+
+def direct_hypothesis_name(theorem_code: str) -> str | None:
+    # Locate the theorem signature up to `:= by` (handles both multi-line stubs
+    # and single-line formalizer output).
+    goal = theorem_goal_statement(theorem_code)
+    sig_match = re.search(
+        r"(?:theorem|lemma)\s+[A-Za-z0-9_']+(.*?):=\s*by",
+        theorem_code,
+        re.DOTALL,
+    )
+    if sig_match is None or goal is None:
+        return None
+    signature = sig_match.group(1)
+    binders = signature.rsplit(goal, 1)[0]
     for match in re.finditer(r"\((?P<name>[A-Za-z0-9_']+)\s*:\s*(?P<body>[^)]*)\)", binders):
-        body = " ".join(match.group("body").split())
+        body = normalized_goal_text(match.group("body"))
         if body == goal:
             return match.group("name")
     return None
