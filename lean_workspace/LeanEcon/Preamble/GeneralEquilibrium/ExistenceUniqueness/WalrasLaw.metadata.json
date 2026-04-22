@@ -1,0 +1,22 @@
+{
+  "id": "walras_law",
+  "domain": "general_equilibrium",
+  "concepts": [
+    "walras_law",
+    "excess_demand",
+    "equilibrium_existence"
+  ],
+  "tactic_hints": [
+    "simp [SatisfiesWalrasLaw, hclear]",
+    "exact satisfiesWalrasLaw_of_marketClearing price excessDemand hclear"
+  ],
+  "proven_lemmas": [
+    "satisfiesWalrasLaw_of_marketClearing"
+  ],
+  "textbook_source": "MWG Ch. 17",
+  "status": "proven",
+  "related": [
+    "walrasian_equilibrium",
+    "fixed_point_theorem"
+  ]
+}

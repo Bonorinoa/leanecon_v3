@@ -1,0 +1,22 @@
+{
+  "id": "truthful_direct_mechanism",
+  "domain": "game_theory",
+  "concepts": [
+    "mechanism_design",
+    "truthful_revelation",
+    "incentive_compatibility"
+  ],
+  "tactic_hints": [
+    "exact h trueType misreport",
+    "exact IsTruthfulDirectMechanism.truthful_is_best h trueType misreport"
+  ],
+  "proven_lemmas": [
+    "IsTruthfulDirectMechanism.truthful_is_best"
+  ],
+  "textbook_source": "MWG Ch. 23",
+  "status": "proven",
+  "related": [
+    "best_response",
+    "nash_existence"
+  ]
+}

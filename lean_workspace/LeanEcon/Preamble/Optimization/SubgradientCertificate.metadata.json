@@ -1,0 +1,22 @@
+{
+  "id": "subgradient_certificate",
+  "domain": "optimization",
+  "concepts": [
+    "subgradient",
+    "convex_optimization",
+    "optimality_certificate"
+  ],
+  "tactic_hints": [
+    "specialize h candidate",
+    "simpa [IsSubgradientAt] using h"
+  ],
+  "proven_lemmas": [
+    "IsSubgradientAt.globalMinimizer_of_zero"
+  ],
+  "textbook_source": "Boyd-Vandenberghe Ch. 3",
+  "status": "proven",
+  "related": [
+    "saddle_point",
+    "constrained_optimization"
+  ]
+}

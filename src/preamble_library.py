@@ -366,6 +366,214 @@ _register(
         },
     )
 )
+_register(
+    PreambleEntry(
+        name="best_response",
+        lean_module="LeanEcon.Preamble.GameTheory.NormalFormGames.BestResponse",
+        description="Best-response predicate for fixed opponents in normal-form games.",
+        keywords=("best response", "normal form", "game", "strategy"),
+        auto_keywords=("best response", "normal form", "strategy"),
+        parameters=("payoff", "opponents", "action"),
+        definitions=("IsBestResponse",),
+        definition_signatures=(
+            "(payoff : Opponent → Action → ℝ) (opponents : Opponent) (action : Action) : Prop",
+        ),
+        proven_lemmas=("IsBestResponse.payoff_le",),
+        tactic_hint="exact h alternative",
+        planner_metadata={
+            "concepts": ["best_response", "normal_form_game", "strategic_optimality"],
+            "textbook_source": "MWG Ch. 8",
+            "status": "proven",
+            "tactic_hints": [
+                "exact h alternative",
+                "exact IsBestResponse.payoff_le h alternative",
+            ],
+            "related": ["nash_existence", "truthful_direct_mechanism"],
+        },
+    )
+)
+_register(
+    PreambleEntry(
+        name="truthful_direct_mechanism",
+        lean_module="LeanEcon.Preamble.GameTheory.MechanismDesign.TruthfulDirectMechanism",
+        description="Truthful direct-revelation mechanisms via dominant truthful reporting.",
+        keywords=("truthful", "mechanism", "incentive compatible", "revelation"),
+        auto_keywords=("truthful", "mechanism", "incentive compatible"),
+        parameters=("utility", "allocation", "trueType", "misreport"),
+        definitions=("IsTruthfulDirectMechanism",),
+        definition_signatures=(
+            "(utility : AgentType → Outcome → ℝ) (allocation : AgentType → Outcome) : Prop",
+        ),
+        proven_lemmas=("IsTruthfulDirectMechanism.truthful_is_best",),
+        tactic_hint="exact h trueType misreport",
+        planner_metadata={
+            "concepts": ["mechanism_design", "truthful_revelation", "incentive_compatibility"],
+            "textbook_source": "MWG Ch. 23",
+            "status": "proven",
+            "tactic_hints": [
+                "exact h trueType misreport",
+                "exact IsTruthfulDirectMechanism.truthful_is_best h trueType misreport",
+            ],
+            "related": ["best_response", "nash_existence"],
+        },
+    )
+)
+_register(
+    PreambleEntry(
+        name="walrasian_equilibrium",
+        lean_module="LeanEcon.Preamble.GeneralEquilibrium.ArrowDebreu.WalrasianEquilibrium",
+        description="Generic Walrasian equilibrium certificate with feasibility, optimality, and clearing.",
+        keywords=("walrasian", "equilibrium", "market clearing", "arrow debreu"),
+        auto_keywords=("walrasian", "equilibrium", "market clearing"),
+        parameters=("isFeasible", "isOptimal", "excessDemand"),
+        definitions=("WalrasianEquilibrium",),
+        definition_signatures=(
+            "(isFeasible : (Agent → Commodity → ℝ) → Prop) (isOptimal : (Commodity → ℝ) → (Agent → Commodity → ℝ) → Prop) (excessDemand : (Agent → Commodity → ℝ) → Commodity → ℝ) : Prop",
+        ),
+        proven_lemmas=("WalrasianEquilibrium.marketClearing",),
+        tactic_hint="exact h.clears good",
+        planner_metadata={
+            "concepts": ["walrasian_equilibrium", "market_clearing", "arrow_debreu"],
+            "textbook_source": "MWG Ch. 15",
+            "status": "proven",
+            "tactic_hints": [
+                "exact h.clears good",
+                "exact WalrasianEquilibrium.marketClearing h good",
+            ],
+            "related": ["walras_law", "fixed_point_theorem"],
+        },
+    )
+)
+_register(
+    PreambleEntry(
+        name="walras_law",
+        lean_module="LeanEcon.Preamble.GeneralEquilibrium.ExistenceUniqueness.WalrasLaw",
+        description="Walras' law as a zero-value condition on aggregate excess demand.",
+        keywords=("walras law", "excess demand", "general equilibrium", "prices"),
+        auto_keywords=("walras law", "excess demand", "general equilibrium"),
+        parameters=("price", "excessDemand"),
+        definitions=("SatisfiesWalrasLaw",),
+        definition_signatures=(
+            "[Fintype Commodity] (price excessDemand : Commodity → ℝ) : Prop",
+        ),
+        proven_lemmas=("satisfiesWalrasLaw_of_marketClearing",),
+        tactic_hint="simp [SatisfiesWalrasLaw, hclear]",
+        planner_metadata={
+            "concepts": ["walras_law", "excess_demand", "equilibrium_existence"],
+            "textbook_source": "MWG Ch. 17",
+            "status": "proven",
+            "tactic_hints": [
+                "simp [SatisfiesWalrasLaw, hclear]",
+                "exact satisfiesWalrasLaw_of_marketClearing price excessDemand hclear",
+            ],
+            "related": ["walrasian_equilibrium", "fixed_point_theorem"],
+        },
+    )
+)
+_register(
+    PreambleEntry(
+        name="discounted_lifetime_utility",
+        lean_module="LeanEcon.Preamble.Macroeconomics.BusinessCycleModels.DiscountedLifetimeUtility",
+        description="Finite-horizon discounted utility sums for intertemporal macro problems.",
+        keywords=("discounted utility", "intertemporal", "macro", "business cycle"),
+        auto_keywords=("discounted utility", "intertemporal", "business cycle"),
+        parameters=("β", "utility", "horizon"),
+        definitions=("DiscountedLifetimeUtility",),
+        definition_signatures=("(β : ℝ) (utility : ℕ → ℝ) (horizon : ℕ) : ℝ",),
+        proven_lemmas=(
+            "discountedLifetimeUtility_zero",
+            "discountedLifetimeUtility_succ",
+        ),
+        tactic_hint="simp [DiscountedLifetimeUtility, Finset.sum_range_succ]",
+        planner_metadata={
+            "concepts": ["discounted_utility", "intertemporal_choice", "business_cycle"],
+            "textbook_source": "Ljungqvist-Sargent Ch. 1",
+            "status": "proven",
+            "tactic_hints": [
+                "simp [DiscountedLifetimeUtility]",
+                "simp [DiscountedLifetimeUtility, Finset.sum_range_succ]",
+            ],
+            "related": ["steady_state", "bellman_operator"],
+        },
+    )
+)
+_register(
+    PreambleEntry(
+        name="steady_state",
+        lean_module="LeanEcon.Preamble.Macroeconomics.GrowthModels.SteadyState",
+        description="Steady states as fixed points of macro laws of motion.",
+        keywords=("steady state", "growth", "law of motion", "fixed point"),
+        auto_keywords=("steady state", "growth", "fixed point"),
+        parameters=("lawOfMotion", "state"),
+        definitions=("IsSteadyState",),
+        definition_signatures=("(lawOfMotion : State → State) (state : State) : Prop",),
+        proven_lemmas=("IsSteadyState.iterate_eq",),
+        tactic_hint="exact Function.iterate_fixed h periods",
+        planner_metadata={
+            "concepts": ["steady_state", "law_of_motion", "growth_model"],
+            "textbook_source": "Acemoglu Ch. 8",
+            "status": "proven",
+            "tactic_hints": [
+                "exact Function.iterate_fixed h periods",
+                "exact IsSteadyState.iterate_eq h periods",
+            ],
+            "related": ["discounted_lifetime_utility", "value_function"],
+        },
+    )
+)
+_register(
+    PreambleEntry(
+        name="subgradient_certificate",
+        lean_module="LeanEcon.Preamble.Optimization.SubgradientCertificate",
+        description="Scalar subgradient certificates and zero-subgradient optimality.",
+        keywords=("subgradient", "optimization", "convex", "certificate"),
+        auto_keywords=("subgradient", "optimization", "convex"),
+        parameters=("objective", "subgradient", "point"),
+        definitions=("IsSubgradientAt",),
+        definition_signatures=("(objective : ℝ → ℝ) (subgradient point : ℝ) : Prop",),
+        proven_lemmas=("IsSubgradientAt.globalMinimizer_of_zero",),
+        tactic_hint="simpa [IsSubgradientAt] using h",
+        planner_metadata={
+            "concepts": ["subgradient", "convex_optimization", "optimality_certificate"],
+            "textbook_source": "Boyd-Vandenberghe Ch. 3",
+            "status": "proven",
+            "tactic_hints": [
+                "specialize h candidate",
+                "simpa [IsSubgradientAt] using h",
+            ],
+            "related": ["saddle_point", "constrained_optimization"],
+        },
+    )
+)
+_register(
+    PreambleEntry(
+        name="saddle_point",
+        lean_module="LeanEcon.Preamble.Optimization.SaddlePoint",
+        description="Primal-dual saddle points for Lagrangian optimality arguments.",
+        keywords=("saddle point", "lagrangian", "dual", "optimization"),
+        auto_keywords=("saddle point", "lagrangian", "dual"),
+        parameters=("lagrangian", "primal", "dual"),
+        definitions=("IsSaddlePoint",),
+        definition_signatures=(
+            "(lagrangian : Primal → Dual → ℝ) (primal : Primal) (dual : Dual) : Prop",
+        ),
+        proven_lemmas=(
+            "IsSaddlePoint.dual_optimal",
+            "IsSaddlePoint.primal_optimal",
+        ),
+        tactic_hint="exact h.1 alternativeDual",
+        planner_metadata={
+            "concepts": ["saddle_point", "lagrangian_duality", "primal_dual_optimality"],
+            "textbook_source": "Boyd-Vandenberghe Ch. 5",
+            "status": "proven",
+            "tactic_hints": [
+                "exact h.1 alternativeDual",
+                "exact h.2 alternativePrimal",
+            ],
+            "related": ["subgradient_certificate", "kuhn_tucker"],
+        },
+    )
+)
 
 
 def _strip_lean_header(lean_code: str) -> str:

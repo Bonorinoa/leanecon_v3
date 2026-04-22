@@ -1,0 +1,23 @@
+{
+  "id": "discounted_lifetime_utility",
+  "domain": "macroeconomics",
+  "concepts": [
+    "discounted_utility",
+    "intertemporal_choice",
+    "business_cycle"
+  ],
+  "tactic_hints": [
+    "simp [DiscountedLifetimeUtility]",
+    "simp [DiscountedLifetimeUtility, Finset.sum_range_succ]"
+  ],
+  "proven_lemmas": [
+    "discountedLifetimeUtility_zero",
+    "discountedLifetimeUtility_succ"
+  ],
+  "textbook_source": "Ljungqvist-Sargent Ch. 1",
+  "status": "proven",
+  "related": [
+    "steady_state",
+    "bellman_operator"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "saddle_point",
+  "domain": "optimization",
+  "concepts": [
+    "saddle_point",
+    "lagrangian_duality",
+    "primal_dual_optimality"
+  ],
+  "tactic_hints": [
+    "exact h.1 alternativeDual",
+    "exact h.2 alternativePrimal"
+  ],
+  "proven_lemmas": [
+    "IsSaddlePoint.dual_optimal",
+    "IsSaddlePoint.primal_optimal"
+  ],
+  "textbook_source": "Boyd-Vandenberghe Ch. 5",
+  "status": "proven",
+  "related": [
+    "subgradient_certificate",
+    "kuhn_tucker"
+  ]
+}

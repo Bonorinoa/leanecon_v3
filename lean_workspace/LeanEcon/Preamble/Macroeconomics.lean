@@ -1,2 +1,2 @@
-/-- Placeholder constant marking the v3 macroeconomics namespace as active. -/
-def macroeconomicsSkeleton : Unit := ()
+import LeanEcon.Preamble.Macroeconomics.BusinessCycleModels.DiscountedLifetimeUtility
+import LeanEcon.Preamble.Macroeconomics.GrowthModels.SteadyState

@@ -1,0 +1,22 @@
+{
+  "id": "steady_state",
+  "domain": "macroeconomics",
+  "concepts": [
+    "steady_state",
+    "law_of_motion",
+    "growth_model"
+  ],
+  "tactic_hints": [
+    "exact Function.iterate_fixed h periods",
+    "exact IsSteadyState.iterate_eq h periods"
+  ],
+  "proven_lemmas": [
+    "IsSteadyState.iterate_eq"
+  ],
+  "textbook_source": "Acemoglu Ch. 8",
+  "status": "proven",
+  "related": [
+    "discounted_lifetime_utility",
+    "value_function"
+  ]
+}

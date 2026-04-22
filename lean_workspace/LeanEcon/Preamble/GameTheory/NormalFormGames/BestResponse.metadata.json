@@ -1,0 +1,22 @@
+{
+  "id": "best_response",
+  "domain": "game_theory",
+  "concepts": [
+    "best_response",
+    "normal_form_game",
+    "strategic_optimality"
+  ],
+  "tactic_hints": [
+    "exact h alternative",
+    "exact IsBestResponse.payoff_le h alternative"
+  ],
+  "proven_lemmas": [
+    "IsBestResponse.payoff_le"
+  ],
+  "textbook_source": "MWG Ch. 8",
+  "status": "proven",
+  "related": [
+    "nash_existence",
+    "truthful_direct_mechanism"
+  ]
+}

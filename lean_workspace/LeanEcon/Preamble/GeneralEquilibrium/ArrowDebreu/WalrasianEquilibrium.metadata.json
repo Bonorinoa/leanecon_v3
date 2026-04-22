@@ -1,0 +1,22 @@
+{
+  "id": "walrasian_equilibrium",
+  "domain": "general_equilibrium",
+  "concepts": [
+    "walrasian_equilibrium",
+    "market_clearing",
+    "arrow_debreu"
+  ],
+  "tactic_hints": [
+    "exact h.clears good",
+    "exact WalrasianEquilibrium.marketClearing h good"
+  ],
+  "proven_lemmas": [
+    "WalrasianEquilibrium.marketClearing"
+  ],
+  "textbook_source": "MWG Ch. 15",
+  "status": "proven",
+  "related": [
+    "walras_law",
+    "fixed_point_theorem"
+  ]
+}

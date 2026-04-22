@@ -1,2 +1,2 @@
-/-- Placeholder constant marking the v3 game-theory namespace as active. -/
-def gameTheorySkeleton : Unit := ()
+import LeanEcon.Preamble.GameTheory.MechanismDesign.TruthfulDirectMechanism
+import LeanEcon.Preamble.GameTheory.NormalFormGames.BestResponse

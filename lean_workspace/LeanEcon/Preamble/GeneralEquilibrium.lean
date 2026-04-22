@@ -1,2 +1,2 @@
-/-- Placeholder constant marking the v3 general-equilibrium namespace as active. -/
-def generalEquilibriumSkeleton : Unit := ()
+import LeanEcon.Preamble.GeneralEquilibrium.ArrowDebreu.WalrasianEquilibrium
+import LeanEcon.Preamble.GeneralEquilibrium.ExistenceUniqueness.WalrasLaw
