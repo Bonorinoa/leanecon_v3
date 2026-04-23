@@ -40,6 +40,12 @@ class ProveRequest(LeanEconModel):
     benchmark_mode: bool = False
 
 
+class JobReviewRequest(LeanEconModel):
+    stage: str = Field(pattern="^(plan|formalization)$")
+    decision: str = Field(pattern="^(approve|reject)$")
+    notes: str | None = None
+
+
 class JobAcceptedResponse(LeanEconModel):
     job_id: str
     status: str
@@ -71,5 +77,10 @@ class MetricsResponse(LeanEconModel):
     usage_by_stage: dict[str, Any] = Field(default_factory=dict)
     usage_by_model: dict[str, Any] = Field(default_factory=dict)
     failure_counts: dict[str, int] = Field(default_factory=dict)
+    stage_success_counts: dict[str, Any] = Field(default_factory=dict)
+    stage_event_counts: dict[str, int] = Field(default_factory=dict)
+    tool_call_distribution: dict[str, int] = Field(default_factory=dict)
+    benchmark_category_mix: dict[str, int] = Field(default_factory=dict)
+    integrity: dict[str, Any] = Field(default_factory=dict)
     backend_status: dict[str, Any] = Field(default_factory=dict)
     recent: dict[str, Any] = Field(default_factory=dict)

@@ -31,6 +31,7 @@ from src.observability import (
     ProviderCallMetadata,
     SpanRecorder,
     TokenUsage,
+    build_progress_event,
     classify_exception,
     complete_usage,
     default_lean_lsp_client,
@@ -611,6 +612,7 @@ class Prover:
         target_timeouts: ProverTargetTimeouts | None = None,
         allow_decomposition: bool = True,
         benchmark_mode: bool = False,
+        on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> ProverResult:
         telemetry = SpanRecorder()
         trace: list[ProverTraceStep] = []
@@ -640,6 +642,15 @@ class Prover:
             if shortcut is not None:
                 verified_via = "trivial_shortcut"
                 working_code = shortcut["code"]
+                self._emit_progress(
+                    on_progress,
+                    "prover_tool",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message="Closed via trivial shortcut.",
+                    metadata={"tool_name": "compile_check", "shortcut": shortcut["tactic"]},
+                )
                 for target in targets:
                     target.status = "proved"
                 if not attempted_backends:
@@ -681,6 +692,15 @@ class Prover:
 
             for index, target in enumerate(targets_to_iterate, start=1):
                 target.status = "in_progress"
+                self._emit_progress(
+                    on_progress,
+                    "prover_turn",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message=f"Starting target `{target.name}`.",
+                    metadata={"turn": index, "target_name": target.name, "target_kind": target.kind},
+                )
                 target_timeout = self._timeout_for_target(target, resolved_target_timeouts)
                 if target.kind == "subgoal":
                     helper_name = f"proved_{packet.theorem_name}_{index}"
@@ -701,6 +721,7 @@ class Prover:
                         telemetry=telemetry,
                         provider_usage=provider_usage,
                         audit_events=audit_events,
+                        on_progress=on_progress,
                     )
                     if not proved:
                         target.status = "failed"
@@ -728,6 +749,7 @@ class Prover:
                     telemetry=telemetry,
                     provider_usage=provider_usage,
                     audit_events=audit_events,
+                    on_progress=on_progress,
                 )
                 if not proved:
                     target.status = "failed"
@@ -889,6 +911,7 @@ class Prover:
         telemetry: SpanRecorder,
         provider_usage: list[TokenUsage],
         audit_events: list[AuditEvent],
+        on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> tuple[bool, str, ProverFailure | None]:
         direct_close = self._try_direct_definable_closure(
             packet=packet,
@@ -897,6 +920,15 @@ class Prover:
             timeout=timeout,
         )
         if direct_close is not None:
+            self._emit_progress(
+                on_progress,
+                "prover_tool",
+                job_id=job_id,
+                stage="prover",
+                status="running_prover",
+                message="Closed via direct definable closure.",
+                metadata={"target_name": target.name, "tool_name": "compile_check", "proof": direct_close["proof"]},
+            )
             self._record_direct_definable_closure(
                 trace=trace,
                 audit_events=audit_events,
@@ -1119,15 +1151,29 @@ class Prover:
                             provider=active_backend.provider,
                             model=active_backend.model,
                             success=True,
-                            prompt_hash=stable_hash_text(metadata.prompt_text if metadata is not None else prompt),
-                            response_hash=stable_hash_text(metadata.response_text if metadata is not None else None),
-                            metadata={
-                                "turn": turn,
-                                "target_name": target.name,
+                        prompt_hash=stable_hash_text(metadata.prompt_text if metadata is not None else prompt),
+                        response_hash=stable_hash_text(metadata.response_text if metadata is not None else None),
+                        metadata={
+                            "turn": turn,
+                            "target_name": target.name,
                                 "backend": active_backend.name,
                                 "usage_source": usage.usage_source,
                             },
                         )
+                    )
+                    self._emit_progress(
+                        on_progress,
+                        "prover_turn",
+                        job_id=job_id,
+                        stage="prover",
+                        status="running_prover",
+                        message=f"Provider produced action `{action.action_type}`.",
+                        metadata={
+                            "turn": turn,
+                            "target_name": target.name,
+                            "backend": active_backend.name,
+                            "action_type": action.action_type,
+                        },
                     )
                 except Exception as exc:
                     telemetry.record_provider(provider_started_at)
@@ -1352,6 +1398,7 @@ class Prover:
                         telemetry=telemetry,
                         provider_usage=provider_usage,
                         audit_events=audit_events,
+                        on_progress=on_progress,
                     )
                     if decomposed:
                         target.status = "proved"
@@ -1405,6 +1452,21 @@ class Prover:
                     ),
                 )
                 trace.append(step)
+                self._emit_progress(
+                    on_progress,
+                    "prover_tool",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message=f"Tool `{action.tool.name}` executed.",
+                    metadata={
+                        "turn": turn,
+                        "target_name": target.name,
+                        "tool_name": action.tool.name,
+                        "success": not tool_result.is_error,
+                        "error_code": step.error_code,
+                    },
+                )
                 audit_events.append(
                     AuditEvent(
                         stage="prover",
@@ -1522,6 +1584,7 @@ class Prover:
         telemetry: SpanRecorder,
         provider_usage: list[TokenUsage],
         audit_events: list[AuditEvent],
+        on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> tuple[bool, str]:
         if self._extracted_lemmas >= 3 or target.recursion_depth >= max_recursion_depth:
             return False, session.read_code()
@@ -1553,6 +1616,7 @@ class Prover:
             telemetry=telemetry,
             provider_usage=provider_usage,
             audit_events=audit_events,
+            on_progress=on_progress,
         )
         if not proved:
             return False, session.read_code()
@@ -1578,6 +1642,31 @@ class Prover:
             )
         )
         return True, session.read_code()
+
+    def _emit_progress(
+        self,
+        callback: Callable[[str, dict[str, Any]], None] | None,
+        event: str,
+        *,
+        job_id: str,
+        stage: str,
+        status: str,
+        message: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if callback is None:
+            return
+        callback(
+            event,
+            build_progress_event(
+                event,
+                job_id=job_id,
+                stage=stage,
+                status=status,
+                message=message,
+                metadata=metadata,
+            ),
+        )
 
     def _memory_examples(self, packet: FormalizationPacket) -> list[dict[str, Any]]:
         examples = self.trace_store.query_similar(

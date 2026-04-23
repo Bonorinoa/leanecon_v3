@@ -16,6 +16,7 @@ from typing import Any
 
 from src.config import DB_PATH, JOB_TTL_SECONDS
 from src.observability.models import AuditEvent, StageTiming, TokenUsage
+from src.observability.progress import build_progress_event
 
 
 def _utc_now() -> str:
@@ -485,7 +486,7 @@ class JobStore:
             ).fetchall()
             audit_rows = connection.execute(
                 """
-                SELECT stage, event_type, success, error_code
+                SELECT stage, event_type, success, error_code, metadata_json
                 FROM job_audit_events
                 """
             ).fetchall()
@@ -497,6 +498,7 @@ class JobStore:
         }
         usage_by_stage: dict[str, dict[str, Any]] = {}
         usage_by_model: dict[str, dict[str, Any]] = {}
+        stage_success_counts: dict[str, dict[str, int]] = {}
         for row in usage_rows:
             stage = str(row[0])
             provider = str(row[1])
@@ -524,6 +526,8 @@ class JobStore:
                 if error_code:
                     stage_bucket.setdefault("failure_counts", {})
                     stage_bucket["failure_counts"][error_code] = stage_bucket["failure_counts"].get(error_code, 0) + 1
+            counters = stage_success_counts.setdefault(stage, {"success": 0, "failure": 0})
+            counters["success" if success else "failure"] += 1
 
             model_key = f"{provider}:{model}"
             model_bucket = usage_by_model.setdefault(
@@ -543,23 +547,48 @@ class JobStore:
             model_bucket["records"] += 1
 
         failure_counts: dict[str, int] = {}
+        stage_event_counts: dict[str, int] = {}
+        tool_call_distribution: dict[str, int] = {}
+        direct_close_stats = {"direct_definable_closure": 0, "trivial_shortcut": 0}
         for row in audit_rows:
+            stage = str(row[0])
+            event_type = str(row[1])
+            stage_event_key = f"{stage}:{event_type}"
+            stage_event_counts[stage_event_key] = stage_event_counts.get(stage_event_key, 0) + 1
             if row[3] is None:
-                continue
-            code = str(row[3])
-            failure_counts[code] = failure_counts.get(code, 0) + 1
+                pass
+            else:
+                code = str(row[3])
+                failure_counts[code] = failure_counts.get(code, 0) + 1
+            if event_type in direct_close_stats:
+                direct_close_stats[event_type] += 1
+            metadata = json.loads(str(row[4])) if row[4] else {}
+            tool_name = metadata.get("tool_name")
+            if isinstance(tool_name, str) and tool_name.strip():
+                tool_call_distribution[tool_name] = tool_call_distribution.get(tool_name, 0) + 1
 
         usage_totals["estimated_cost_usd"] = round(float(usage_totals["estimated_cost_usd"]), 8)
         for bucket in usage_by_stage.values():
             bucket["estimated_cost_usd"] = round(float(bucket["estimated_cost_usd"]), 8)
         for bucket in usage_by_model.values():
             bucket["estimated_cost_usd"] = round(float(bucket["estimated_cost_usd"]), 8)
+        planner_bucket = usage_by_stage.get("planner", {})
+        planner_records = int(planner_bucket.get("records") or 0)
+        planner_schema_invalids = int((planner_bucket.get("failure_counts") or {}).get("schema_invalid") or 0)
+        schema_invalid_rate = round(planner_schema_invalids / planner_records, 6) if planner_records else None
 
         return {
             "usage_totals": usage_totals,
             "usage_by_stage": usage_by_stage,
             "usage_by_model": usage_by_model,
             "failure_counts": failure_counts,
+            "stage_success_counts": stage_success_counts,
+            "stage_event_counts": stage_event_counts,
+            "tool_call_distribution": tool_call_distribution,
+            "integrity": {
+                "schema_invalid_rate": schema_invalid_rate,
+                "direct_close_stats": direct_close_stats,
+            },
             "recent": self.recent_prover_stats(),
         }
 
@@ -575,16 +604,56 @@ class JobStore:
                 "result": job.result,
                 "error": job.error,
             },
+            event="job.update",
         )
 
-    def publish(self, job_id: str, payload: dict[str, Any]) -> None:
+    def publish(self, job_id: str, payload: dict[str, Any], *, event: str = "job.update") -> None:
+        envelope = {"event": event, "payload": payload}
         for queue in self._subscribers.get(job_id, []):
-            queue.put_nowait(payload)
+            queue.put_nowait(envelope)
+
+    def publish_progress(
+        self,
+        job_id: str,
+        event: str,
+        *,
+        stage: str | None = None,
+        status: str | None = None,
+        review_state: str | None = None,
+        message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.publish(
+            job_id,
+            build_progress_event(
+                event,
+                job_id=job_id,
+                stage=stage,
+                status=status,
+                review_state=review_state,
+                message=message,
+                metadata=metadata,
+            ),
+            event=event,
+        )
 
     async def subscribe(self, job_id: str):
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._subscribers.setdefault(job_id, []).append(queue)
         try:
+            job = self.get(job_id)
+            if job is not None:
+                queue.put_nowait(
+                    {
+                        "event": "job.update",
+                        "payload": {
+                            "status": job.status,
+                            "review_state": job.review_state,
+                            "result": job.result,
+                            "error": job.error,
+                        },
+                    }
+                )
             while True:
                 yield await queue.get()
         finally:

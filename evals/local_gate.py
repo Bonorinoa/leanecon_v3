@@ -13,11 +13,13 @@ import shutil
 import sys
 from typing import Any
 
-from evals.common import load_claims, write_summary
-from src.config import BENCHMARK_REQUIRE_PRICING, PROVER_PROVIDER
+from evals.benchmark_manifest import build_claim_set_manifest, classify_claim
+from evals.common import load_claims, write_progress_log, write_summary
+from src.backend_capabilities import get_backend_capability
+from src.config import BENCHMARK_BASELINE_DIR, BENCHMARK_REQUIRE_PRICING, PROVER_PROVIDER
 from src.formalizer import DEFAULT_FORMALIZER, FormalizerService
 from src.lean import compile_check
-from src.observability import StageExecutionError, classify_exception, lookup_pricing
+from src.observability import StageExecutionError, build_progress_event, classify_exception, lookup_pricing
 from src.planner import PlannerService
 from src.providers import normalize_huggingface_provider
 from src.prover import DEFAULT_PROVER, Prover, ProverTargetTimeouts
@@ -32,6 +34,25 @@ DEFAULT_SAMPLE_SEED = 17
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _progress_event(
+    event: str,
+    *,
+    claim_id: str,
+    stage: str,
+    status: str,
+    message: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return build_progress_event(
+        event,
+        claim_id=claim_id,
+        stage=stage,
+        status=status,
+        message=message,
+        metadata=metadata,
+    )
 
 
 def _supports_color(stream: Any) -> bool:
@@ -349,7 +370,17 @@ def _preflight(
     ready = all(checks.values())
     blockers = [name for name, status in checks.items() if not status]
     details = {"planner_endpoint_reachable": planner_endpoint_message} if planner_endpoint_message else {}
-    return {"ready": ready, "checks": checks, "blockers": blockers, "details": details}
+    return {
+        "ready": ready,
+        "checks": checks,
+        "blockers": blockers,
+        "details": details,
+        "capabilities": {
+            "planner": get_backend_capability("planner", planner_backend.name),
+            "formalizer": get_backend_capability("formalizer", formalizer_backend.name),
+            "prover": get_backend_capability("prover", prover_backend.name),
+        },
+    }
 
 
 def _select_claims(
@@ -423,6 +454,7 @@ async def _run_claim_set_async(
         stratified=stratified,
         sample_seed=sample_seed,
     )
+    claim_set_manifest = build_claim_set_manifest(claim_set)
     readiness = _preflight(planner_service, formalizer_service, prover_instance)
     if reporter is not None:
         reporter.claim_set_started(
@@ -438,10 +470,11 @@ async def _run_claim_set_async(
             reporter.skipped_claim_set(claim_set, [str(blocker) for blocker in readiness["blockers"]])
         return {
             "claim_set": claim_set,
-            "mode": "live_pipeline",
+            "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
             "benchmark_mode": benchmark_mode,
             "target_timeouts": target_timeouts.model_dump(mode="json"),
             "generated_at": _timestamp(),
+            "claim_set_manifest": claim_set_manifest,
             "claims_total": len(claims),
             "claims_passed": 0,
             "claims_failed": len(claims),
@@ -465,6 +498,7 @@ async def _run_claim_set_async(
     for claim in claims:
         claim_id = str(claim["id"])
         raw_claim = str(claim["raw_claim"])
+        claim_bucket = classify_claim(claim)
         theorem_stub = claim.get("theorem_stub")
         preamble_names_raw = claim.get("preamble_names") or []
         preamble_names = [str(name) for name in preamble_names_raw if str(name).strip()]
@@ -482,6 +516,7 @@ async def _run_claim_set_async(
         tool_calls = 0
         decomposition_steps = 0
         decomposition_depth = 0
+        progress_events: list[dict[str, Any]] = []
 
         shortcut = None if benchmark_mode else _try_claim_trivial_shortcut(theorem_stub)
         if shortcut is not None:
@@ -490,10 +525,21 @@ async def _run_claim_set_async(
             termination_reason = "trivial_shortcut"
             verified_via = "trivial_shortcut"
             failure_code = None
+            progress_events.append(
+                _progress_event(
+                    "prover_tool",
+                    claim_id=claim_id,
+                    stage="prover",
+                    status="completed",
+                    message="Claim closed via trivial shortcut.",
+                    metadata={"tool_name": "compile_check", "shortcut": shortcut["tactic"]},
+                )
+            )
             _accumulate_failure(failure_code, failure_counts)
             results.append(
                 {
                     "id": claim_id,
+                    "benchmark_bucket": claim_bucket,
                     "status": result_status,
                     "termination_reason": termination_reason,
                     "failure_code": failure_code,
@@ -505,6 +551,7 @@ async def _run_claim_set_async(
                     "theorem_stub_reference": theorem_stub,
                     "timing_breakdown": stage_timings,
                     "usage_by_stage": {},
+                    "progress_events": progress_events,
                     "trivial_shortcut": {
                         "hypothesis": shortcut["hypothesis"],
                         "tactic": shortcut["tactic"],
@@ -516,6 +563,16 @@ async def _run_claim_set_async(
             continue
 
         try:
+            progress_events.append(
+                _progress_event(
+                    "planner_started",
+                    claim_id=claim_id,
+                    stage="planner",
+                    status="running",
+                    message="Planner started.",
+                    metadata={"benchmark_mode": benchmark_mode},
+                )
+            )
             plan_result = planner_service.build_plan_with_telemetry(
                 raw_claim,
                 theorem_stub=theorem_stub,
@@ -525,7 +582,27 @@ async def _run_claim_set_async(
             planner_usage = _usage_dict(plan_result.usage)
             planner_schema_invalid, raw_planner_response = _planner_raw_response(plan_result)
             stage_timings["planner_ms"] = float(plan_result.usage.latency_ms or 0.0)
+            progress_events.append(
+                _progress_event(
+                    "planner_completed",
+                    claim_id=claim_id,
+                    stage="planner",
+                    status="completed",
+                    message="Planner completed.",
+                    metadata={"schema_invalid_repaired": planner_schema_invalid},
+                )
+            )
 
+            progress_events.append(
+                _progress_event(
+                    "formalizer_started",
+                    claim_id=claim_id,
+                    stage="formalizer",
+                    status="running",
+                    message="Formalizer started.",
+                    metadata={"benchmark_mode": benchmark_mode},
+                )
+            )
             formalize_result = formalizer_service.formalize_with_telemetry(
                 raw_claim,
                 planner_packet=plan_result.payload.model_dump(mode="json"),
@@ -535,7 +612,27 @@ async def _run_claim_set_async(
             )
             formalizer_usage = _usage_dict(formalize_result.usage)
             stage_timings["formalizer_ms"] = float(formalize_result.usage.latency_ms or 0.0)
+            progress_events.append(
+                _progress_event(
+                    "formalizer_completed",
+                    claim_id=claim_id,
+                    stage="formalizer",
+                    status="completed",
+                    message="Formalizer completed.",
+                    metadata={"review_state": formalize_result.payload.review_state},
+                )
+            )
 
+            progress_events.append(
+                _progress_event(
+                    "prover_started",
+                    claim_id=claim_id,
+                    stage="prover",
+                    status="running",
+                    message="Prover started.",
+                    metadata={"benchmark_mode": benchmark_mode},
+                )
+            )
             prove_result = await prover_instance.prove(
                 formalize_result.payload,
                 f"local_gate_{_sanitize_job_id(claim_id)}",
@@ -544,6 +641,7 @@ async def _run_claim_set_async(
                 target_timeouts=target_timeouts,
                 allow_decomposition=True,
                 benchmark_mode=benchmark_mode,
+                on_progress=lambda event, payload: progress_events.append({**payload, "event": event}),
             )
             theorem_name = prove_result.theorem_name
             termination_reason = prove_result.termination_reason
@@ -559,6 +657,16 @@ async def _run_claim_set_async(
             tool_calls = int((prove_result.tool_budget or {}).get("total_tool_calls") or 0)
             decomposition_steps = sum(1 for step in prove_result.trace if step.action_type == "decompose")
             decomposition_depth = max((target.recursion_depth for target in prove_result.targets), default=0)
+            progress_events.append(
+                _progress_event(
+                    "prover_verified" if prove_result.status == "verified" else "prover_failed",
+                    claim_id=claim_id,
+                    stage="prover",
+                    status=prove_result.status,
+                    message=f"Prover finished with status `{prove_result.status}`.",
+                    metadata={"termination_reason": prove_result.termination_reason},
+                )
+            )
         except StageExecutionError as exc:
             usage = _usage_dict(exc.usage)
             if exc.stage == "planner":
@@ -571,9 +679,29 @@ async def _run_claim_set_async(
                 stage_timings["formalizer_ms"] = float((usage or {}).get("latency_ms") or 0.0)
             failure_code = exc.error_code
             termination_reason = exc.stage
+            progress_events.append(
+                _progress_event(
+                    f"{exc.stage}_failed",
+                    claim_id=claim_id,
+                    stage=exc.stage,
+                    status="failed",
+                    message=exc.message,
+                    metadata={"error_code": exc.error_code},
+                )
+            )
         except Exception as exc:
             failure_code = classify_exception(exc)
             termination_reason = "exception"
+            progress_events.append(
+                _progress_event(
+                    "prover_failed",
+                    claim_id=claim_id,
+                    stage="prover",
+                    status="failed",
+                    message=str(exc),
+                    metadata={"error_code": failure_code},
+                )
+            )
 
         stage_timings["total_ms"] = round(
             stage_timings["planner_ms"] + stage_timings["formalizer_ms"] + stage_timings["prover_ms"],
@@ -591,6 +719,7 @@ async def _run_claim_set_async(
         results.append(
             {
                 "id": claim_id,
+                "benchmark_bucket": claim_bucket,
                 "status": result_status,
                 "termination_reason": termination_reason,
                 "failure_code": failure_code,
@@ -613,6 +742,7 @@ async def _run_claim_set_async(
                     }.items()
                     if value is not None
                 },
+                "progress_events": progress_events,
                 **({"raw_planner_response": raw_planner_response} if planner_schema_invalid else {}),
             }
         )
@@ -632,10 +762,11 @@ async def _run_claim_set_async(
     ) if claims_total else 0.0
     return {
         "claim_set": claim_set,
-        "mode": "live_pipeline",
+        "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
         "benchmark_mode": benchmark_mode,
         "target_timeouts": target_timeouts.model_dump(mode="json"),
         "generated_at": _timestamp(),
+        "claim_set_manifest": claim_set_manifest,
         **selection_info,
         "claims_total": claims_total,
         "claims_passed": claims_passed,
@@ -688,6 +819,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     cost_by_stage: dict[str, float] = {}
     cost_by_model: dict[str, dict[str, Any]] = {}
     failure_counts: dict[str, int] = {}
+    benchmark_category_mix: dict[str, int] = {}
     for summary in summaries:
         for stage, payload in summary.get("tokens_by_stage", {}).items():
             bucket = tokens_by_stage.setdefault(stage, {"input_tokens": 0, "output_tokens": 0})
@@ -710,13 +842,16 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             )
         for error_code, count in summary.get("failure_counts", {}).items():
             failure_counts[error_code] = failure_counts.get(error_code, 0) + int(count)
+        manifest = summary.get("claim_set_manifest", {})
+        for bucket, count in manifest.get("bucket_counts", {}).items():
+            benchmark_category_mix[bucket] = benchmark_category_mix.get(bucket, 0) + int(count)
     claims_total = sum(int(summary.get("claims_total") or 0) for summary in summaries)
     claims_passed = sum(int(summary.get("claims_passed") or 0) for summary in summaries)
     benchmark_mode = any(bool(summary.get("benchmark_mode")) for summary in summaries)
     target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
     return {
         "claim_set": "local_gate",
-        "mode": "live_pipeline",
+        "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
         "benchmark_mode": benchmark_mode,
         "target_timeouts": target_timeouts.model_dump(mode="json"),
         "generated_at": _timestamp(),
@@ -732,6 +867,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "cost_by_stage": cost_by_stage,
         "cost_by_model": cost_by_model,
         "failure_counts": failure_counts,
+        "benchmark_category_mix": benchmark_category_mix,
         "claim_sets": summaries,
     }
 
@@ -748,6 +884,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     selected = tuple(args.claim_set or CLAIM_SETS)
+    output_dir = args.output_dir or (
+        BENCHMARK_BASELINE_DIR / ("benchmark_mode" if args.benchmark_mode else "live_pipeline")
+    )
     reporter = _TerminalReporter()
     summaries = [
         run_claim_set(
@@ -762,10 +901,20 @@ def main(argv: list[str] | None = None) -> int:
         for claim_set in selected
     ]
     for summary in summaries:
-        path = write_summary(summary["claim_set"], summary, args.output_dir)
+        progress_events = [event for result in summary.get("results", []) for event in result.get("progress_events", [])]
+        progress_path = write_progress_log(summary["claim_set"], progress_events, output_dir)
+        summary["progress_log_path"] = str(progress_path)
+        path = write_summary(summary["claim_set"], summary, output_dir)
         reporter.claim_set_completed(summary, path)
     combined = _combine_summaries(summaries)
-    combined_path = write_summary("local_gate", combined, args.output_dir)
+    combined_path = write_summary("local_gate", combined, output_dir)
+    combined_progress_events = [
+        event
+        for summary in summaries
+        for result in summary.get("results", [])
+        for event in result.get("progress_events", [])
+    ]
+    write_progress_log("local_gate", combined_progress_events, output_dir)
     reporter.combined_completed(combined, combined_path)
     if not combined["readiness"]["ready"]:
         return 1

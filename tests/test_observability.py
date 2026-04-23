@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.api.jobs import JobStore
 from src.observability.models import AuditEvent, StageTiming
 from src.observability.pricing import complete_usage, lookup_pricing
@@ -77,3 +79,29 @@ def test_job_store_persists_usage_metrics_and_audits(tmp_path) -> None:
     snapshot = store.metrics_snapshot()
     assert snapshot["usage_totals"]["records"] == 1
     assert snapshot["usage_by_stage"]["formalizer"]["records"] == 1
+    assert snapshot["stage_success_counts"]["formalizer"]["success"] == 1
+    assert snapshot["integrity"]["schema_invalid_rate"] is None
+
+
+@pytest.mark.anyio
+async def test_job_store_subscription_emits_initial_snapshot_then_progress(tmp_path) -> None:
+    store = JobStore(tmp_path / "jobs.db", ttl_seconds=3600)
+    job = store.create(status="queued", review_state="queued", result={"claim": "demo"})
+    stream = store.subscribe(job.id)
+
+    first = await stream.__anext__()
+    store.publish_progress(
+        job.id,
+        "planner_started",
+        stage="planner",
+        status="queued",
+        review_state="in_progress",
+        message="Planner started.",
+    )
+    second = await stream.__anext__()
+    await stream.aclose()
+
+    assert first["event"] == "job.update"
+    assert first["payload"]["status"] == "queued"
+    assert second["event"] == "planner_started"
+    assert second["payload"]["stage"] == "planner"

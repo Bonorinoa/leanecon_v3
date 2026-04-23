@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
+from evals.benchmark_manifest import MANIFEST_PATH, build_manifest
 from evals.local_gate import run_claim_set
 from src.observability.models import ProviderCallMetadata
 from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, ParseCheck
@@ -100,7 +102,18 @@ class FakeProver:
         self.primary_backend = SimpleNamespace(name="goedel-prover-v2", provider="huggingface", model="Goedel-LM/Goedel-Prover-V2-32B")
         self.calls: list[dict[str, object]] = []
 
-    async def prove(self, packet, job_id, *, max_turns, timeout, target_timeouts, allow_decomposition, benchmark_mode):
+    async def prove(
+        self,
+        packet,
+        job_id,
+        *,
+        max_turns,
+        timeout,
+        target_timeouts,
+        allow_decomposition,
+        benchmark_mode,
+        on_progress=None,
+    ):
         self.calls.append(
             {
                 "job_id": job_id,
@@ -111,6 +124,18 @@ class FakeProver:
                 "benchmark_mode": benchmark_mode,
             }
         )
+        if on_progress is not None:
+            on_progress(
+                "prover_turn",
+                {
+                    "event": "prover_turn",
+                    "claim_id": packet.theorem_name,
+                    "stage": "prover",
+                    "status": "running",
+                    "message": "fake prover turn",
+                    "metadata": {"tool_name": "apply_tactic"},
+                },
+            )
         return ProverResult(
             status="verified",
             theorem_name=packet.theorem_name,
@@ -187,6 +212,8 @@ def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
     assert fake_prover.calls[0]["benchmark_mode"] is True
     assert fake_prover.calls[0]["timeout"] == 120
     assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 120, "subgoal": 120, "apollo_lemma": 120}
+    assert summary["claim_set_manifest"]["claim_set"] == "tier0_smoke"
+    assert summary["results"][0]["progress_events"]
 
 
 def test_local_gate_persists_raw_planner_response_for_schema_invalid(monkeypatch) -> None:
@@ -218,9 +245,13 @@ def test_local_gate_persists_raw_planner_response_for_schema_invalid(monkeypatch
         enforce_readiness=False,
         benchmark_mode=True,
     )
-
     assert all(item["usage_by_stage"]["planner"]["error_code"] == "schema_invalid" for item in summary["results"])
     assert all(item["raw_planner_response"] == RepairingPlannerDriver.raw_text for item in summary["results"])
+
+
+def test_checked_in_benchmark_manifest_matches_claim_sets() -> None:
+    checked_in = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    assert checked_in == build_manifest()
 
 
 def test_local_gate_uses_trivial_shortcut_and_skips_pipeline(monkeypatch) -> None:

@@ -5,6 +5,7 @@ from .lean_lsp_client import LeanLSPClient, LeanLSPUnavailableError, default_lea
 from .logging import log_event
 from .models import AuditEvent, ProviderCallMetadata, StageRunResult, StageTiming, TokenUsage
 from .pricing import complete_usage, dump_pricing_registry, estimate_tokens_from_text, lookup_pricing, stable_hash_text
+from .progress import build_progress_event
 from .sse import encode_sse
 from .telemetry import (
     SpanRecorder,
@@ -32,6 +33,7 @@ __all__ = [
     "attach_telemetry",
     "classify_exception",
     "complete_usage",
+    "build_progress_event",
     "default_lean_lsp_client",
     "dominant_failure_class",
     "dump_pricing_registry",

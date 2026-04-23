@@ -3,6 +3,8 @@
 **Date:** 19 April 2026  
 **Status:** Authoritative — Single Source of Truth for All Implementation
 
+> Integrity note (April 22, 2026): repository code, tests, and checked-in manifests override any overstated readiness or benchmark claims elsewhere in the docs.
+
 ## 1. High-Level Flow (Matches Your Hand-Drawn Sketch)
 ```
 Natural-language economic claim
@@ -45,7 +47,7 @@ Natural-language economic claim
 └──────────────────────────────┘
 ```
 
-**Human-in-the-Loop is mandatory** at Plan (although bypassed for benchmarks to quantify pass@k rates) and Formalization gates for v3.0 alpha. Prover is autonomous but logs every tactic for audit.
+Human review is now only claimed where the API actually supports it: review-gate jobs can be approved or rejected through `POST /jobs/{job_id}/review`. Benchmark runs continue to bypass review gates.
 
 ---
 
@@ -60,8 +62,8 @@ Python harness is deliberately minimal.
 - **src/prover/** — Goedel-Prover-V2 primary + Leanstral fallback. APOLLO recursive decomposition. Self-correction loop using Lean compiler feedback. ToolSpec registry for lean-lsp-mcp actions.
 - **src/guardrails/** — Vacuity rejection, semantic faithfulness (new frame-based), compile check, repair history.
 - **src/memory/** — SQLite + vector index (episodic proof traces, successful/failed tactics, retrieval for Planner/Prover).
-- **src/observability/** — SSE streaming, cost tracking, tool budgets, provenance, `/health` + `/metrics`.
-- **src/tools/** — Standardized `ToolSpec` (name, args, description, Lean-specific, cost). Registry + lean-lsp-mcp + LeanInteract wrappers.
+- **src/observability/** — SSE streaming, typed progress events, cost tracking, tool budgets, provenance, `/health` + `/metrics`.
+- **src/tools/** — Standardized `ToolSpec` (name, args, description, Lean-specific, cost). Registry + LeanInteract wrappers, with Lean LSP kept as experimental.
 - **src/api/** — FastAPI v3 (async jobs, SSE, review gates).
 
 ### Knowledge Layers (Fat Skills)

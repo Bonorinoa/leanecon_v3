@@ -32,6 +32,12 @@ def baseline_path(name: str, output_dir: Path | None = None) -> Path:
     return directory / f"{name}.json"
 
 
+def progress_log_path(name: str, output_dir: Path | None = None) -> Path:
+    directory = output_dir or BENCHMARK_BASELINE_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{name}.progress.jsonl"
+
+
 def load_summary(name: str, output_dir: Path | None = None) -> dict[str, Any]:
     path = baseline_path(name, output_dir)
     if not path.exists():
@@ -42,4 +48,11 @@ def load_summary(name: str, output_dir: Path | None = None) -> dict[str, Any]:
 def write_summary(name: str, payload: dict[str, Any], output_dir: Path | None = None) -> Path:
     path = baseline_path(name, output_dir)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def write_progress_log(name: str, events: list[dict[str, Any]], output_dir: Path | None = None) -> Path:
+    path = progress_log_path(name, output_dir)
+    lines = [json.dumps(event, sort_keys=True) for event in events]
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return path

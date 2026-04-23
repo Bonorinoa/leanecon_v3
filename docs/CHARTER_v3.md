@@ -7,6 +7,8 @@
 **Research & Audit Agent:** Feynman (Ollama 30B+ class, local-first)  
 **Workflow:** No Claude Code. Codex 5.4 + Feynman + Grok/CTO only.
 
+> Repository evidence note (April 22, 2026): this charter is a founding intent document. Operational claims about deployment, benchmarks, and readiness must be checked against the current codebase, tests, and `evals/benchmark_manifest.json`.
+
 ---
 
 ## 1. Mission (Why We Exist)

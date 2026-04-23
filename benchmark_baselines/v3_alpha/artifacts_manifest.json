@@ -1,0 +1,31 @@
+{
+  "artifacts": [
+    {
+      "path": "benchmark_baselines/v3_alpha/local_gate.json",
+      "status": "historical_only",
+      "notes": "Mixed live-mode artifact preserved for audit history, not release truth."
+    },
+    {
+      "path": "benchmark_baselines/v3_alpha/tier1_core.json",
+      "status": "historical_only",
+      "notes": "Preserved as a historical artifact; claim-set semantics are now governed by evals/benchmark_manifest.json."
+    },
+    {
+      "path": "benchmark_baselines/v3_alpha/tier2_frontier.json",
+      "status": "historical_only",
+      "notes": "Preserved as a historical artifact; tier2 has been split into mathlib-native and preamble-definable subsets."
+    },
+    {
+      "path": "benchmark_baselines/v3_alpha/tier2_frontier_partial_2026-04-22.log",
+      "status": "historical_only",
+      "notes": "Interrupted live-mode run retained as evidence for the integrity audit."
+    },
+    {
+      "path": "benchmark_baselines/v3_alpha/tier2_frontier_partial_2026-04-22.md",
+      "status": "historical_only",
+      "notes": "Narrative summary of the interrupted live-mode run retained for audit history."
+    }
+  ],
+  "public_score_ready": false,
+  "version": 1
+}

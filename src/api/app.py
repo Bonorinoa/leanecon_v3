@@ -12,17 +12,20 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
+from evals.benchmark_manifest import build_manifest
 from src import __version__
 from src.api.jobs import job_store
 from src.api.models import (
     FormalizeRequest,
     HealthResponse,
+    JobReviewRequest,
     JobAcceptedResponse,
     JobStatusResponse,
     MetricsResponse,
     PlanRequest,
     ProveRequest,
 )
+from src.backend_capabilities import get_backend_capability
 from src.config import (
     API_PORT,
     APP_VERSION,
@@ -80,6 +83,7 @@ def _backend_entry(
     name: str,
     *,
     backend_name: str,
+    stage: str,
     platform: str,
     provider: str,
     model: str,
@@ -95,6 +99,7 @@ def _backend_entry(
     payload = {
         "name": name,
         "backend": backend_name,
+        "capability": get_backend_capability(stage, backend_name),
         "platform": platform,
         "provider": provider,
         "model": model,
@@ -121,6 +126,7 @@ def _backend_status() -> dict[str, Any]:
         "planner": _backend_entry(
             "planner",
             backend_name=planner_backend.name,
+            stage="planner",
             platform=planner_platform,
             provider=planner_backend.provider,
             model=planner_backend.model,
@@ -130,6 +136,7 @@ def _backend_status() -> dict[str, Any]:
         "formalizer": _backend_entry(
             "formalizer",
             backend_name=formalizer_backend.name,
+            stage="formalizer",
             platform=formalizer_backend.provider,
             provider=formalizer_backend.provider,
             model=formalizer_backend.model,
@@ -137,6 +144,7 @@ def _backend_status() -> dict[str, Any]:
         "prover": _backend_entry(
             "prover",
             backend_name=prover_backend.name,
+            stage="prover",
             platform=prover_backend.provider,
             provider=PROVER_PROVIDER if prover_backend.provider == "huggingface" else prover_backend.provider,
             model=prover_backend.model,
@@ -245,6 +253,13 @@ def _prometheus_lines(snapshot: dict[str, Any]) -> str:
         )
     for error_code, count in snapshot.get("failure_counts", {}).items():
         lines.append(f'leanecon_failures{{error_code="{error_code}"}} {count}')
+    for tool_name, count in snapshot.get("tool_call_distribution", {}).items():
+        lines.append(f'leanecon_tool_calls{{tool="{tool_name}"}} {count}')
+    integrity = snapshot.get("integrity", {})
+    if integrity.get("schema_invalid_rate") is not None:
+        lines.append(f"leanecon_schema_invalid_rate {integrity['schema_invalid_rate']}")
+    for event_name, count in snapshot.get("integrity", {}).get("direct_close_stats", {}).items():
+        lines.append(f'leanecon_direct_close_events{{event="{event_name}"}} {count}')
     for backend_name, payload in snapshot.get("backend_status", {}).items():
         lines.append(f'leanecon_backend_available{{backend="{backend_name}"}} {1 if payload.get("available") else 0}')
     recent = snapshot.get("recent", {})
@@ -259,6 +274,30 @@ def _prometheus_lines(snapshot: dict[str, Any]) -> str:
 async def _lifespan(_app: FastAPI):
     trace_store.initialize()
     yield
+
+
+def _benchmark_category_mix() -> dict[str, int]:
+    manifest = build_manifest(include_standard_only=False)
+    return {
+        bucket: int(count)
+        for bucket, count in manifest.get("aggregate_bucket_counts", {}).items()
+    }
+
+
+def _review_transition(job: JobStatusResponse, request: JobReviewRequest) -> tuple[str, str, dict[str, Any], str | None]:
+    expected_status = "awaiting_plan_review" if request.stage == "plan" else "awaiting_formalization_review"
+    if job.status != expected_status:
+        raise HTTPException(status_code=409, detail=f"Job is in `{job.status}`, not `{expected_status}`.")
+    payload = dict(job.result or {})
+    payload["review"] = {
+        "stage": request.stage,
+        "decision": request.decision,
+        "notes": request.notes,
+    }
+    payload["review_gate_honest"] = True
+    if request.decision == "approve":
+        return "completed", "approved", payload, None
+    return "failed", "rejected", payload, f"{request.stage} review rejected."
 
 
 app = FastAPI(
@@ -289,6 +328,8 @@ async def health() -> HealthResponse:
         "cost_tracking_enabled": COST_TRACKING_ENABLED,
         "pricing_registry": dump_pricing_registry(),
         "backends": _backend_status(),
+        "benchmark_category_mix": _benchmark_category_mix(),
+        "public_score_ready": False,
         "recent_success_rate_last_100": recent["success_rate"],
         "avg_cost_per_successful_job_last_100": recent["avg_cost_per_successful_job"],
     }
@@ -306,6 +347,7 @@ async def metrics() -> MetricsResponse:
         "jobs": job_store.counts(),
         "memory": trace_store.counts(),
         "benchmark_claim_sets": _claim_set_counts(),
+        "benchmark_category_mix": _benchmark_category_mix(),
         **job_store.metrics_snapshot(),
         "backend_status": _backend_status(),
     }
@@ -318,6 +360,7 @@ async def metrics_prometheus() -> PlainTextResponse:
         "jobs": job_store.counts(),
         "memory": trace_store.counts(),
         "benchmark_claim_sets": _claim_set_counts(),
+        "benchmark_category_mix": _benchmark_category_mix(),
         **job_store.metrics_snapshot(),
         "backend_status": _backend_status(),
     }
@@ -331,9 +374,27 @@ async def plan(request: PlanRequest) -> JobStatusResponse:
         review_state="in_progress",
         result={"claim": request.claim, "benchmark_mode": request.benchmark_mode},
     )
+    job_store.publish_progress(
+        job.id,
+        "planner_started",
+        stage="planner",
+        status="queued",
+        review_state="in_progress",
+        message="Planner started.",
+        metadata={"benchmark_mode": request.benchmark_mode},
+    )
     try:
         stage_result = planner.build_plan_with_telemetry(request.claim, benchmark_mode=request.benchmark_mode)
     except StageExecutionError as exc:
+        job_store.publish_progress(
+            job.id,
+            "planner_failed",
+            stage="planner",
+            status="failed",
+            review_state="failed",
+            message=exc.message,
+            metadata={"error_code": exc.error_code},
+        )
         return _persist_stage_failure(
             job.id,
             exc,
@@ -345,6 +406,15 @@ async def plan(request: PlanRequest) -> JobStatusResponse:
             "needs_review": not request.benchmark_mode,
             "review_state": "approved" if request.benchmark_mode else "awaiting_plan_review",
         }
+    )
+    job_store.publish_progress(
+        job.id,
+        "planner_completed",
+        stage="planner",
+        status="completed" if request.benchmark_mode else "awaiting_plan_review",
+        review_state=packet.review_state,
+        message="Planner completed.",
+        metadata={"benchmark_mode": request.benchmark_mode},
     )
     return _persist_stage_success(
         job.id,
@@ -364,6 +434,15 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
         review_state="in_progress",
         result={"claim": request.claim, "benchmark_mode": request.benchmark_mode},
     )
+    job_store.publish_progress(
+        job.id,
+        "formalizer_started",
+        stage="formalizer",
+        status="queued",
+        review_state="in_progress",
+        message="Formalizer started.",
+        metadata={"benchmark_mode": request.benchmark_mode},
+    )
     try:
         stage_result = formalizer.formalize_with_telemetry(
             request.claim,
@@ -371,6 +450,15 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
             benchmark_mode=request.benchmark_mode,
         )
     except StageExecutionError as exc:
+        job_store.publish_progress(
+            job.id,
+            "formalizer_failed",
+            stage="formalizer",
+            status="failed",
+            review_state="failed",
+            message=exc.message,
+            metadata={"error_code": exc.error_code},
+        )
         return _persist_stage_failure(
             job.id,
             exc,
@@ -379,6 +467,15 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
 
     payload = stage_result.payload.model_dump(mode="json")
     payload["benchmark_mode"] = request.benchmark_mode
+    job_store.publish_progress(
+        job.id,
+        "formalizer_completed",
+        stage="formalizer",
+        status="completed" if request.benchmark_mode else "awaiting_formalization_review",
+        review_state=stage_result.payload.review_state,
+        message="Formalizer completed.",
+        metadata={"benchmark_mode": request.benchmark_mode},
+    )
     return _persist_stage_success(
         job.id,
         stage="formalizer",
@@ -393,6 +490,15 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
 async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
     started_at = time.perf_counter()
     job_store.update(job_id, status="running_prover", review_state="in_progress")
+    job_store.publish_progress(
+        job_id,
+        "prover_started",
+        stage="prover",
+        status="running_prover",
+        review_state="in_progress",
+        message="Prover started.",
+        metadata={"benchmark_mode": request.benchmark_mode},
+    )
     target_timeouts = (
         ProverTargetTimeouts.model_validate(request.target_timeouts.model_dump(mode="json"))
         if request.target_timeouts is not None
@@ -407,6 +513,7 @@ async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
             target_timeouts=target_timeouts,
             allow_decomposition=request.allow_decomposition,
             benchmark_mode=request.benchmark_mode,
+            on_progress=lambda event, payload: job_store.publish(job_id, payload, event=event),
         )
         payload = result.model_dump(mode="json")
         prover_usage = payload.get("usage_by_stage", {}).get("prover")
@@ -438,8 +545,26 @@ async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
         )
         job_store.record_audit_event(job_id, terminal_event)
         if result.status == "verified":
+            job_store.publish_progress(
+                job_id,
+                "prover_verified",
+                stage="prover",
+                status="completed",
+                review_state="complete",
+                message="Prover verified the claim.",
+                metadata={"termination_reason": result.termination_reason},
+            )
             job_store.update(job_id, status="completed", review_state="complete", result=payload)
             return
+        job_store.publish_progress(
+            job_id,
+            "prover_failed",
+            stage="prover",
+            status="failed",
+            review_state="failed",
+            message=result.failure.message if result.failure is not None else "Proof failed.",
+            metadata={"termination_reason": result.termination_reason},
+        )
         job_store.update(
             job_id,
             status="failed",
@@ -488,6 +613,15 @@ async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
             },
             error=str(exc),
         )
+        job_store.publish_progress(
+            job_id,
+            "prover_failed",
+            stage="prover",
+            status="failed",
+            review_state="failed",
+            message=str(exc),
+            metadata={"termination_reason": "exception", "error_code": error_code},
+        )
         log_event("api.prove_job_failed", stage="prover", error_code=error_code, message=str(exc))
 
 
@@ -503,6 +637,15 @@ async def prove(request: ProveRequest) -> JobAcceptedResponse:
             "claim": request.formalization_packet.claim,
         },
     )
+    job_store.publish_progress(
+        job.id,
+        "prover_queued",
+        stage="prover",
+        status="queued",
+        review_state=job.review_state,
+        message="Proof job queued.",
+        metadata={"benchmark_mode": request.benchmark_mode},
+    )
     asyncio.create_task(_run_prove_job(job.id, request))
     return JobAcceptedResponse(job_id=job.id, status=job.status, message="Proof job queued.")
 
@@ -515,13 +658,40 @@ async def get_job(job_id: str) -> JobStatusResponse:
     return JobStatusResponse(**job.__dict__)
 
 
+@app.post("/jobs/{job_id}/review", response_model=JobStatusResponse)
+async def review_job(job_id: str, request: JobReviewRequest) -> JobStatusResponse:
+    job = job_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job.")
+    current = JobStatusResponse(**job.__dict__)
+    next_status, next_review_state, payload, error = _review_transition(current, request)
+    updated = job_store.update(
+        job_id,
+        status=next_status,
+        review_state=next_review_state,
+        result=payload,
+        error=error,
+    )
+    assert updated is not None
+    job_store.publish_progress(
+        job_id,
+        f"{request.stage}_review_{request.decision}d",
+        stage=request.stage,
+        status=next_status,
+        review_state=next_review_state,
+        message=f"{request.stage.capitalize()} review {request.decision}d.",
+        metadata={"notes": request.notes},
+    )
+    return JobStatusResponse(**updated.__dict__)
+
+
 @app.get("/jobs/{job_id}/events")
 async def job_events(job_id: str) -> StreamingResponse:
     if job_store.get(job_id) is None:
         raise HTTPException(status_code=404, detail="Unknown job.")
 
     async def event_stream():
-        async for payload in job_store.subscribe(job_id):
-            yield encode_sse("job.update", payload)
+        async for envelope in job_store.subscribe(job_id):
+            yield encode_sse(str(envelope.get("event") or "job.update"), dict(envelope.get("payload") or {}))
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

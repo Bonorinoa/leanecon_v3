@@ -186,6 +186,7 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
             target_timeouts,
             allow_decomposition,
             benchmark_mode,
+            on_progress=None,
         ):
             self.calls.append(
                 {
@@ -197,6 +198,18 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
                     "benchmark_mode": benchmark_mode,
                 }
             )
+            if on_progress is not None:
+                on_progress(
+                    "prover_turn",
+                    {
+                        "event": "prover_turn",
+                        "job_id": job_id,
+                        "stage": "prover",
+                        "status": "running_prover",
+                        "message": "fake prover turn",
+                        "metadata": {"tool_name": "apply_tactic"},
+                    },
+                )
             return ProverResult(
                 status="verified",
                 theorem_name=packet.theorem_name,
@@ -265,6 +278,26 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
     assert fake_prover.calls
     assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
     assert fake_prover.calls[0]["benchmark_mode"] is True
+
+
+def test_review_endpoint_transitions_are_honest(monkeypatch, tmp_path) -> None:
+    api_module = _configure_api(monkeypatch, tmp_path)
+    client = TestClient(api_module.app)
+
+    plan = client.post("/plan", json={"claim": "A Bellman equation claim.", "benchmark_mode": False})
+    assert plan.status_code == 200
+    job_id = plan.json()["id"]
+
+    review = client.post(
+        f"/jobs/{job_id}/review",
+        json={"stage": "plan", "decision": "approve", "notes": "Looks faithful."},
+    )
+    assert review.status_code == 200
+    payload = review.json()
+    assert payload["status"] == "completed"
+    assert payload["review_state"] == "approved"
+    assert payload["result"]["review"]["decision"] == "approve"
+    assert payload["result"]["review_gate_honest"] is True
 
 
 def test_health_metrics_and_prometheus(monkeypatch, tmp_path) -> None:
