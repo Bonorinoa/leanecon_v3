@@ -39,7 +39,8 @@ class JobStore:
         self.db_path = db_path
         self.ttl_seconds = ttl_seconds
         self._lock = threading.Lock()
-        self._subscribers: dict[str, list[asyncio.Queue[dict[str, Any]]]] = {}
+        self._subscribers: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Queue[dict[str, Any]]]]] = {}
+        self._event_history: dict[str, list[dict[str, Any]]] = {}
         self.initialize()
 
     def initialize(self) -> None:
@@ -128,6 +129,7 @@ class JobStore:
                 connection.execute("DELETE FROM job_audit_events WHERE job_id = ?", (job_id,))
                 connection.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
                 self._subscribers.pop(job_id, None)
+                self._event_history.pop(job_id, None)
             connection.commit()
 
     def create(self, *, status: str, review_state: str | None, result: dict[str, Any] | None = None) -> JobRecord:
@@ -141,6 +143,8 @@ class JobStore:
             error=None,
         )
         self._upsert(job)
+        with self._lock:
+            self._event_history[job.id] = []
         return self._hydrate_job(job)
 
     def _upsert(self, job: JobRecord) -> None:
@@ -609,8 +613,14 @@ class JobStore:
 
     def publish(self, job_id: str, payload: dict[str, Any], *, event: str = "job.update") -> None:
         envelope = {"event": event, "payload": payload}
-        for queue in self._subscribers.get(job_id, []):
-            queue.put_nowait(envelope)
+        with self._lock:
+            history = self._event_history.setdefault(job_id, [])
+            history.append(envelope)
+            if len(history) > 200:
+                del history[:-200]
+            subscribers = list(self._subscribers.get(job_id, []))
+        for loop, queue in subscribers:
+            loop.call_soon_threadsafe(queue.put_nowait, envelope)
 
     def publish_progress(
         self,
@@ -639,25 +649,36 @@ class JobStore:
 
     async def subscribe(self, job_id: str):
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self._subscribers.setdefault(job_id, []).append(queue)
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            self._subscribers.setdefault(job_id, []).append((loop, queue))
+            history = list(self._event_history.get(job_id, []))
         try:
-            job = self.get(job_id)
-            if job is not None:
-                queue.put_nowait(
-                    {
-                        "event": "job.update",
-                        "payload": {
-                            "status": job.status,
-                            "review_state": job.review_state,
-                            "result": job.result,
-                            "error": job.error,
-                        },
-                    }
-                )
+            if history:
+                for envelope in history:
+                    queue.put_nowait(envelope)
+            else:
+                job = self.get(job_id)
+                if job is not None:
+                    queue.put_nowait(
+                        {
+                            "event": "job.update",
+                            "payload": {
+                                "status": job.status,
+                                "review_state": job.review_state,
+                                "result": job.result,
+                                "error": job.error,
+                            },
+                        }
+                    )
             while True:
                 yield await queue.get()
         finally:
-            self._subscribers[job_id].remove(queue)
+            with self._lock:
+                subscribers = self._subscribers.get(job_id, [])
+                marker = (loop, queue)
+                if marker in subscribers:
+                    subscribers.remove(marker)
 
 
 job_store = JobStore()

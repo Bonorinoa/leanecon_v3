@@ -454,13 +454,19 @@ def _preflight(
     formalizer_backend = formalizer_service.backend
     prover_backend = prover_instance.primary_backend
     planner_provider = planner_backend.provider
-    planner_platform = "ollama" if planner_backend.name == "ollama-cloud" else "huggingface"
+    planner_platform = (
+        "ollama"
+        if planner_backend.name == "ollama-cloud"
+        else "mistral"
+        if planner_backend.name == "mistral-structured"
+        else "huggingface"
+    )
     prover_provider = PROVER_PROVIDER if prover_backend.provider == "huggingface" else prover_backend.provider
     planner_endpoint_reachable, planner_endpoint_message = planner_service.connectivity_check()
     checks = {
         "planner_provider_configured": (
             bool(planner_provider.strip())
-            if planner_platform == "ollama"
+            if planner_platform in {"ollama", "mistral"}
             else normalize_huggingface_provider(planner_provider) in {"auto", planner_provider.strip()}
         ),
         "planner_endpoint_reachable": planner_endpoint_reachable,

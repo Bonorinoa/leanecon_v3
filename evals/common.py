@@ -15,22 +15,32 @@ STANDARD_BENCHMARK_CLAIM_SETS = (
 )
 LOCAL_GATE_DEFAULT_CLAIM_SETS = ("tier0_smoke", *STANDARD_BENCHMARK_CLAIM_SETS)
 LEGACY_HISTORICAL_CLAIM_SETS = ("tier1_core", "tier2_frontier")
-EXPERIMENTAL_CLAIM_SETS = (
-    "phd_qual_alpha",
-    "prover_easy_definable",
+REGRESSION_CLAIM_SETS = ("prover_easy_definable",)
+ARCHIVED_UTILITY_CLAIM_SETS = (
     "sprint18_ood_temp",
     "tier1_core_sample5",
     "tier1_core_sample5_b",
     "tier2_frontier_fail9_sprint18",
     "tier2_frontier_sample3_sprint18",
 )
+NONCANONICAL_CLAIM_SETS = (*LEGACY_HISTORICAL_CLAIM_SETS, *REGRESSION_CLAIM_SETS, *ARCHIVED_UTILITY_CLAIM_SETS)
+EXPERIMENTAL_CLAIM_SETS = (
+    "phd_qual_alpha",
+    *REGRESSION_CLAIM_SETS,
+)
 
 
 def claim_set_path(name: str) -> Path:
-    path = EVAL_CLAIMS_DIR / f"{name}.jsonl"
-    if not path.exists():
-        raise FileNotFoundError(f"Unknown claim set: {name}")
-    return path
+    candidate_dirs = (
+        EVAL_CLAIMS_DIR,
+        EVAL_CLAIMS_DIR / "regressions",
+        EVAL_CLAIMS_DIR / "archive",
+    )
+    for directory in candidate_dirs:
+        path = directory / f"{name}.jsonl"
+        if path.exists():
+            return path
+    raise FileNotFoundError(f"Unknown claim set: {name}")
 
 
 def load_claims(name: str) -> list[dict[str, Any]]:

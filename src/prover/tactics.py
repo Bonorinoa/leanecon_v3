@@ -105,6 +105,31 @@ def theorem_parameter_names(theorem_code: str) -> list[str]:
     return names
 
 
+def theorem_explicit_parameter_names(theorem_code: str) -> list[str]:
+    goal = theorem_goal_statement(theorem_code)
+    sig_match = re.search(
+        r"(?:theorem|lemma)\s+[A-Za-z0-9_']+(.*?):=\s*by",
+        theorem_code,
+        re.DOTALL,
+    )
+    if sig_match is None:
+        return []
+    signature = sig_match.group(1)
+    if goal and goal in signature:
+        signature = signature.rsplit(goal, 1)[0]
+    names: list[str] = []
+    for match in re.finditer(r"(?P<open>[\(\{])(?P<names>[^:\)\}\[\]]+)\s*:", signature):
+        if match.group("open") != "(":
+            continue
+        for raw_name in match.group("names").split():
+            name = raw_name.strip()
+            if not name or name == "_" or name.startswith("["):
+                continue
+            if name not in names:
+                names.append(name)
+    return names
+
+
 def intro_names_from_body(theorem_code: str) -> list[str]:
     names: list[str] = []
     for line in theorem_code.splitlines():

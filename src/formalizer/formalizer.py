@@ -170,6 +170,13 @@ def _merge_provider_metadata(
     )
 
 
+def _sanitize_planner_packet_payload(planner_packet: dict[str, Any] | None) -> dict[str, Any] | None:
+    if planner_packet is None:
+        return None
+    allowed = PlannerPacket.model_fields.keys()
+    return {key: value for key, value in planner_packet.items() if key in allowed}
+
+
 class MistralFormalizerDriver:
     """Mistral chat-completions driver for Leanstral."""
 
@@ -433,7 +440,8 @@ class Formalizer:
                 planner_packet=planner_packet,
                 benchmark_mode=benchmark_mode,
             )
-        validated_packet = PlannerPacket.model_validate(planner_packet) if planner_packet else None
+        sanitized_packet = _sanitize_planner_packet_payload(planner_packet)
+        validated_packet = PlannerPacket.model_validate(sanitized_packet) if sanitized_packet else None
         built = self.context_builder.build(claim, validated_packet)
         response, metadata = _unwrap_driver_response(
             self._driver_for_backend().generate(

@@ -23,6 +23,16 @@ class BackendCapability:
 
 
 BACKEND_CAPABILITIES: dict[tuple[str, str], BackendCapability] = {
+    ("planner", "mistral-structured"): BackendCapability(
+        stage="planner",
+        backend="mistral-structured",
+        provider="mistral",
+        transport="HTTP /chat/completions",
+        structured_output=True,
+        production_supported=True,
+        benchmark_supported=True,
+        notes="Primary hosted planner path via Mistral structured chat completions.",
+    ),
     ("planner", "hf-structured"): BackendCapability(
         stage="planner",
         backend="hf-structured",

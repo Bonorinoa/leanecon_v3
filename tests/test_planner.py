@@ -12,8 +12,15 @@ from src.memory.models import ProofTrace
 from src.memory.store import ProofTraceStore
 from src.observability.errors import StageExecutionError
 from src.observability.models import ProviderCallMetadata
-from src.planner import HuggingFacePlannerDriver, OllamaPlannerDriver, PlannerBackend, PlannerLLMResponse, PlannerService
-from src.planner.planner import PlannerDriverError
+from src.planner import (
+    HuggingFacePlannerDriver,
+    MistralPlannerDriver,
+    OllamaPlannerDriver,
+    PlannerBackend,
+    PlannerLLMResponse,
+    PlannerService,
+)
+from src.planner.planner import PlannerConnectivityError, PlannerDriverError
 from src.planner.retrieval import HashingTextEmbedder, PlannerRetrievalService
 
 
@@ -722,6 +729,76 @@ def test_hf_planner_driver_normalizes_fenced_json_and_object_fields(monkeypatch)
     assert response.subgoals == ["exact economicMeasure_empty (μ := μ)"]
 
 
+def test_mistral_planner_driver_posts_structured_chat_request(monkeypatch) -> None:
+    payload = {
+        "clarifying_questions": [],
+        "textbook_defaults": ["Assume standard benchmark conditions."],
+        "plan_paragraph": "Use the direct algebraic identity and preserve the theorem stub shape.",
+        "subgoals": [
+            "exact two_mul (1 : ℕ)",
+        ],
+        "needs_review": False,
+        "confidence": 0.92,
+    }
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(payload),
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 41,
+                        "completion_tokens": 19,
+                    },
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.get_header("Authorization")
+        captured["headers"] = {key.lower(): value for key, value in request.header_items()}
+        captured["timeout"] = timeout
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    backend = PlannerBackend(
+        name="mistral-structured",
+        model="mistral-large-2512",
+        provider="mistral",
+        notes="test backend",
+    )
+    response, metadata = MistralPlannerDriver(api_key="mistral_test", base_url="https://api.mistral.ai/v1").generate(
+        backend=backend,
+        system_prompt="Return only JSON.",
+        user_prompt="Claim: 1 + 1 = 2",
+    )
+
+    assert response.plan_paragraph.startswith("Use the direct algebraic identity")
+    assert captured["url"] == "https://api.mistral.ai/v1/chat/completions"
+    assert captured["authorization"] == "Bearer mistral_test"
+    assert captured["headers"]["content-type"] == "application/json"
+    assert captured["body"]["model"] == "mistral-large-2512"
+    assert captured["body"]["response_format"]["type"] == "json_schema"
+    assert metadata is not None
+    assert metadata.input_tokens == 41
+    assert metadata.output_tokens == 19
+
+
 def test_ollama_planner_driver_posts_chat_schema(monkeypatch) -> None:
     payload = {
         "clarifying_questions": [],
@@ -736,6 +813,9 @@ def test_ollama_planner_driver_posts_chat_schema(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class FakeResponse:
+        def __init__(self, payload_obj: dict[str, object]) -> None:
+            self.payload_obj = payload_obj
+
         def __enter__(self):
             return self
 
@@ -743,23 +823,27 @@ def test_ollama_planner_driver_posts_chat_schema(monkeypatch) -> None:
             return False
 
         def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "message": {"role": "assistant", "content": json.dumps(payload)},
-                    "prompt_eval_count": 88,
-                    "eval_count": 17,
-                    "done_reason": "stop",
-                }
-            ).encode("utf-8")
+            return json.dumps(self.payload_obj).encode("utf-8")
 
     def fake_urlopen(request, timeout: float):
+        if request.full_url.endswith("/api/tags"):
+            return FakeResponse({"models": [{"name": "gemma4:31b"}]})
         captured["url"] = request.full_url
         captured["timeout"] = timeout
         captured["authorization"] = request.get_header("Authorization")
         captured["headers"] = {key.lower(): value for key, value in request.header_items()}
         captured["body"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse()
+        return FakeResponse(
+            {
+                "message": {"role": "assistant", "content": json.dumps(payload)},
+                "prompt_eval_count": 88,
+                "eval_count": 17,
+                "done_reason": "stop",
+            }
+        )
 
+    monkeypatch.setattr("src.planner.planner.PLANNER_MODEL", "gemma4:31b")
+    monkeypatch.setattr("src.planner.planner.LIVE_MODEL_TESTS_ENABLED", False)
     monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
 
     backend = PlannerBackend(
@@ -786,10 +870,11 @@ def test_ollama_planner_driver_posts_chat_schema(monkeypatch) -> None:
     assert metadata.output_tokens == 17
 
 
-def test_ollama_planner_driver_propagates_http_errors(monkeypatch) -> None:
+def test_ollama_planner_driver_surfaces_connectivity_http_errors(monkeypatch) -> None:
     def fake_urlopen(request, timeout: float):
         raise urllib_error.HTTPError(request.full_url, 401, "unauthorized", {}, None)
 
+    monkeypatch.setattr("src.planner.planner.LIVE_MODEL_TESTS_ENABLED", False)
     monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
 
     backend = PlannerBackend(
@@ -799,7 +884,7 @@ def test_ollama_planner_driver_propagates_http_errors(monkeypatch) -> None:
         notes="test backend",
     )
 
-    with pytest.raises(urllib_error.HTTPError):
+    with pytest.raises(PlannerConnectivityError):
         OllamaPlannerDriver(api_key="ollama_test", host="https://ollama.com").generate(
             backend=backend,
             system_prompt="Return only JSON.",
@@ -886,6 +971,65 @@ def test_planner_fast_fails_when_local_ollama_endpoint_is_unreachable(monkeypatc
     assert "local Ollama planner endpoint unreachable" in exc_info.value.message
     assert urlopen_calls == [("http://127.0.0.1:11434/api/tags", 1.0)]
     assert sleep_calls == []
+
+
+def test_hosted_ollama_connectivity_checks_tags_by_default(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps({"models": [{"name": "gemma4:31b"}]}).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.get_header("Authorization")
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("src.planner.planner.PLANNER_MODEL", "gemma4:31b")
+    monkeypatch.setattr("src.planner.planner.LIVE_MODEL_TESTS_ENABLED", False)
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    driver = OllamaPlannerDriver(api_key="ollama_test", host="https://ollama.com", timeout=360)
+    ok, reason = driver.connectivity_status()
+
+    assert ok is True
+    assert reason is None
+    assert captured["url"] == "https://ollama.com/api/tags"
+    assert captured["authorization"] == "Bearer ollama_test"
+    assert captured["timeout"] == 5.0
+
+
+def test_hosted_ollama_connectivity_uses_live_probe_when_enabled(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(request, timeout: float):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.get_header("Authorization")
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        raise urllib_error.HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr("src.planner.planner.PLANNER_MODEL", "gemma4:31b")
+    monkeypatch.setattr("src.planner.planner.LIVE_MODEL_TESTS_ENABLED", True)
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    driver = OllamaPlannerDriver(api_key="ollama_test", host="https://ollama.com", timeout=360)
+    ok, reason = driver.connectivity_status()
+
+    assert ok is False
+    assert "HTTP 401" in str(reason)
+    assert captured["url"] == "https://ollama.com/api/chat"
+    assert captured["authorization"] == "Bearer ollama_test"
+    assert captured["body"]["model"] == "gemma4:31b"
+    assert captured["body"]["stream"] is False
+    assert captured["timeout"] == 15.0
 
 
 def test_ollama_planner_driver_backfills_empty_textbook_defaults(monkeypatch) -> None:

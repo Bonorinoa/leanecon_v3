@@ -26,6 +26,14 @@ _BUILTIN_PRICING: dict[str, dict[str, dict[str, float]]] = {
         },
     },
     "mistral": {
+        "mistral-large-2512": {
+            "input_per_million": 0.5,
+            "output_per_million": 1.5,
+        },
+        "mistral-large-latest": {
+            "input_per_million": 0.5,
+            "output_per_million": 1.5,
+        },
         "labs-leanstral-2603": {
             "input_per_million": 0.0,
             "output_per_million": 0.0,
@@ -35,6 +43,10 @@ _BUILTIN_PRICING: dict[str, dict[str, dict[str, float]]] = {
     # stable per-token public rates. We track these as zero-cost sentinels so
     # benchmark readiness can treat the model as price-known.
     "ollama": {
+        "gemma4:31b": {
+            "input_per_million": 0.0,
+            "output_per_million": 0.0,
+        },
         "gemma4:31b-cloud": {
             "input_per_million": 0.0,
             "output_per_million": 0.0,

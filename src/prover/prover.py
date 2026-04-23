@@ -60,6 +60,7 @@ from src.prover.tactics import (
     repeated_noop_action,
     should_decompose,
     suggest_fast_path_tactics,
+    theorem_explicit_parameter_names,
     theorem_goal_statement,
     theorem_parameter_names,
     validate_action,
@@ -68,7 +69,8 @@ from src.providers import normalize_huggingface_provider
 from src.tools import ToolCall, ToolRegistry, ToolResult, build_default_registry
 
 
-SHORTCUT_ATTEMPT_TIMEOUT_SECONDS = 60
+SHORTCUT_ATTEMPT_TIMEOUT_SECONDS = 25
+MAX_DIRECT_CLOSURE_CANDIDATES = 24
 
 SHORTCUT_FALLBACK_TACTICS: tuple[tuple[str, str], ...] = (
     ("assumption", "Goal matches a local hypothesis; closing via `assumption`."),
@@ -918,6 +920,8 @@ class Prover:
             target=target,
             current_code=current_code,
             timeout=timeout,
+            job_id=job_id,
+            on_progress=on_progress,
         )
         if direct_close is not None:
             self._emit_progress(
@@ -1685,13 +1689,26 @@ class Prover:
             for trace in examples
         ]
 
-    def _lemma_application_candidates(self, lemma_name: str, arg_names: list[str]) -> list[str]:
+    def _lemma_application_candidates(
+        self,
+        lemma_name: str,
+        hypothesis_arg_names: list[str],
+        explicit_goal_arg_names: list[str],
+    ) -> list[str]:
         expressions = [lemma_name]
-        for name in arg_names:
-            expressions.append(f"{lemma_name} {name}")
-        for left_index, left in enumerate(arg_names):
-            for right in arg_names[left_index + 1 :]:
-                expressions.append(f"{lemma_name} {left} {right}")
+        prefix = lemma_name
+        for name in hypothesis_arg_names:
+            prefix = f"{prefix} {name}"
+            expressions.append(prefix)
+
+        seeded = list(expressions)
+        for base in seeded:
+            suffix = base
+            for name in explicit_goal_arg_names:
+                suffix = f"{suffix} {name}"
+                expressions.append(suffix)
+
+        expressions.sort(key=lambda expression: (-len(expression.split()), len(expression)))
         deduped: list[str] = []
         for expression in expressions:
             if expression not in deduped:
@@ -1711,18 +1728,20 @@ class Prover:
         theorem_goal = theorem_goal_statement(current_code) or ""
         goal_shape = classify_goal_shape(theorem_goal)
         parameter_names = theorem_parameter_names(current_code)
+        explicit_parameter_names = theorem_explicit_parameter_names(current_code)
         intro_names = intro_names_from_body(current_code)
-        arg_names: list[str] = []
-        ordered_names = [
-            *(name for name in parameter_names if name.startswith("h")),
-            *intro_names,
-            *(name for name in parameter_names if not name.startswith("h")),
-        ]
-        for name in ordered_names:
-            if name in arg_names:
+        hypothesis_arg_names: list[str] = []
+        for name in [*parameter_names, *intro_names]:
+            if name in hypothesis_arg_names:
                 continue
-            if name in intro_names or name.startswith("h") or name[:1].islower():
-                arg_names.append(name)
+            if name.startswith("h"):
+                hypothesis_arg_names.append(name)
+        explicit_goal_arg_names: list[str] = []
+        for name in explicit_parameter_names:
+            if name in hypothesis_arg_names or not name[:1].islower():
+                continue
+            if name not in explicit_goal_arg_names:
+                explicit_goal_arg_names.append(name)
         hypothesis = direct_hypothesis_name(current_code)
         if hypothesis:
             candidates.extend(
@@ -1741,7 +1760,11 @@ class Prover:
             lemma_candidates: list[tuple[str, str, str]] = []
             rewrite_tokens = [str(name) for name in entry.definitions if str(name).strip()]
             for lemma_name in entry.planner_proven_lemmas:
-                for expression in self._lemma_application_candidates(lemma_name, arg_names):
+                for expression in self._lemma_application_candidates(
+                    lemma_name,
+                    hypothesis_arg_names,
+                    explicit_goal_arg_names,
+                ):
                     lemma_candidates.append(
                         (f"exact {expression}", entry.name, f"Exact preamble lemma `{expression}` closes the goal.")
                     )
@@ -1814,14 +1837,37 @@ class Prover:
         current_code: str,
         timeout: int,
         include_fallback_tactics: bool = False,
+        job_id: str | None = None,
+        on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any] | None:
         attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
         theorem_name = self._target_theorem_name(packet, target)
-        for proof, source, rationale in self._direct_candidate_proofs(
+        candidates = self._direct_candidate_proofs(
             packet=packet,
             current_code=current_code,
             include_fallback_tactics=include_fallback_tactics,
-        ):
+        )
+        attempt_limit = min(len(candidates), MAX_DIRECT_CLOSURE_CANDIDATES)
+        for index, (proof, source, rationale) in enumerate(candidates[:attempt_limit], start=1):
+            if job_id is not None:
+                self._emit_progress(
+                    on_progress,
+                    "prover_tool",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message=f"Direct closure attempt {index}/{attempt_limit}.",
+                    metadata={
+                        "target_name": target.name,
+                        "tool_name": "compile_check",
+                        "proof": proof,
+                        "source": source,
+                        "attempt_index": index,
+                        "attempt_limit": attempt_limit,
+                        "candidate_count": len(candidates),
+                        "compile_timeout_seconds": attempt_timeout,
+                    },
+                )
             try:
                 candidate_code = _replace_named_theorem_body(current_code, theorem_name, proof)
             except ValueError:

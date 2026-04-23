@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.formalizer.models import FormalizationPacket
 
@@ -38,6 +38,14 @@ class ProveRequest(LeanEconModel):
     target_timeouts: ProverTargetTimeoutsRequest | None = None
     allow_decomposition: bool = True
     benchmark_mode: bool = False
+
+    @field_validator("formalization_packet", mode="before")
+    @classmethod
+    def _sanitize_formalization_packet(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            allowed = FormalizationPacket.model_fields.keys()
+            return {key: item for key, item in value.items() if key in allowed}
+        return value
 
 
 class JobReviewRequest(LeanEconModel):

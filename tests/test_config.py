@@ -79,3 +79,19 @@ def test_validate_runtime_secrets_requires_ollama_key_for_non_local_ollama_plann
             mistral_api_key="mistral_valid",
             ollama_api_key="",
         )
+
+
+def test_validate_runtime_secrets_requires_mistral_key_for_non_local_mistral_planner() -> None:
+    with pytest.raises(RuntimeError, match="MISTRAL_API_KEY"):
+        validate_runtime_secrets(
+            runtime_env="prod",
+            planner_backend="mistral-structured",
+            planner_model="mistral-large-2512",
+            planner_provider="mistral",
+            prover_backend="leanstral",
+            prover_provider="mistral",
+            formalizer_backend="leanstral",
+            hf_token="hf_valid",
+            mistral_api_key="",
+            ollama_api_key="ollama_valid",
+        )

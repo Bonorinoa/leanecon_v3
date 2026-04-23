@@ -88,6 +88,10 @@ def validate_runtime_secrets(
     if planner_backend in {"hf-structured", "minimax-m2.7", "trinity-large-thinking", "gemma-4-31b-it"}:
         if _hf_token_invalid(hf_token):
             failures.append(f"HF_TOKEN is required for planner backend `{planner_backend}` using model `{planner_model}`.")
+    if planner_backend == "mistral-structured" and _mistral_key_invalid(mistral_api_key):
+        failures.append(
+            f"MISTRAL_API_KEY is required for planner backend `{planner_backend}` using model `{planner_model}`."
+        )
     if planner_backend == "ollama-cloud" and _ollama_key_invalid(ollama_api_key):
         failures.append(
             f"OLLAMA_API_KEY is required for planner backend `{planner_backend}` using model `{planner_model}`."
@@ -132,9 +136,9 @@ JOB_TTL_SECONDS = int(os.getenv("JOB_TTL_SECONDS", "3600"))
 JOB_MAX_CONCURRENT = int(os.getenv("JOB_MAX_CONCURRENT", "2"))
 BENCHMARK_MAX_RECURSION_DEPTH = int(os.getenv("LEANECON_BENCHMARK_MAX_RECURSION_DEPTH", "1"))
 
-PLANNER_BACKEND = os.getenv("LEANECON_PLANNER_BACKEND", "hf-structured")
-PLANNER_MODEL = os.getenv("LEANECON_PLANNER_MODEL", "OBLITERATUS/gemma-4-E4B-it-OBLITERATED")
-PLANNER_PROVIDER = os.getenv("LEANECON_PLANNER_PROVIDER", "auto").strip() or "auto"
+PLANNER_BACKEND = os.getenv("LEANECON_PLANNER_BACKEND", "mistral-structured")
+PLANNER_MODEL = os.getenv("LEANECON_PLANNER_MODEL", "mistral-large-2512")
+PLANNER_PROVIDER = os.getenv("LEANECON_PLANNER_PROVIDER", "mistral").strip() or "mistral"
 PLANNER_TIMEOUT = float(os.getenv("LEANECON_PLANNER_TIMEOUT", "120"))
 OLLAMA_HOST = os.getenv("LEANECON_OLLAMA_HOST", "https://ollama.com").strip().rstrip("/")
 EMBEDDING_MODEL = os.getenv("LEANECON_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import threading
 import shutil
 import time
 from typing import Any
@@ -120,7 +121,13 @@ def _backend_status() -> dict[str, Any]:
     planner_backend = planner.backend
     formalizer_backend = formalizer.backend
     prover_backend = prover.primary_backend
-    planner_platform = "ollama" if planner_backend.name == "ollama-cloud" else "huggingface"
+    planner_platform = (
+        "ollama"
+        if planner_backend.name == "ollama-cloud"
+        else "mistral"
+        if planner_backend.name == "mistral-structured"
+        else "huggingface"
+    )
     planner_endpoint_reachable, planner_availability_reason = planner.connectivity_check()
     return {
         "planner": _backend_entry(
@@ -384,7 +391,11 @@ async def plan(request: PlanRequest) -> JobStatusResponse:
         metadata={"benchmark_mode": request.benchmark_mode},
     )
     try:
-        stage_result = planner.build_plan_with_telemetry(request.claim, benchmark_mode=request.benchmark_mode)
+        stage_result = await asyncio.to_thread(
+            planner.build_plan_with_telemetry,
+            request.claim,
+            benchmark_mode=request.benchmark_mode,
+        )
     except StageExecutionError as exc:
         job_store.publish_progress(
             job.id,
@@ -444,7 +455,8 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
         metadata={"benchmark_mode": request.benchmark_mode},
     )
     try:
-        stage_result = formalizer.formalize_with_telemetry(
+        stage_result = await asyncio.to_thread(
+            formalizer.formalize_with_telemetry,
             request.claim,
             planner_packet=request.planner_packet,
             benchmark_mode=request.benchmark_mode,
@@ -646,7 +658,10 @@ async def prove(request: ProveRequest) -> JobAcceptedResponse:
         message="Proof job queued.",
         metadata={"benchmark_mode": request.benchmark_mode},
     )
-    asyncio.create_task(_run_prove_job(job.id, request))
+    threading.Thread(
+        target=lambda: asyncio.run(_run_prove_job(job.id, request)),
+        daemon=True,
+    ).start()
     return JobAcceptedResponse(job_id=job.id, status=job.status, message="Proof job queued.")
 
 

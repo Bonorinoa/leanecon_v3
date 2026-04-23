@@ -11,7 +11,18 @@ from urllib import error as urllib_error
 from urllib.parse import urlparse
 from urllib import request as urllib_request
 
-from src.config import HF_TOKEN, OLLAMA_API_KEY, OLLAMA_HOST, PLANNER_BACKEND, PLANNER_MODEL, PLANNER_PROVIDER, PLANNER_TIMEOUT
+from src.config import (
+    HF_TOKEN,
+    LIVE_MODEL_TESTS_ENABLED,
+    MISTRAL_API_KEY,
+    MISTRAL_BASE_URL,
+    OLLAMA_API_KEY,
+    OLLAMA_HOST,
+    PLANNER_BACKEND,
+    PLANNER_MODEL,
+    PLANNER_PROVIDER,
+    PLANNER_TIMEOUT,
+)
 from src.observability.errors import classify_exception
 from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerContext, PlannerLLMResponse, PlannerPacket, slugify_claim
@@ -57,6 +68,12 @@ class PlannerDriver(Protocol):
 class DriverRegistry:
     def __init__(self) -> None:
         self._backends = {
+            "mistral-structured": PlannerBackend(
+                "mistral-structured",
+                PLANNER_MODEL,
+                PLANNER_PROVIDER,
+                "Primary structured-output planner backend via Mistral chat completions.",
+            ),
             "hf-structured": PlannerBackend(
                 "hf-structured",
                 PLANNER_MODEL,
@@ -71,6 +88,7 @@ class DriverRegistry:
             ),
         }
         self._aliases = {
+            "mistral-large": "mistral-structured",
             "minimax-m2.7": "hf-structured",
             "trinity-large-thinking": "hf-structured",
             "gemma-4-31b-it": "hf-structured",
@@ -412,6 +430,87 @@ class HuggingFacePlannerDriver:
             raise wrapped from error
 
 
+class MistralPlannerDriver:
+    """Mistral chat-completions planner driver with structured JSON output."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str = MISTRAL_API_KEY,
+        base_url: str = MISTRAL_BASE_URL,
+        timeout: float = PLANNER_TIMEOUT,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def generate(
+        self,
+        *,
+        backend: PlannerBackend,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> PlannerLLMResponse | tuple[PlannerLLMResponse, ProviderCallMetadata]:
+        if not self.api_key:
+            raise PlannerDriverError("Mistral API key is required for the Mistral planner backend.")
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        payload = json.dumps(
+            {
+                "model": backend.model,
+                "temperature": 0.1,
+                "messages": messages,
+                "response_format": _planner_response_format(),
+            }
+        ).encode("utf-8")
+        request = urllib_request.Request(
+            f"{self.base_url}/chat/completions",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=self.timeout) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except urllib_error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="ignore")
+            raise PlannerDriverError(f"Mistral planner request failed: {body or error.reason}") from error
+        except urllib_error.URLError as error:
+            raise PlannerDriverError(f"Mistral planner request failed: {error.reason}") from error
+        except json.JSONDecodeError as error:
+            raise PlannerDriverError(f"Mistral planner returned invalid JSON payload: {error}") from error
+        choices = raw.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise PlannerDriverError("Mistral planner response did not contain choices.")
+        message = choices[0].get("message", {})
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+        if not isinstance(content, str):
+            raise PlannerDriverError("Mistral planner response did not contain text content.")
+        usage = raw.get("usage", {})
+        metadata = ProviderCallMetadata(
+            input_tokens=int(usage.get("prompt_tokens")) if isinstance(usage, dict) and usage.get("prompt_tokens") is not None else None,
+            output_tokens=int(usage.get("completion_tokens")) if isinstance(usage, dict) and usage.get("completion_tokens") is not None else None,
+            usage_source="provider" if isinstance(usage, dict) else "estimated_chars",
+            prompt_text=json.dumps(messages, ensure_ascii=True),
+            response_text=content,
+            raw_planner_response=content,
+        )
+        try:
+            parsed = _extract_json_payload(content)
+            response = PlannerLLMResponse.model_validate(_normalize_planner_payload(parsed))
+        except Exception as error:
+            _schema_invalid_error(f"Planner backend returned schema-invalid JSON: {error}", metadata=metadata, cause=error)
+        return response, metadata
+
+
 class OllamaPlannerDriver:
     """Ollama Cloud planner driver using the documented `/api/chat` schema format."""
 
@@ -427,6 +526,7 @@ class OllamaPlannerDriver:
         self.timeout = timeout
         self._connectivity_checked_at = 0.0
         self._connectivity_error: str | None = None
+        self._connectivity_cache_seconds = 60.0
 
     @property
     def api_url(self) -> str:
@@ -447,22 +547,88 @@ class OllamaPlannerDriver:
         return host in {"127.0.0.1", "localhost", "::1"}
 
     def connectivity_status(self) -> tuple[bool, str | None]:
-        if not self.uses_local_host:
-            return True, None
         now = time.monotonic()
-        if now - self._connectivity_checked_at <= 10.0:
+        if now - self._connectivity_checked_at <= self._connectivity_cache_seconds:
             return self._connectivity_error is None, self._connectivity_error
-        request = urllib_request.Request(self.tags_url, method="GET")
-        timeout = min(float(self.timeout), 1.0)
         try:
-            with urllib_request.urlopen(request, timeout=timeout):
-                self._connectivity_error = None
+            if self.uses_local_host:
+                self._check_local_connectivity()
+            else:
+                self._check_hosted_connectivity()
+            self._connectivity_error = None
         except Exception as error:
-            self._connectivity_error = (
-                f"Planner provider unavailable: local Ollama planner endpoint unreachable at {self.host} ({error})"
-            )
+            self._connectivity_error = self._format_connectivity_error(error)
         self._connectivity_checked_at = now
         return self._connectivity_error is None, self._connectivity_error
+
+    def _connectivity_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if self.api_key and not self.uses_local_host:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def _check_local_connectivity(self) -> None:
+        request = urllib_request.Request(self.tags_url, method="GET")
+        timeout = min(float(self.timeout), 1.0)
+        with urllib_request.urlopen(request, timeout=timeout):
+            return None
+
+    def _check_hosted_connectivity(self) -> None:
+        if not self.api_key:
+            raise PlannerConnectivityError(
+                "Planner provider unavailable: OLLAMA_API_KEY is required for hosted Ollama access."
+            )
+        if LIVE_MODEL_TESTS_ENABLED:
+            body = {
+                "model": PLANNER_MODEL,
+                "messages": [{"role": "user", "content": "Reply with OK."}],
+                "stream": False,
+                "think": False,
+                "options": {"num_predict": 4, "temperature": 0.0},
+            }
+            request = urllib_request.Request(
+                self.api_url,
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    **self._connectivity_headers(),
+                },
+                method="POST",
+            )
+            timeout = min(float(self.timeout), 15.0)
+            with urllib_request.urlopen(request, timeout=timeout) as response:
+                json.loads(response.read().decode("utf-8"))
+            return None
+
+        request = urllib_request.Request(
+            self.tags_url,
+            headers=self._connectivity_headers(),
+            method="GET",
+        )
+        timeout = min(float(self.timeout), 5.0)
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        models = payload.get("models")
+        if not isinstance(models, list):
+            raise PlannerConnectivityError("Planner provider unavailable: hosted Ollama tags response was malformed.")
+        available_models = {str(item.get("name")) for item in models if isinstance(item, dict) and item.get("name")}
+        if PLANNER_MODEL not in available_models:
+            raise PlannerConnectivityError(
+                f"Planner provider unavailable: hosted Ollama model `{PLANNER_MODEL}` was not visible in `/api/tags`."
+            )
+
+    def _format_connectivity_error(self, error: Exception) -> str:
+        if isinstance(error, PlannerConnectivityError):
+            return str(error)
+        if self.uses_local_host:
+            return f"Planner provider unavailable: local Ollama planner endpoint unreachable at {self.host} ({error})"
+        if isinstance(error, urllib_error.HTTPError):
+            reason = error.reason or "HTTP error"
+            return (
+                f"Planner provider unavailable: hosted Ollama request to {self.host} failed "
+                f"with HTTP {error.code} ({reason})."
+            )
+        return f"Planner provider unavailable: hosted Ollama endpoint unreachable at {self.host} ({error})"
 
     def _ensure_local_connectivity(self) -> None:
         ok, message = self.connectivity_status()
@@ -495,8 +661,7 @@ class OllamaPlannerDriver:
             "think": False,
         }
         headers = {"Content-Type": "application/json"}
-        if self.api_key and not self.uses_local_host:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        headers.update(self._connectivity_headers())
         request = urllib_request.Request(
             self.api_url,
             data=json.dumps(body).encode("utf-8"),
@@ -647,9 +812,14 @@ class Planner:
     ) -> None:
         self.registry = DriverRegistry()
         self.backend = self.registry.get(backend)
-        self.driver = driver or (
-            OllamaPlannerDriver() if self.backend.name == "ollama-cloud" else HuggingFacePlannerDriver()
-        )
+        if driver is not None:
+            self.driver = driver
+        elif self.backend.name == "ollama-cloud":
+            self.driver = OllamaPlannerDriver()
+        elif self.backend.name == "mistral-structured":
+            self.driver = MistralPlannerDriver()
+        else:
+            self.driver = HuggingFacePlannerDriver()
         self.retrieval_service = retrieval_service or PlannerRetrievalService(embedder=embedder)
         self.system_prompt = build_system_prompt()
 

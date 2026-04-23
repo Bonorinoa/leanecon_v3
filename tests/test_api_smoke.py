@@ -136,6 +136,29 @@ def test_plan_formalize_and_job_smoke(monkeypatch, tmp_path) -> None:
     assert payload["audit_summary"]["event_count"] >= 1
 
 
+def test_formalize_accepts_hydrated_plan_result(monkeypatch, tmp_path) -> None:
+    api_module = _configure_api(monkeypatch, tmp_path)
+    client = TestClient(api_module.app)
+
+    plan = client.post("/plan", json={"claim": "A Bellman equation claim.", "benchmark_mode": True})
+    assert plan.status_code == 200
+    hydrated_planner_packet = plan.json()["result"]
+
+    formalize = client.post(
+        "/formalize",
+        json={
+            "claim": "A Bellman equation claim.",
+            "planner_packet": hydrated_planner_packet,
+            "benchmark_mode": True,
+        },
+    )
+
+    assert formalize.status_code == 200
+    payload = formalize.json()["result"]
+    assert payload["theorem_name"] == "formalizer_bellman_contraction_stub"
+    assert payload["usage_by_stage"]["formalizer"]["stage"] == "formalizer"
+
+
 def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
     api_module = _configure_api(monkeypatch, tmp_path)
     formalization_packet = {
@@ -278,6 +301,67 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
     assert fake_prover.calls
     assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
     assert fake_prover.calls[0]["benchmark_mode"] is True
+
+
+def test_prove_accepts_hydrated_formalize_result(monkeypatch, tmp_path) -> None:
+    api_module = _configure_api(monkeypatch, tmp_path)
+    client = TestClient(api_module.app)
+
+    class FakeProver:
+        def __init__(self) -> None:
+            self.primary_backend = SimpleNamespace(
+                name="leanstral",
+                provider="mistral",
+                model="labs-leanstral-2603",
+            )
+
+        async def prove(self, packet, job_id, **kwargs):
+            return ProverResult(
+                status="verified",
+                theorem_name=packet.theorem_name,
+                claim=packet.claim,
+                benchmark_mode=kwargs["benchmark_mode"],
+                verified_code=packet.lean_code.replace("sorry", "trivial"),
+                current_code=packet.lean_code.replace("sorry", "trivial"),
+                trace=[],
+                targets=[],
+                failure=None,
+                termination_reason="verified",
+                repair_count=0,
+                preamble_names=list(packet.selected_preamble),
+                backend_used="leanstral",
+                attempted_backends=["leanstral"],
+                tool_budget={},
+                telemetry={},
+                usage_by_stage={},
+                timing_breakdown={"prover_ms": 0.0, "total_ms": 0.0},
+                target_timeouts=kwargs["target_timeouts"],
+                audit_summary={"event_count": 0, "events": []},
+            )
+
+    monkeypatch.setattr(api_module, "prover", FakeProver())
+
+    plan = client.post("/plan", json={"claim": "A Bellman equation claim.", "benchmark_mode": True})
+    assert plan.status_code == 200
+    formalize = client.post(
+        "/formalize",
+        json={
+            "claim": "A Bellman equation claim.",
+            "planner_packet": plan.json()["result"],
+            "benchmark_mode": True,
+        },
+    )
+    assert formalize.status_code == 200
+
+    prove = client.post(
+        "/prove",
+        json={
+            "formalization_packet": formalize.json()["result"],
+            "benchmark_mode": True,
+        },
+    )
+
+    assert prove.status_code == 200
 
 
 def test_review_endpoint_transitions_are_honest(monkeypatch, tmp_path) -> None:

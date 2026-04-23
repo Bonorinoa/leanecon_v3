@@ -22,6 +22,8 @@ def test_pricing_lookup_and_complete_usage(monkeypatch) -> None:
     )
 
     assert lookup_pricing("mistral", "labs-leanstral-2603") is not None
+    assert lookup_pricing("mistral", "mistral-large-2512") is not None
+    assert lookup_pricing("ollama", "gemma4:31b") is not None
     assert lookup_pricing("ollama", "gemma4:31b-cloud") is not None
     assert usage.input_tokens is not None
     assert usage.output_tokens is not None
@@ -105,3 +107,23 @@ async def test_job_store_subscription_emits_initial_snapshot_then_progress(tmp_p
     assert first["payload"]["status"] == "queued"
     assert second["event"] == "planner_started"
     assert second["payload"]["stage"] == "planner"
+
+
+@pytest.mark.anyio
+async def test_job_store_subscription_replays_progress_history_for_late_subscribers(tmp_path) -> None:
+    store = JobStore(tmp_path / "jobs.db", ttl_seconds=3600)
+    job = store.create(status="queued", review_state="queued", result={"claim": "demo"})
+    store.publish_progress(
+        job.id,
+        "planner_started",
+        stage="planner",
+        status="queued",
+        review_state="in_progress",
+        message="Planner started.",
+    )
+    stream = store.subscribe(job.id)
+    first = await stream.__anext__()
+    await stream.aclose()
+
+    assert first["event"] == "planner_started"
+    assert first["payload"]["message"] == "Planner started."

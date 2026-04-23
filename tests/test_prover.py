@@ -1477,6 +1477,76 @@ async def test_prover_wrapper_aware_direct_closure_uses_simpa_on_known_lemma(tmp
 
 
 @pytest.mark.anyio
+async def test_prover_statewise_direct_closure_prefers_fully_applied_preamble_lemma(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+
+    compile_attempts: list[str] = []
+
+    def _compile_statewise_direct(code: str, **_: object) -> dict[str, object]:
+        compile_attempts.append(code)
+        success = "exact BellmanOperator.monotone hβ hvw s" in code and "sorry" not in code
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", _compile_statewise_direct)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    driver = ScriptedDriver({})
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="benchmark_bellman_operator_statewise",
+            claim="Bellman monotonicity can be read pointwise at any fixed state.",
+            lean_code=(
+                "import Mathlib\n"
+                "import LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator\n\n"
+                "theorem benchmark_bellman_operator_statewise\n"
+                "    {S : Type*} {reward : S → ℝ} {transition : S → S} {β : ℝ}\n"
+                "    (hβ : 0 ≤ β) {v w : S → ℝ} (hvw : ∀ s, v s ≤ w s) (s : S) :\n"
+                "    BellmanOperator reward transition β v s ≤\n"
+                "      BellmanOperator reward transition β w s := by\n"
+                "  sorry\n"
+            ),
+            selected_preamble=["bellman_operator"],
+        ),
+        "job_statewise_direct",
+        max_turns=3,
+        benchmark_mode=True,
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "exact BellmanOperator.monotone hβ hvw s" in result.verified_code
+    assert compile_attempts
+    assert "exact BellmanOperator.monotone hβ hvw s" in compile_attempts[0]
+    assert len(compile_attempts) == 2
+    assert any(step.action_type == "direct_definable_closure" for step in result.trace)
+    assert driver.call_count == 0
+
+
+@pytest.mark.anyio
 async def test_prover_fails_fast_after_repeated_schema_invalid_actions(tmp_path, monkeypatch) -> None:
     import src.prover.prover as prover_module
 

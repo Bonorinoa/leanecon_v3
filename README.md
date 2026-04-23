@@ -6,6 +6,11 @@ The preserved moat is `lean_workspace/` plus the REPL/guardrail/observability sp
 
 Repository evidence is authoritative. Historical benchmark JSON under `benchmark_baselines/v3_alpha/` is preserved for audit history and should not be treated as public release truth.
 
+The current hosted benchmark-default stack is:
+- Planner: `mistral-structured` with `mistral-large-2512`
+- Formalizer: `leanstral` via Mistral
+- Prover: `leanstral` via Mistral
+
 ## Quick Start
 
 ```bash
@@ -23,11 +28,11 @@ uvicorn src.api:app --host 0.0.0.0 --port 8000
 - `docs/RAILWAY_DEPLOYMENT_CHECKLIST.md`: minimum deployment bar before any Railway readiness claim.
 - `docs/MIGRATION_PLAN.md`: living migration/bootstrap record.
 - `skills/*.md`: runtime process knowledge for HILBERT, APOLLO, guardrails, and the preamble model.
-- `evals/claim_sets/`: canonical benchmark inputs plus the v3 alpha PhD-qual additions.
+- `evals/claim_sets/`: canonical benchmark inputs plus the v3 alpha PhD-qual additions. Historical mixed sets live under `evals/claim_sets/archive/`, and regression-only utilities live under `evals/claim_sets/regressions/`.
 - `evals/benchmark_manifest.json`: claim-set bucket mix, theorem-stub usage, and integrity status.
 
 ## Benchmark Note
 
 `python -m evals.local_gate` now defaults to `tier0_smoke`, `tier1_core_preamble_definable`, `tier2_frontier_mathlib_native`, and `tier2_frontier_preamble_definable`. Use `--benchmark-mode` to force the full Planner -> Formalizer -> Prover path with benchmark guardrails, periodic heartbeat lines during long claims, and explicit `verified_via` tagging.
 
-For integrity-sensitive work, prefer the canonical split sets `tier1_core_preamble_definable`, `tier2_frontier_mathlib_native`, and `tier2_frontier_preamble_definable`. The old `tier1_core` and `tier2_frontier` files are retained only as historical mixed references.
+For integrity-sensitive work, prefer the canonical split sets `tier1_core_preamble_definable`, `tier2_frontier_mathlib_native`, and `tier2_frontier_preamble_definable`. The old mixed sets are archived under `evals/claim_sets/archive/` and are no longer part of the canonical benchmark surface.
