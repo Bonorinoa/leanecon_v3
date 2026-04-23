@@ -39,17 +39,23 @@ def _write_summary(path: Path, *, claim_set: str, passed: int, total: int, failu
 
 
 def test_build_markdown_report_includes_overview_latency_and_failures(tmp_path) -> None:
-    _write_summary(tmp_path / "tier0_smoke.json", claim_set="tier0_smoke", passed=3, total=3, failures={})
     _write_summary(
-        tmp_path / "tier1_core.json",
-        claim_set="tier1_core",
+        tmp_path / "tier1_core_preamble_definable.json",
+        claim_set="tier1_core_preamble_definable",
         passed=1,
         total=2,
         failures={"max_turns_exhausted": 1},
     )
     _write_summary(
-        tmp_path / "tier2_frontier.json",
-        claim_set="tier2_frontier",
+        tmp_path / "tier2_frontier_mathlib_native.json",
+        claim_set="tier2_frontier_mathlib_native",
+        passed=0,
+        total=1,
+        failures={"schema_invalid": 1},
+    )
+    _write_summary(
+        tmp_path / "tier2_frontier_preamble_definable.json",
+        claim_set="tier2_frontier_preamble_definable",
         passed=0,
         total=1,
         failures={"schema_invalid": 1},
@@ -62,24 +68,45 @@ def test_build_markdown_report_includes_overview_latency_and_failures(tmp_path) 
     assert "## Overview" in report
     assert "## Average Latency By Stage" in report
     assert "## Failure Breakdown" in report
-    assert "| Tier | Generated At | Pass@1 | Passed | Failed | Cost USD | File |" in report
-    assert "| Failure Code | tier0_smoke | tier1_core | tier2_frontier | Total |" in report
+    assert "| Claim Set | Generated At | Pass@1 | Passed | Failed | Cost USD | File |" in report
+    assert (
+        "| Failure Code | tier1_core_preamble_definable | tier2_frontier_mathlib_native | "
+        "tier2_frontier_preamble_definable | Total |"
+    ) in report
     assert "max_turns_exhausted" in report
     assert "schema_invalid" in report
     assert "overall" in report
 
 
 def test_aggregate_benchmarks_main_reads_standard_files(tmp_path, capsys) -> None:
-    _write_summary(tmp_path / "tier0_smoke.json", claim_set="tier0_smoke", passed=1, total=1, failures={})
-    _write_summary(tmp_path / "tier1_core.json", claim_set="tier1_core", passed=1, total=1, failures={})
-    _write_summary(tmp_path / "tier2_frontier.json", claim_set="tier2_frontier", passed=1, total=1, failures={})
+    _write_summary(
+        tmp_path / "tier1_core_preamble_definable.json",
+        claim_set="tier1_core_preamble_definable",
+        passed=1,
+        total=1,
+        failures={},
+    )
+    _write_summary(
+        tmp_path / "tier2_frontier_mathlib_native.json",
+        claim_set="tier2_frontier_mathlib_native",
+        passed=1,
+        total=1,
+        failures={},
+    )
+    _write_summary(
+        tmp_path / "tier2_frontier_preamble_definable.json",
+        claim_set="tier2_frontier_preamble_definable",
+        passed=1,
+        total=1,
+        failures={},
+    )
 
     exit_code = main(["--output-dir", str(tmp_path)])
     output = capsys.readouterr().out
 
     assert exit_code == 0
     assert "Source directory:" in output
-    assert "tier0_smoke" in output
-    assert "tier1_core" in output
-    assert "tier2_frontier" in output
+    assert "tier1_core_preamble_definable" in output
+    assert "tier2_frontier_mathlib_native" in output
+    assert "tier2_frontier_preamble_definable" in output
     assert "No failures recorded in the loaded summaries." in output

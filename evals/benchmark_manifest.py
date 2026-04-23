@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from evals.common import EVAL_CLAIMS_DIR, STANDARD_BENCHMARK_CLAIM_SETS, load_claims
+from evals.common import EVAL_CLAIMS_DIR, LEGACY_HISTORICAL_CLAIM_SETS, STANDARD_BENCHMARK_CLAIM_SETS, load_claims
 
 BENCHMARK_BUCKETS = frozenset(
     {
@@ -19,7 +19,7 @@ BENCHMARK_BUCKETS = frozenset(
 )
 BUCKET_MAP_PATH = Path(__file__).resolve().parent / "claim_buckets.json"
 MANIFEST_PATH = Path(__file__).resolve().parent / "benchmark_manifest.json"
-LEGACY_MIXED_SETS = frozenset({"tier1_core", "tier2_frontier"})
+LEGACY_MIXED_SETS = frozenset(LEGACY_HISTORICAL_CLAIM_SETS)
 
 
 def load_bucket_map() -> dict[str, str]:
@@ -74,7 +74,7 @@ def build_claim_set_manifest(name: str, *, bucket_map: dict[str, str] | None = N
     }
 
 
-def build_manifest(*, include_standard_only: bool = False) -> dict[str, Any]:
+def build_manifest(*, include_standard_only: bool = True) -> dict[str, Any]:
     bucket_map = load_bucket_map()
     claim_set_paths = sorted(EVAL_CLAIMS_DIR.glob("*.jsonl"))
     selected_names = (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 import os
 from pathlib import Path
@@ -11,10 +12,19 @@ import random
 import re
 import shutil
 import sys
+import threading
+import time
 from typing import Any
 
 from evals.benchmark_manifest import build_claim_set_manifest, classify_claim
-from evals.common import load_claims, write_progress_log, write_summary
+from evals.common import (
+    LOCAL_GATE_DEFAULT_CLAIM_SETS,
+    append_progress_event,
+    load_claims,
+    reset_progress_log,
+    write_progress_log,
+    write_summary,
+)
 from src.backend_capabilities import get_backend_capability
 from src.config import BENCHMARK_BASELINE_DIR, BENCHMARK_REQUIRE_PRICING, PROVER_PROVIDER
 from src.formalizer import DEFAULT_FORMALIZER, FormalizerService
@@ -26,10 +36,11 @@ from src.prover import DEFAULT_PROVER, Prover, ProverTargetTimeouts
 from src.prover.prover import _replace_named_theorem_body
 from src.prover.tactics import direct_hypothesis_name
 
-CLAIM_SETS = ("tier0_smoke", "tier1_core", "tier2_frontier", "prover_easy_definable")
+CLAIM_SETS = LOCAL_GATE_DEFAULT_CLAIM_SETS
 LIVE_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=300, subgoal=180, apollo_lemma=120)
 BENCHMARK_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=120, subgoal=120, apollo_lemma=120)
 DEFAULT_SAMPLE_SEED = 17
+HEARTBEAT_SECONDS = max(5.0, float(os.getenv("LEANECON_LOCAL_GATE_HEARTBEAT_SECONDS", "30")))
 
 
 def _timestamp() -> str:
@@ -124,9 +135,11 @@ class _TerminalReporter:
         self.stream = stream or sys.stdout
         self.color = _supports_color(self.stream)
         self.width = max(shutil.get_terminal_size((100, 20)).columns, 80)
+        self._io_lock = threading.Lock()
 
     def _emit(self, line: str = "") -> None:
-        print(line, file=self.stream)
+        with self._io_lock:
+            print(line, file=self.stream)
 
     def section(self, title: str) -> None:
         label = _style(title, "1;36", enabled=self.color)
@@ -178,6 +191,28 @@ class _TerminalReporter:
             detail = str(failure_code)
         self._emit(f"{bar} {index:>2}/{total:<2} {status_label:<8} {claim_id:<30} {_format_duration_ms(total_ms):>7} {detail}")
 
+    def claim_started(self, claim_set: str, index: int, total: int, claim_id: str, bucket: str) -> None:
+        bucket_label = bucket.replace("_", "-")
+        self._emit(f"[claim {index:>2}/{total:<2}] {claim_set} {claim_id} bucket={bucket_label}")
+
+    def claim_heartbeat(
+        self,
+        *,
+        claim_set: str,
+        index: int,
+        total: int,
+        claim_id: str,
+        stage: str,
+        elapsed_s: float,
+        message: str | None,
+    ) -> None:
+        elapsed_label = _format_duration_ms(round(elapsed_s * 1000.0, 3))
+        detail = _truncate((message or "").strip(), 48)
+        suffix = f" {detail}" if detail else ""
+        self._emit(
+            f"[heartbeat {index:>2}/{total:<2}] {claim_set} {claim_id} stage={stage} elapsed={elapsed_label}{suffix}"
+        )
+
     def skipped_claim_set(self, claim_set: str, blockers: list[str]) -> None:
         label = _style("skipped", "33", enabled=self.color)
         self._emit(f"{label}: {claim_set} blocked by {', '.join(blockers)}")
@@ -225,6 +260,81 @@ class _TerminalReporter:
         )
         self._emit(_render_table(["Claim set", "Pass@1"], rows))
         self._emit(f"Output: {output_path}")
+
+
+class _ClaimHeartbeatMonitor:
+    def __init__(
+        self,
+        *,
+        claim_set: str,
+        claim_id: str,
+        claim_index: int,
+        claims_total: int,
+        reporter: _TerminalReporter | None,
+        progress_sink: Callable[[dict[str, Any]], None] | None,
+        interval_seconds: float = HEARTBEAT_SECONDS,
+    ) -> None:
+        self.claim_set = claim_set
+        self.claim_id = claim_id
+        self.claim_index = claim_index
+        self.claims_total = claims_total
+        self.reporter = reporter
+        self.progress_sink = progress_sink
+        self.interval_seconds = interval_seconds
+        self.started_at = time.monotonic()
+        self._stage = "claim"
+        self._status = "running"
+        self._message = "Claim started."
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def update(self, event: dict[str, Any]) -> None:
+        with self._lock:
+            self._stage = str(event.get("stage") or self._stage)
+            self._status = str(event.get("status") or self._status)
+            self._message = str(event.get("message") or self._message)
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._thread.join(timeout=1.0)
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.interval_seconds):
+            with self._lock:
+                stage = self._stage
+                status = self._status
+                message = self._message
+            elapsed_s = time.monotonic() - self.started_at
+            if self.reporter is not None:
+                self.reporter.claim_heartbeat(
+                    claim_set=self.claim_set,
+                    index=self.claim_index,
+                    total=self.claims_total,
+                    claim_id=self.claim_id,
+                    stage=stage,
+                    elapsed_s=elapsed_s,
+                    message=message,
+                )
+            if self.progress_sink is not None:
+                self.progress_sink(
+                    _progress_event(
+                        "claim_heartbeat",
+                        claim_id=self.claim_id,
+                        stage=stage,
+                        status=status,
+                        message=f"Heartbeat after {round(elapsed_s, 1)}s.",
+                        metadata={
+                            "claim_set": self.claim_set,
+                            "claim_index": self.claim_index,
+                            "claims_total": self.claims_total,
+                            "latest_message": message,
+                        },
+                    )
+                )
 
 
 def _sanitize_job_id(value: str) -> str:
@@ -447,6 +557,7 @@ async def _run_claim_set_async(
     stratified: bool,
     sample_seed: int | None,
     reporter: _TerminalReporter | None,
+    progress_sink: Callable[[dict[str, Any]], None] | None,
 ) -> dict[str, Any]:
     claims, selection_info = _select_claims(
         load_claims(claim_set),
@@ -499,6 +610,7 @@ async def _run_claim_set_async(
         claim_id = str(claim["id"])
         raw_claim = str(claim["raw_claim"])
         claim_bucket = classify_claim(claim)
+        claim_index = len(results) + 1
         theorem_stub = claim.get("theorem_stub")
         preamble_names_raw = claim.get("preamble_names") or []
         preamble_names = [str(name) for name in preamble_names_raw if str(name).strip()]
@@ -517,53 +629,77 @@ async def _run_claim_set_async(
         decomposition_steps = 0
         decomposition_depth = 0
         progress_events: list[dict[str, Any]] = []
+        heartbeat = (
+            _ClaimHeartbeatMonitor(
+                claim_set=claim_set,
+                claim_id=claim_id,
+                claim_index=claim_index,
+                claims_total=len(claims),
+                reporter=reporter,
+                progress_sink=progress_sink,
+            )
+            if reporter is not None or progress_sink is not None
+            else None
+        )
 
-        shortcut = None if benchmark_mode else _try_claim_trivial_shortcut(theorem_stub)
-        if shortcut is not None:
-            theorem_name = shortcut["theorem_name"]
-            result_status = "verified"
-            termination_reason = "trivial_shortcut"
-            verified_via = "trivial_shortcut"
-            failure_code = None
-            progress_events.append(
-                _progress_event(
-                    "prover_tool",
-                    claim_id=claim_id,
-                    stage="prover",
-                    status="completed",
-                    message="Claim closed via trivial shortcut.",
-                    metadata={"tool_name": "compile_check", "shortcut": shortcut["tactic"]},
-                )
-            )
-            _accumulate_failure(failure_code, failure_counts)
-            results.append(
-                {
-                    "id": claim_id,
-                    "benchmark_bucket": claim_bucket,
-                    "status": result_status,
-                    "termination_reason": termination_reason,
-                    "failure_code": failure_code,
-                    "theorem_name": theorem_name,
-                    "raw_claim": raw_claim,
-                    "benchmark_mode": benchmark_mode,
-                    "verified_via": "trivial_shortcut",
-                    "target_timeouts": target_timeouts.model_dump(mode="json"),
-                    "theorem_stub_reference": theorem_stub,
-                    "timing_breakdown": stage_timings,
-                    "usage_by_stage": {},
-                    "progress_events": progress_events,
-                    "trivial_shortcut": {
-                        "hypothesis": shortcut["hypothesis"],
-                        "tactic": shortcut["tactic"],
-                    },
-                }
-            )
-            if reporter is not None:
-                reporter.claim_finished(len(results), len(claims), results[-1])
-            continue
+        def record_progress(event: dict[str, Any]) -> None:
+            progress_events.append(event)
+            if heartbeat is not None:
+                heartbeat.update(event)
+            if progress_sink is not None:
+                progress_sink(event)
+
+        if reporter is not None:
+            reporter.claim_started(claim_set, claim_index, len(claims), claim_id, claim_bucket)
+        if heartbeat is not None:
+            heartbeat.start()
 
         try:
-            progress_events.append(
+            shortcut = None if benchmark_mode else _try_claim_trivial_shortcut(theorem_stub)
+            if shortcut is not None:
+                theorem_name = shortcut["theorem_name"]
+                result_status = "verified"
+                termination_reason = "trivial_shortcut"
+                verified_via = "trivial_shortcut"
+                failure_code = None
+                record_progress(
+                    _progress_event(
+                        "prover_tool",
+                        claim_id=claim_id,
+                        stage="prover",
+                        status="completed",
+                        message="Claim closed via trivial shortcut.",
+                        metadata={"tool_name": "compile_check", "shortcut": shortcut["tactic"]},
+                    )
+                )
+                _accumulate_failure(failure_code, failure_counts)
+                results.append(
+                    {
+                        "id": claim_id,
+                        "benchmark_bucket": claim_bucket,
+                        "status": result_status,
+                        "termination_reason": termination_reason,
+                        "failure_code": failure_code,
+                        "theorem_name": theorem_name,
+                        "raw_claim": raw_claim,
+                        "benchmark_mode": benchmark_mode,
+                        "verified_via": "trivial_shortcut",
+                        "target_timeouts": target_timeouts.model_dump(mode="json"),
+                        "theorem_stub_reference": theorem_stub,
+                        "timing_breakdown": stage_timings,
+                        "usage_by_stage": {},
+                        "progress_events": progress_events,
+                        "trivial_shortcut": {
+                            "hypothesis": shortcut["hypothesis"],
+                            "tactic": shortcut["tactic"],
+                        },
+                    }
+                )
+                if reporter is not None:
+                    reporter.claim_finished(len(results), len(claims), results[-1])
+                continue
+
+            record_progress(
                 _progress_event(
                     "planner_started",
                     claim_id=claim_id,
@@ -582,7 +718,7 @@ async def _run_claim_set_async(
             planner_usage = _usage_dict(plan_result.usage)
             planner_schema_invalid, raw_planner_response = _planner_raw_response(plan_result)
             stage_timings["planner_ms"] = float(plan_result.usage.latency_ms or 0.0)
-            progress_events.append(
+            record_progress(
                 _progress_event(
                     "planner_completed",
                     claim_id=claim_id,
@@ -593,7 +729,7 @@ async def _run_claim_set_async(
                 )
             )
 
-            progress_events.append(
+            record_progress(
                 _progress_event(
                     "formalizer_started",
                     claim_id=claim_id,
@@ -612,7 +748,7 @@ async def _run_claim_set_async(
             )
             formalizer_usage = _usage_dict(formalize_result.usage)
             stage_timings["formalizer_ms"] = float(formalize_result.usage.latency_ms or 0.0)
-            progress_events.append(
+            record_progress(
                 _progress_event(
                     "formalizer_completed",
                     claim_id=claim_id,
@@ -623,7 +759,7 @@ async def _run_claim_set_async(
                 )
             )
 
-            progress_events.append(
+            record_progress(
                 _progress_event(
                     "prover_started",
                     claim_id=claim_id,
@@ -641,7 +777,7 @@ async def _run_claim_set_async(
                 target_timeouts=target_timeouts,
                 allow_decomposition=True,
                 benchmark_mode=benchmark_mode,
-                on_progress=lambda event, payload: progress_events.append({**payload, "event": event}),
+                on_progress=lambda event, payload: record_progress({**payload, "event": event}),
             )
             theorem_name = prove_result.theorem_name
             termination_reason = prove_result.termination_reason
@@ -657,7 +793,7 @@ async def _run_claim_set_async(
             tool_calls = int((prove_result.tool_budget or {}).get("total_tool_calls") or 0)
             decomposition_steps = sum(1 for step in prove_result.trace if step.action_type == "decompose")
             decomposition_depth = max((target.recursion_depth for target in prove_result.targets), default=0)
-            progress_events.append(
+            record_progress(
                 _progress_event(
                     "prover_verified" if prove_result.status == "verified" else "prover_failed",
                     claim_id=claim_id,
@@ -679,7 +815,7 @@ async def _run_claim_set_async(
                 stage_timings["formalizer_ms"] = float((usage or {}).get("latency_ms") or 0.0)
             failure_code = exc.error_code
             termination_reason = exc.stage
-            progress_events.append(
+            record_progress(
                 _progress_event(
                     f"{exc.stage}_failed",
                     claim_id=claim_id,
@@ -692,7 +828,7 @@ async def _run_claim_set_async(
         except Exception as exc:
             failure_code = classify_exception(exc)
             termination_reason = "exception"
-            progress_events.append(
+            record_progress(
                 _progress_event(
                     "prover_failed",
                     claim_id=claim_id,
@@ -702,6 +838,9 @@ async def _run_claim_set_async(
                     metadata={"error_code": failure_code},
                 )
             )
+        finally:
+            if heartbeat is not None:
+                heartbeat.stop()
 
         stage_timings["total_ms"] = round(
             stage_timings["planner_ms"] + stage_timings["formalizer_ms"] + stage_timings["prover_ms"],
@@ -797,6 +936,7 @@ def run_claim_set(
     stratified: bool = False,
     sample_seed: int | None = None,
     reporter: _TerminalReporter | None = None,
+    progress_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     return asyncio.run(
         _run_claim_set_async(
@@ -810,6 +950,7 @@ def run_claim_set(
             stratified=stratified,
             sample_seed=sample_seed,
             reporter=reporter,
+            progress_sink=progress_sink,
         )
     )
 
@@ -888,18 +1029,21 @@ def main(argv: list[str] | None = None) -> int:
         BENCHMARK_BASELINE_DIR / ("benchmark_mode" if args.benchmark_mode else "live_pipeline")
     )
     reporter = _TerminalReporter()
-    summaries = [
-        run_claim_set(
-            claim_set,
-            enforce_readiness=not args.allow_unready,
-            benchmark_mode=args.benchmark_mode,
-            limit=args.limit,
-            stratified=args.stratified,
-            sample_seed=args.sample_seed if args.limit is not None else None,
-            reporter=reporter,
+    summaries: list[dict[str, Any]] = []
+    for claim_set in selected:
+        reset_progress_log(claim_set, output_dir)
+        summaries.append(
+            run_claim_set(
+                claim_set,
+                enforce_readiness=not args.allow_unready,
+                benchmark_mode=args.benchmark_mode,
+                limit=args.limit,
+                stratified=args.stratified,
+                sample_seed=args.sample_seed if args.limit is not None else None,
+                reporter=reporter,
+                progress_sink=lambda event, claim_set=claim_set: append_progress_event(claim_set, event, output_dir),
+            )
         )
-        for claim_set in selected
-    ]
     for summary in summaries:
         progress_events = [event for result in summary.get("results", []) for event in result.get("progress_events", [])]
         progress_path = write_progress_log(summary["claim_set"], progress_events, output_dir)

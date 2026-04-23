@@ -8,7 +8,22 @@ from typing import Any
 
 from src.config import BENCHMARK_BASELINE_DIR, EVAL_CLAIMS_DIR
 
-STANDARD_BENCHMARK_CLAIM_SETS = ("tier0_smoke", "tier1_core", "tier2_frontier")
+STANDARD_BENCHMARK_CLAIM_SETS = (
+    "tier1_core_preamble_definable",
+    "tier2_frontier_mathlib_native",
+    "tier2_frontier_preamble_definable",
+)
+LOCAL_GATE_DEFAULT_CLAIM_SETS = ("tier0_smoke", *STANDARD_BENCHMARK_CLAIM_SETS)
+LEGACY_HISTORICAL_CLAIM_SETS = ("tier1_core", "tier2_frontier")
+EXPERIMENTAL_CLAIM_SETS = (
+    "phd_qual_alpha",
+    "prover_easy_definable",
+    "sprint18_ood_temp",
+    "tier1_core_sample5",
+    "tier1_core_sample5_b",
+    "tier2_frontier_fail9_sprint18",
+    "tier2_frontier_sample3_sprint18",
+)
 
 
 def claim_set_path(name: str) -> Path:
@@ -38,6 +53,12 @@ def progress_log_path(name: str, output_dir: Path | None = None) -> Path:
     return directory / f"{name}.progress.jsonl"
 
 
+def reset_progress_log(name: str, output_dir: Path | None = None) -> Path:
+    path = progress_log_path(name, output_dir)
+    path.write_text("", encoding="utf-8")
+    return path
+
+
 def load_summary(name: str, output_dir: Path | None = None) -> dict[str, Any]:
     path = baseline_path(name, output_dir)
     if not path.exists():
@@ -55,4 +76,11 @@ def write_progress_log(name: str, events: list[dict[str, Any]], output_dir: Path
     path = progress_log_path(name, output_dir)
     lines = [json.dumps(event, sort_keys=True) for event in events]
     path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return path
+
+
+def append_progress_event(name: str, event: dict[str, Any], output_dir: Path | None = None) -> Path:
+    path = progress_log_path(name, output_dir)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, sort_keys=True) + "\n")
     return path

@@ -49,9 +49,10 @@ def load_benchmark_summaries(
     claim_sets: tuple[str, ...] = STANDARD_BENCHMARK_CLAIM_SETS,
 ) -> list[tuple[str, Path, dict[str, Any]]]:
     loaded: list[tuple[str, Path, dict[str, Any]]] = []
+    base_dir = output_dir or Path("benchmark_baselines/v3_alpha/benchmark_mode")
     for claim_set in claim_sets:
-        path = (output_dir or Path("benchmark_baselines/v3_alpha")) / f"{claim_set}.json"
-        summary = load_summary(claim_set, output_dir)
+        path = base_dir / f"{claim_set}.json"
+        summary = load_summary(claim_set, base_dir)
         loaded.append((claim_set, path, summary))
     return loaded
 
@@ -144,13 +145,13 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
         "## Overview",
         "",
         _render_markdown_table(
-            ["Tier", "Generated At", "Pass@1", "Passed", "Failed", "Cost USD", "File"],
+            ["Claim Set", "Generated At", "Pass@1", "Passed", "Failed", "Cost USD", "File"],
             overview_rows,
         ),
         "",
         "## Average Latency By Stage",
         "",
-        _render_markdown_table(["Tier", "Planner", "Formalizer", "Prover", "Total"], latency_rows),
+        _render_markdown_table(["Claim Set", "Planner", "Formalizer", "Prover", "Total"], latency_rows),
         "",
         "## Failure Breakdown",
         "",
@@ -185,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     claim_sets = tuple(args.claim_set or STANDARD_BENCHMARK_CLAIM_SETS)
-    source_dir = args.output_dir or Path("benchmark_baselines/v3_alpha")
+    source_dir = args.output_dir or Path("benchmark_baselines/v3_alpha/benchmark_mode")
     items = load_benchmark_summaries(output_dir=args.output_dir, claim_sets=claim_sets)
     print(build_markdown_report(items, source_dir=source_dir))
     return 0

@@ -327,7 +327,7 @@ def test_local_gate_seeded_sampling_is_reproducible(monkeypatch) -> None:
     monkeypatch.setattr(local_gate_module, "_try_claim_trivial_shortcut", lambda _stub: None)
 
     summary_a = run_claim_set(
-        "tier1_core",
+        "tier1_core_preamble_definable",
         planner_service=_planner_service(),
         formalizer_service=FakeFormalizerService(),
         prover_instance=FakeProver(),
@@ -337,7 +337,7 @@ def test_local_gate_seeded_sampling_is_reproducible(monkeypatch) -> None:
         sample_seed=17,
     )
     summary_b = run_claim_set(
-        "tier1_core",
+        "tier1_core_preamble_definable",
         planner_service=_planner_service(),
         formalizer_service=FakeFormalizerService(),
         prover_instance=FakeProver(),
@@ -391,7 +391,7 @@ def test_local_gate_main_emits_readable_terminal_summary(monkeypatch, tmp_path, 
     summaries = iter(
         [
             fake_summary("tier0_smoke", passed=3, total=3, failures={}),
-            fake_summary("tier1_core", passed=1, total=2, failures={"max_turns_exhausted": 1}),
+            fake_summary("tier1_core_preamble_definable", passed=1, total=2, failures={"max_turns_exhausted": 1}),
         ]
     )
 
@@ -403,12 +403,21 @@ def test_local_gate_main_emits_readable_terminal_summary(monkeypatch, tmp_path, 
     )
 
     exit_code = local_gate_module.main(
-        ["--benchmark-mode", "--claim-set", "tier0_smoke", "--claim-set", "tier1_core", "--output-dir", str(tmp_path)]
+        [
+            "--benchmark-mode",
+            "--claim-set",
+            "tier0_smoke",
+            "--claim-set",
+            "tier1_core_preamble_definable",
+            "--output-dir",
+            str(tmp_path),
+        ]
     )
     output = capsys.readouterr().out
 
     assert exit_code == 1
     assert "[tier0_smoke] summary" in output
+    assert "[heartbeat" not in output
     assert "| Metric" in output
     assert "| Stage" in output
     assert "| Failure code" in output

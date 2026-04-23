@@ -28,6 +28,6 @@ uvicorn src.api:app --host 0.0.0.0 --port 8000
 
 ## Benchmark Note
 
-`python -m evals.local_gate` runs the live local-gate workflow across `tier0_smoke`, `tier1_core`, and `tier2_frontier`. Use `--benchmark-mode` to force the full Planner -> Formalizer -> Prover path with benchmark guardrails and explicit `verified_via` tagging.
+`python -m evals.local_gate` now defaults to `tier0_smoke`, `tier1_core_preamble_definable`, `tier2_frontier_mathlib_native`, and `tier2_frontier_preamble_definable`. Use `--benchmark-mode` to force the full Planner -> Formalizer -> Prover path with benchmark guardrails, periodic heartbeat lines during long claims, and explicit `verified_via` tagging.
 
-For integrity-sensitive work, prefer `tier2_frontier_mathlib_native` and `tier2_frontier_preamble_definable` over the mixed historical `tier2_frontier` set.
+For integrity-sensitive work, prefer the canonical split sets `tier1_core_preamble_definable`, `tier2_frontier_mathlib_native`, and `tier2_frontier_preamble_definable`. The old `tier1_core` and `tier2_frontier` files are retained only as historical mixed references.

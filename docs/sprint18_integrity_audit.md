@@ -11,9 +11,12 @@
 - Shared progress-event model for API SSE and local benchmarks: `src/observability/progress.py`
 - Claim-bucket classification: `evals/claim_buckets.json`
 - Benchmark integrity manifests: `evals/benchmark_manifest.py`, `evals/benchmark_manifest.json`
+- Canonical core split:
+  - `evals/claim_sets/tier1_core_preamble_definable.jsonl`
 - Focused frontier splits:
   - `evals/claim_sets/tier2_frontier_mathlib_native.jsonl`
   - `evals/claim_sets/tier2_frontier_preamble_definable.jsonl`
+- `local_gate` terminal heartbeats for long-running claims plus incremental progress logs under the selected output directory
 - Historical artifact registry: `benchmark_baselines/v3_alpha/artifacts_manifest.json`
 
 ## Current Assessment

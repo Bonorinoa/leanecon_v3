@@ -107,7 +107,7 @@ Python harness is deliberately minimal.
 ## 6. Deployment & CI
 - **Docker**: Multi-stage, cached Lean base image (GHCR), HF model weights cached at build (for self-hosting path).
 - **Railway**: Same as v2 but with v3 env vars (`LEANECON_PLANNER_MODEL=hf:Qwen2.5-72B`, etc.).
-- **CI Gate**: `.github/workflows/ci.yml` runs full local-gate benchmark on every PR. Fail if tier1_core < 22/23 or tier2_frontier < 8/13.
+- **CI Gate**: `.github/workflows/ci.yml` should target the normalized benchmark surface, not the historical mixed files: `tier1_core_preamble_definable`, `tier2_frontier_mathlib_native`, and `tier2_frontier_preamble_definable`.
 
 ---
 

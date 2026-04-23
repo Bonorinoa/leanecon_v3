@@ -277,7 +277,7 @@ async def _lifespan(_app: FastAPI):
 
 
 def _benchmark_category_mix() -> dict[str, int]:
-    manifest = build_manifest(include_standard_only=False)
+    manifest = build_manifest()
     return {
         bucket: int(count)
         for bucket, count in manifest.get("aggregate_bucket_counts", {}).items()
