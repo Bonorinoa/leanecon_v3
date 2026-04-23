@@ -1,0 +1,23 @@
+
+[tier2_frontier] starting
++-----------+-------+
+| Field     | Value |
++-----------+-------+
+| Mode      | live  |
+| Claims    | 13    |
+| Sampling  | full  |
+| Readiness | ready |
++-----------+-------+
+Lake version 5.0.0-src+3dc1a08 (Lean version 4.30.0-rc2)
+Current branch: HEAD
+Using cache (Azure) from origin: leanprover-community/mathlib4
+No files to download
+Already decompressed 8010 file(s)
+Build completed successfully (1760 jobs).
+[#-----------]  1/13 failed   t2_contraction_mapping_fixe...  814.0s max_turns_exhausted
+[##----------]  2/13 failed   t2_extreme_value_repair           5.6s schema_invalid
+[###---------]  3/13 failed   t2_monotone_sequence_converges  694.4s max_turns_exhausted
+[####--------]  4/13 failed   t2_pareto_dominance_transitive    4.7s schema_invalid
+[#####-------]  5/13 verified t2_utilitarian_swf_pareto_m...   47.1s trivial_shortcut
+[######------]  6/13 verified t2_bellman_monotone_value_f...   36.2s trivial_shortcut
+[######------]  7/13 verified t2_expected_payoff_convex_m...   27.8s trivial_shortcut
