@@ -65,6 +65,11 @@ def build_history_row(
         "direct_close_rate": _rate(_direct_close_count(all_results), len(all_results)),
         "direct_close_count": _direct_close_count(all_results),
         "avg_tool_calls": _average_metric(all_results, "tool_calls"),
+        "avg_lsp_tool_calls": _average_metric(all_results, "lsp_tool_calls"),
+        "total_lsp_tool_calls": _sum_metric(all_results, "lsp_tool_calls"),
+        "avg_native_search_attempts": _average_metric(all_results, "native_search_attempts"),
+        "total_native_search_attempts": _sum_metric(all_results, "native_search_attempts"),
+        "mathlib_native_mode_usage": _sum_metric(all_results, "mathlib_native_mode_usage"),
         "avg_decomposition_depth": _average_metric(all_results, "decomposition_depth"),
         "no_progress_stall_count": _no_progress_stall_count(all_results),
         "schema_invalid_rate": _rate(_schema_invalid_count(all_results), len(all_results)),
@@ -115,6 +120,11 @@ def _claim_set_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
             "direct_close_rate": 0.0,
             "direct_close_count": 0,
             "avg_tool_calls": 0.0,
+            "avg_lsp_tool_calls": 0.0,
+            "total_lsp_tool_calls": 0,
+            "avg_native_search_attempts": 0.0,
+            "total_native_search_attempts": 0,
+            "mathlib_native_mode_usage": 0,
             "avg_decomposition_depth": 0.0,
             "no_progress_stall_count": 0,
             "schema_invalid_rate": 0.0,
@@ -134,6 +144,11 @@ def _claim_set_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
         "direct_close_rate": _rate(_direct_close_count(results), claims_total),
         "direct_close_count": _direct_close_count(results),
         "avg_tool_calls": _average_metric(results, "tool_calls"),
+        "avg_lsp_tool_calls": _average_metric(results, "lsp_tool_calls"),
+        "total_lsp_tool_calls": _sum_metric(results, "lsp_tool_calls"),
+        "avg_native_search_attempts": _average_metric(results, "native_search_attempts"),
+        "total_native_search_attempts": _sum_metric(results, "native_search_attempts"),
+        "mathlib_native_mode_usage": _sum_metric(results, "mathlib_native_mode_usage"),
         "avg_decomposition_depth": _average_metric(results, "decomposition_depth"),
         "no_progress_stall_count": _no_progress_stall_count(results),
         "schema_invalid_rate": _rate(_schema_invalid_count(results), claims_total),
@@ -154,6 +169,10 @@ def _average_metric(results: list[dict[str, Any]], key: str) -> float:
         return 0.0
     total = sum(float(result.get(key) or 0.0) for result in results)
     return round(total / len(results), 3)
+
+
+def _sum_metric(results: list[dict[str, Any]], key: str) -> int:
+    return sum(int(result.get(key) or 0) for result in results)
 
 
 def _total_cost(summary: dict[str, Any]) -> float:

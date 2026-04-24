@@ -234,17 +234,19 @@ def _select_heuristic(
             "gap_id": "dynamic_programming.bellman_operator_contraction_bridge",
             "difficulty": 4.8,
             "suggested_lean_stub": (
-                "theorem bellmanOperator_contractingWith\n"
-                "    {S : Type*} [PseudoMetricSpace S]\n"
-                "    {reward : S → ℝ} {transition : S → S} {β : NNReal}\n"
-                "    (hβ : β < 1) :\n"
-                "    ContractingWith β (BellmanOperator reward transition β) := by\n"
-                "  sorry"
+                "structure BellmanContractionCertificate {V : Type*} [MetricSpace V] (T : V → V) where\n"
+                "  constant : NNReal\n"
+                "  contracting : ContractingWith constant T\n\n"
+                "theorem BellmanContractionCertificate.exists_fixedPoint\n"
+                "    {V : Type*} [MetricSpace V] [CompleteSpace V] [Nonempty V]\n"
+                "    {T : V → V} (h : BellmanContractionCertificate T) :\n"
+                "    ∃ v, Function.IsFixedPt T v := by\n"
+                "  exact contraction_has_fixedPoint h.isContraction"
             ),
             "rationale": (
                 "This claim is trying to turn Bellman assumptions into the contraction template. "
                 "The attempted identifiers show the prover jumping between `BellmanOperator.monotone` "
-                "and `contraction_has_fixedPoint` without a direct bridge lemma."
+                "and `contraction_has_fixedPoint` without a certificate that packages the metric estimate."
             ),
         }
 
@@ -264,7 +266,8 @@ def _select_heuristic(
                 "    (hkt : KuhnTuckerPoint x g μ) {i : ι}\n"
                 "    (hslack : g x i < 0) :\n"
                 "    μ i = 0 := by\n"
-                "  sorry"
+                "  have hg_ne : g x i ≠ 0 := ne_of_lt hslack\n"
+                "  exact eq_zero_of_ne_zero_of_mul_right_eq_zero hg_ne (hkt.slackness i)"
             ),
             "rationale": (
                 "The trace reaches complementary-slackness facts but still cannot directly close the "
@@ -280,17 +283,19 @@ def _select_heuristic(
             "gap_id": "optimization.strict_concavity_compact_attains_maximum",
             "difficulty": 4.4,
             "suggested_lean_stub": (
-                "theorem exists_isConstrainedMaximum_of_strictConcaveOn_compact\n"
+                "theorem exists_isConstrainedMaximum_of_isCompact_continuousOn\n"
                 "    {α : Type*} [TopologicalSpace α]\n"
                 "    {s : Set α} {f : α → ℝ}\n"
                 "    (hs : IsCompact s) (hne : s.Nonempty)\n"
-                "    (hconcave : StrictConcaveOn ℝ s f) :\n"
+                "    (hf : ContinuousOn f s) :\n"
                 "    ∃ x, IsConstrainedMaximum f s x := by\n"
-                "  sorry"
+                "  rcases hs.exists_isMaxOn hne hf with ⟨x, hx, hmax⟩\n"
+                "  exact ⟨x, hx, fun {_} hy => hmax hy⟩"
             ),
             "rationale": (
                 "The direct-close attempts bounced between fixed-point and constrained-optimization lemmas, "
-                "but the target is existence of a maximizer. A compact-attainment existence theorem would have been a natural direct-close."
+                "but the target is existence of a maximizer. A compact-attainment wrapper around Mathlib's "
+                "extreme-value theorem would have been a natural direct-close."
             ),
         }
 
@@ -307,12 +312,48 @@ def _select_heuristic(
                 "    {u : ℕ → ℝ}\n"
                 "    (hu_mono : Monotone u)\n"
                 "    (hu_bdd : BddAbove (Set.range u)) :\n"
-                "    ∃ l, Tendsto u atTop (𝓝 l) := by\n"
-                "  sorry"
+                "    ∃ l, Filter.Tendsto u Filter.atTop (nhds l) := by\n"
+                "  exact ⟨⨆ i, u i, tendsto_atTop_ciSup hu_mono hu_bdd⟩"
             ),
             "rationale": (
                 "The mathlib-native analysis claim never finds the convergence bridge and instead drifts through unrelated direct-close families. "
                 "A canonical monotone-plus-bounded convergence wrapper would make the intended theorem template explicit."
+            ),
+        }
+
+    if "unique fixed point" in claim_blob or "h_contraction_fixed_point" in target_blob:
+        return {
+            "gap_id": "dynamic_programming.contraction_unique_fixed_point",
+            "difficulty": 4.0,
+            "suggested_lean_stub": (
+                "theorem contraction_has_unique_fixedPoint {α : Type*}\n"
+                "    [MetricSpace α] [CompleteSpace α] [Nonempty α]\n"
+                "    {f : α → α} (hf : IsContraction f) :\n"
+                "    ∃! x, Function.IsFixedPt f x := by\n"
+                "  rcases hf with ⟨K, hK⟩\n"
+                "  refine ⟨ContractingWith.fixedPoint (f := f) hK, ?_, ?_⟩\n"
+                "  · exact ContractingWith.fixedPoint_isFixedPt (f := f) hK\n"
+                "  · intro y hy\n"
+                "    exact ContractingWith.fixedPoint_unique hK hy"
+            ),
+            "rationale": (
+                "The target asks for the uniqueness side of the contraction-mapping theorem, "
+                "not just fixed-point existence."
+            ),
+        }
+
+    if "witness profile" in claim_blob or "h_witness_exists" in target_blob:
+        return {
+            "gap_id": "game_theory.nash_witness_existence",
+            "difficulty": 3.6,
+            "suggested_lean_stub": (
+                "theorem nash_exists_of_witness {Profile : Type}\n"
+                "    (h : HasNashEquilibrium Profile) : ∃ profile, h.isNash profile := by\n"
+                "  exact ⟨h.witness, h.is_nash⟩"
+            ),
+            "rationale": (
+                "The trace already has a witness-style Nash certificate; the closure should use "
+                "`nash_exists_of_witness` directly instead of drifting through fixed-point lemmas."
             ),
         }
 

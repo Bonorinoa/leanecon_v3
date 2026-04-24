@@ -140,6 +140,25 @@ _register(
 )
 _register(
     PreambleEntry(
+        name="monotone_sequence",
+        lean_module="LeanEcon.Preamble.Foundations.Primitives.Sequences",
+        description="Monotone real sequences bounded above converge.",
+        keywords=("monotone", "sequence", "bounded", "converges"),
+        auto_keywords=("monotone", "sequence", "converges"),
+        parameters=("u", "hu_mono", "hu_bdd"),
+        proven_lemmas=("monotone_boundedAbove_converges",),
+        tactic_hint="exact monotone_boundedAbove_converges hu_mono hu_bdd",
+        planner_metadata={
+            "concepts": ["monotone_sequence", "bounded_sequence", "convergence"],
+            "textbook_source": "MWG App. M",
+            "status": "proven",
+            "tactic_hints": ["exact monotone_boundedAbove_converges hu_mono hu_bdd"],
+            "related": ["topological_space", "fixed_point_theorem"],
+        },
+    )
+)
+_register(
+    PreambleEntry(
         name="continuous_preference",
         lean_module="LeanEcon.Preamble.Foundations.Preferences.ContinuousPreference",
         description="Continuous utility representations over commodity spaces.",
@@ -195,13 +214,18 @@ _register(
         proven_lemmas=(
             "IsConstrainedMaximum.feasible",
             "IsConstrainedMaximum.value_le",
+            "exists_isConstrainedMaximum_of_isCompact_continuousOn",
         ),
         tactic_hint="exact hx.2 hy",
         planner_metadata={
             "concepts": ["constrained_optimization", "feasible_set", "argmax_certificate"],
             "textbook_source": "MWG Ch. 3",
             "status": "proven",
-            "tactic_hints": ["exact hx.1", "exact hx.2 hy"],
+            "tactic_hints": [
+                "exact hx.1",
+                "exact hx.2 hy",
+                "exact exists_isConstrainedMaximum_of_isCompact_continuousOn hcompact hne hcontinuous",
+            ],
             "related": ["convex_preference", "kuhn_tucker"],
         },
     )
@@ -216,7 +240,10 @@ _register(
         parameters=("x", "g", "μ"),
         definitions=("KuhnTuckerPoint",),
         definition_signatures=("(x : α) (g : α → ι → ℝ) (μ : ι → ℝ) : Prop",),
-        proven_lemmas=("KuhnTuckerPoint.complementary_slackness",),
+        proven_lemmas=(
+            "KuhnTuckerPoint.complementary_slackness",
+            "KuhnTuckerPoint.multiplier_eq_zero_of_slack",
+        ),
         tactic_hint="exact hkt.slackness i",
         planner_metadata={
             "concepts": ["kuhn_tucker", "complementary_slackness", "shadow_price"],
@@ -225,6 +252,7 @@ _register(
             "tactic_hints": [
                 "exact hkt.slackness i",
                 "exact KuhnTuckerPoint.complementary_slackness hkt i",
+                "exact KuhnTuckerPoint.multiplier_eq_zero_of_slack hkt hslack",
             ],
             "related": ["constrained_optimization", "fixed_point_theorem"],
         },
@@ -301,6 +329,40 @@ _register(
 )
 _register(
     PreambleEntry(
+        name="bellman_contraction",
+        lean_module="LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanContraction",
+        description="Bellman-style contraction certificates with fixed-point and value-function bridges.",
+        keywords=("bellman-style", "contraction certificate", "fixed point", "value function"),
+        auto_keywords=("contraction certificate", "value function", "bellman-style"),
+        parameters=("V", "T", "h"),
+        definitions=("BellmanContractionCertificate",),
+        definition_signatures=("(T : V → V) : Type",),
+        proven_lemmas=(
+            "BellmanContractionCertificate.isContraction",
+            "BellmanContractionCertificate.exists_fixedPoint",
+            "BellmanContractionCertificate.valueFunction_isFixedPt",
+        ),
+        tactic_hint="exact BellmanContractionCertificate.exists_fixedPoint h",
+        planner_metadata={
+            "concepts": [
+                "bellman_contraction",
+                "contraction_mapping",
+                "value_function",
+                "fixed_point",
+            ],
+            "textbook_source": "SLP Ch. 4",
+            "status": "proven",
+            "tactic_hints": [
+                "exact h.isContraction",
+                "exact BellmanContractionCertificate.exists_fixedPoint h",
+                "exact BellmanContractionCertificate.valueFunction_isFixedPt h",
+            ],
+            "related": ["bellman_operator", "contraction_mapping", "value_function"],
+        },
+    )
+)
+_register(
+    PreambleEntry(
         name="contraction_mapping",
         lean_module="LeanEcon.Preamble.Foundations.DynamicProgramming.ContractionMapping",
         description="Global contractions and fixed-point existence.",
@@ -309,13 +371,21 @@ _register(
         parameters=("α", "f"),
         definitions=("IsContraction",),
         definition_signatures=("(f : α → α) : Prop",),
-        proven_lemmas=("contraction_has_fixedPoint",),
+        proven_lemmas=(
+            "contraction_has_fixedPoint",
+            "contraction_fixedPoint_unique",
+            "contraction_has_unique_fixedPoint",
+        ),
         tactic_hint="rcases hf with ⟨K, hK⟩",
         planner_metadata={
             "concepts": ["contraction_mapping", "fixed_point", "recursive_solution"],
             "textbook_source": "SLP Ch. 4",
             "status": "proven",
-            "tactic_hints": ["exact contraction_has_fixedPoint hf"],
+            "tactic_hints": [
+                "exact contraction_has_fixedPoint hf",
+                "exact contraction_fixedPoint_unique hf hx hy",
+                "exact contraction_has_unique_fixedPoint hf",
+            ],
             "related": ["fixed_point_theorem", "bellman_operator", "value_function"],
         },
     )

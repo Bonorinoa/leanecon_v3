@@ -120,6 +120,26 @@ class FakeErrorResponse:
         return [SimpleNamespace(data=self._message)]
 
 
+class FakeLSPClient:
+    def lean_diagnostic_messages(self, *args, **kwargs):
+        return {"items": []}
+
+    def lean_goal(self, *args, **kwargs):
+        return {"goals_after": ["True"]}
+
+    def lean_code_actions(self, *args, **kwargs):
+        return {"items": []}
+
+    def lean_hover_info(self, *args, **kwargs):
+        return {"contents": "True"}
+
+    def lean_leansearch(self, query: str, *, num_results: int = 8):
+        return {"items": [{"name": "trivial_lemma"}]}
+
+    def lean_loogle(self, query: str, *, num_results: int = 8):
+        return {"items": []}
+
+
 def _theorem_name(code: str) -> str:
     for line in code.splitlines():
         stripped = line.strip()
@@ -511,6 +531,77 @@ async def test_claim_type_awareness_logs_for_subgoals_and_theorem_body(tmp_path,
         if step.action_type == "claim_type_awareness"
     }
     assert {"h_sub", "theorem_body"} <= awareness_targets
+
+
+def test_mathlib_native_lsp_search_records_subgoal_context_and_tooling(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    def compile_when_candidate_closes(code: str, **_: object) -> dict[str, object]:
+        success = "exact trivial_lemma" in code
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", compile_when_candidate_closes)
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver({}),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
+    )
+    packet = _packet(
+        theorem_name="main_claim",
+        claim="A mathlib-native subgoal should expose LSP-assisted search context.",
+        lean_code="import Mathlib\n\ntheorem main_claim : True := by\n  sorry\n",
+        claim_type="mathlib_native",
+    )
+    target = ProverTarget(name="h_sub", statement="True", kind="subgoal", helper_theorem_name="h_sub")
+    session = SimpleNamespace(
+        proof_path=tmp_path / "h_sub.lean",
+        read_code=lambda: "import Mathlib\n\ntheorem h_sub : True := by\n  sorry\n",
+    )
+    trace = []
+    audit_events = []
+    progress_events = []
+
+    closed_code = prover._try_mathlib_native_lsp_search(
+        packet=packet,
+        target=target,
+        session=session,
+        trace=trace,
+        audit_events=audit_events,
+        backend=prover.primary_backend,
+        turn=1,
+        timeout=30,
+        lean_feedback=[],
+        goals=["True"],
+        job_id="job_lsp_subgoal",
+        on_progress=lambda event, payload: progress_events.append({**payload, "event": event}),
+    )
+    prover._enrich_trace_context(packet=packet, targets=[target], trace=trace)
+
+    assert closed_code is not None
+    assert prover.budget_tracker.snapshot()["lsp_tool_calls"] == 5
+    assert prover.budget_tracker.snapshot()["native_search_attempts"] == 2
+    assert trace[0].target_name == "h_sub"
+    assert trace[0].target_kind == "subgoal"
+    assert trace[0].claim_type == "mathlib_native"
+    assert trace[0].mathlib_native_mode is True
+    assert trace[0].lsp_tool_call is True
+    assert trace[0].native_search_attempt is True
+    assert trace[0].tool_arguments["target_kind"] == "subgoal"
+    assert any(event["metadata"].get("lsp_tool_name") == "lean_leansearch" for event in progress_events)
 
 
 @pytest.mark.anyio
@@ -1236,6 +1327,283 @@ async def test_prover_supports_lsp_tools_via_client(tmp_path, monkeypatch) -> No
     assert result.trace[0].tool_name == "lean_goal"
     assert '"goals": ["\\u22a2 True"]' in result.trace[0].tool_result
     assert result.usage_by_stage["prover"]["stage"] == "prover"
+
+
+@pytest.mark.anyio
+async def test_mathlib_native_lsp_search_closes_with_compile_validated_code_action(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+
+    compile_attempts: list[str] = []
+
+    def fake_compile(code: str, **_: object) -> dict[str, object]:
+        compile_attempts.append(code)
+        success = "trivial" in code and "sorry" not in code
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unsolved proof",
+            "errors": [] if success else ["unsolved proof"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unsolved proof",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    class FakeLSPClient:
+        def lean_diagnostic_messages(self, file_path, **kwargs):
+            return {"diagnostics": []}
+
+        def lean_goal(self, file_path, *, line, column=None):
+            return {"goals": ["⊢ True"]}
+
+        def lean_code_actions(self, file_path, *, line):
+            return {"actions": [{"title": "Try this: trivial"}]}
+
+        def lean_hover_info(self, file_path, *, line, column):
+            return {"type": "True"}
+
+        def lean_leansearch(self, query, *, num_results=8):
+            return {"items": [{"name": "True.intro"}]}
+
+    progress_events: list[dict[str, object]] = []
+    driver = ScriptedDriver({})
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="mathlib_lsp_code_action",
+            claim="A mathlib-native claim should use LSP code actions before provider turns.",
+            lean_code="import Mathlib\n\ntheorem mathlib_lsp_code_action : True := by\n  sorry\n",
+            claim_type="mathlib_native",
+        ),
+        "job_mathlib_lsp_code_action",
+        max_turns=3,
+        on_progress=lambda _event, payload: progress_events.append(payload),
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "trivial" in result.verified_code
+    assert driver.call_count == 0
+    search_steps = [step for step in result.trace if step.action_type == "mathlib_native_lsp_search"]
+    assert search_steps
+    assert search_steps[-1].success is True
+    assert search_steps[-1].tool_arguments["mathlib_native_mode"] is True
+    assert search_steps[-1].tool_arguments["candidate_count"] >= 1
+    assert compile_attempts
+    assert any(
+        event.get("event") == "prover_tool"
+        and (event.get("metadata") or {}).get("lsp_tool_name") == "lean_leansearch"
+        for event in progress_events
+    )
+
+
+@pytest.mark.anyio
+async def test_preamble_definable_claim_does_not_run_mathlib_native_lsp_search(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    class FailingLSPClient:
+        def __getattr__(self, name):
+            raise AssertionError(f"LSP should not be called for preamble-definable claims: {name}")
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Close without mathlib-native search.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                    }
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FailingLSPClient(),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="preamble_no_lsp_search",
+            claim="A preamble-definable claim should keep the existing prover path.",
+            lean_code="import Mathlib\n\ntheorem preamble_no_lsp_search : True := by\n  sorry\n",
+            claim_type="preamble_definable",
+        ),
+        "job_preamble_no_lsp_search",
+        max_turns=3,
+    )
+
+    assert result.status == "verified"
+    assert not any(step.action_type == "mathlib_native_lsp_search" for step in result.trace)
+
+
+@pytest.mark.anyio
+async def test_mathlib_native_lsp_unavailable_falls_back_to_provider(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    class UnavailableLSPClient:
+        def lean_diagnostic_messages(self, *args, **kwargs):
+            raise prover_module.LeanLSPUnavailableError("server unavailable")
+
+        lean_goal = lean_diagnostic_messages
+        lean_code_actions = lean_diagnostic_messages
+        lean_hover_info = lean_diagnostic_messages
+        lean_leansearch = lean_diagnostic_messages
+
+    driver = ScriptedDriver(
+        {
+            "theorem_body": [
+                {
+                    "action_type": "tool",
+                    "rationale": "Fallback provider closes the goal.",
+                    "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                }
+            ]
+        }
+    )
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=UnavailableLSPClient(),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="mathlib_lsp_fallback",
+            claim="A mathlib-native claim should fall back when LSP is unavailable.",
+            lean_code="import Mathlib\n\ntheorem mathlib_lsp_fallback : True := by\n  sorry\n",
+            claim_type="mathlib_native",
+        ),
+        "job_mathlib_lsp_fallback",
+        max_turns=3,
+    )
+
+    assert result.status == "verified"
+    assert driver.call_count == 1
+    failed_search_steps = [
+        step for step in result.trace if step.action_type == "mathlib_native_lsp_search" and not step.success
+    ]
+    assert failed_search_steps
+    assert failed_search_steps[-1].error_code == "lsp_unavailable"
+
+
+@pytest.mark.anyio
+async def test_mathlib_native_lsp_search_compile_validates_before_accepting(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+
+    compile_attempts: list[str] = []
+
+    def fake_compile(code: str, **_: object) -> dict[str, object]:
+        compile_attempts.append(code)
+        success = "exact GoodLemma" in code and "sorry" not in code
+        return {
+            "success": success,
+            "has_sorry": "sorry" in code,
+            "axiom_warnings": [],
+            "output": "" if success else "unknown constant",
+            "errors": [] if success else ["unknown constant"],
+            "warnings": [],
+            "stdout": "",
+            "stderr": "" if success else "unknown constant",
+            "exit_code": 0 if success else 1,
+        }
+
+    monkeypatch.setattr(prover_module, "compile_check", fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    class FakeLSPClient:
+        def lean_diagnostic_messages(self, file_path, **kwargs):
+            return {"diagnostics": []}
+
+        def lean_goal(self, file_path, *, line, column=None):
+            return {"goals": ["⊢ True"]}
+
+        def lean_code_actions(self, file_path, *, line):
+            return {"actions": [{"title": "Try this: exact BadLemma"}]}
+
+        def lean_hover_info(self, file_path, *, line, column):
+            return {"type": "True"}
+
+        def lean_leansearch(self, query, *, num_results=8):
+            return {"items": [{"name": "GoodLemma"}]}
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver({}),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="mathlib_lsp_compile_validated",
+            claim="A mathlib-native claim should reject failed LSP suggestions before accepting a later one.",
+            lean_code="import Mathlib\n\ntheorem mathlib_lsp_compile_validated : True := by\n  sorry\n",
+            claim_type="mathlib_native",
+        ),
+        "job_mathlib_lsp_compile_validated",
+        max_turns=3,
+    )
+
+    assert result.status == "verified"
+    assert result.verified_code is not None
+    assert "exact GoodLemma" in result.verified_code
+    assert any("exact BadLemma" in attempt for attempt in compile_attempts)
+    assert any("exact GoodLemma" in attempt for attempt in compile_attempts)
+    final_search_step = [step for step in result.trace if step.action_type == "mathlib_native_lsp_search"][-1]
+    assert final_search_step.tool_arguments["compiled_candidate_count"] == 2
+    assert final_search_step.tool_arguments["selected_lemma"] == "GoodLemma"
 
 
 @pytest.mark.anyio

@@ -8,10 +8,13 @@
   ],
   "tactic_hints": [
     "rcases hf with ⟨K, hK⟩",
-    "exact ContractingWith.fixedPoint_isFixedPt (f := f) hK"
+    "exact ContractingWith.fixedPoint_isFixedPt (f := f) hK",
+    "exact contraction_has_unique_fixedPoint hf"
   ],
   "proven_lemmas": [
-    "contraction_has_fixedPoint"
+    "contraction_has_fixedPoint",
+    "contraction_fixedPoint_unique",
+    "contraction_has_unique_fixedPoint"
   ],
   "textbook_source": "SLP Ch. 4",
   "status": "proven",

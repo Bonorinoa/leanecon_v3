@@ -1,9 +1,10 @@
 # Lean Econ v3 Architecture
 **Version:** 3.0.0-alpha  
-**Date:** 19 April 2026  
+**Date:** 24 April 2026  
 **Status:** Authoritative — Single Source of Truth for All Implementation
 
 > Integrity note (April 22, 2026): repository code, tests, and checked-in manifests override any overstated readiness or benchmark claims elsewhere in the docs.
+> Sprint 20 update (April 24, 2026): mathlib-native proving is now a first-class route. `mathlib_native_mode` gates preamble shortcuts, exposes `lean-lsp-mcp` tools to Leanstral, and records LSP/native-search usage in benchmark traces.
 
 ## 1. High-Level Flow (Matches Your Hand-Drawn Sketch)
 ```
@@ -30,9 +31,11 @@ Natural-language economic claim
                │ (approved stub)
                ▼
 ┌──────────────────────────────┐
-│  PROVER (APOLLO + Goedel)    │  ← Goedel-Prover-V2 + self-correction
+│  PROVER (APOLLO + Leanstral) │  ← Leanstral/Goedel + self-correction
 │  • Recursive sub-lemma decomp│
 │  • Lean REPL fast path       │
+│  • mathlib_native_mode       │
+│  • lean-lsp-mcp search/tools │
 │  • Memory trace retrieval    │
 │  • Tool-use guardrails       │
 │  • Lean kernel verification  │
@@ -59,11 +62,11 @@ Python harness is deliberately minimal.
 ### Core Modules
 - **src/planner/** — HILBERT informal reasoner (clarifying questions, textbook defaults, plan sketch). Uses strongest HF model.
 - **src/formalizer/** — Driver protocol (Leanstral / Goedel-Prover-V2 / future). Structured context builders (role-labeled: defs, lemmas, templates, tactic_hints). New semantic-frame faithfulness scorer.
-- **src/prover/** — Goedel-Prover-V2 primary + Leanstral fallback. APOLLO recursive decomposition. Self-correction loop using Lean compiler feedback. ToolSpec registry for lean-lsp-mcp actions.
+- **src/prover/** — Claim-type-aware prover. Preamble-definable claims use bounded direct closure against LeanEcon metadata. Mathlib-native claims enter `mathlib_native_mode`, cap preamble-style direct closure, and invoke bounded `lean-lsp-mcp` inspection/search before provider turns. APOLLO recursive decomposition remains available when the target has a real structural boundary.
 - **src/guardrails/** — Vacuity rejection, semantic faithfulness (new frame-based), compile check, repair history.
 - **src/memory/** — SQLite + vector index (episodic proof traces, successful/failed tactics, retrieval for Planner/Prover).
-- **src/observability/** — SSE streaming, typed progress events, cost tracking, tool budgets, provenance, `/health` + `/metrics`.
-- **src/tools/** — Standardized `ToolSpec` (name, args, description, Lean-specific, cost). Registry + LeanInteract wrappers, with Lean LSP kept as experimental.
+- **src/observability/** — SSE streaming, typed progress events, cost tracking, tool budgets, provenance, `/health` + `/metrics`. Tool budgets now report total tool calls, LSP tool calls, native search attempts, and `mathlib_native_mode` uses.
+- **src/tools/** — Standardized `ToolSpec` (name, args, description, Lean-specific, cost). Registry + LeanInteract wrappers + `lean-lsp-mcp` tools (`lean_goal`, `lean_code_actions`, `lean_diagnostic_messages`, `lean_hover_info`, `lean_leansearch`, `lean_loogle`).
 - **src/api/** — FastAPI v3 (async jobs, SSE, review gates).
 
 ### Knowledge Layers (Fat Skills)
@@ -72,11 +75,16 @@ Python harness is deliberately minimal.
 
 ---
 
-## 3. Model Provider Strategy (Open-First, HF Primary)
-**Production (Docker/Railway)**: Hugging Face Inference Endpoints or `huggingface_hub` client.
-- **Planner**: MiniMaxAI/MiniMax-M2.7 or arcee-ai/Trinity-Large-Thinking or google/gemma-4-31B-it (via HF) — strongest open informal reasoner.
-- **Formalizer**: `mistralai/Leanstral-2603` (119B MoE, 6.5B active, Apache 2.0) — native Lean 4 code agent.
-- **Prover**: `Goedel-LM/Goedel-Prover-V2-32B` (SOTA open ATP, self-correction, 90.4 % MiniF2F) — primary. Leanstral fallback.
+## 3. Model Provider Strategy (Open-First, Mistral/Leanstral Current Default)
+**Current hosted benchmark default**:
+- **Planner**: `mistral-structured` with `mistral-large-2512`.
+- **Formalizer**: `leanstral` via Mistral.
+- **Prover**: `leanstral` via Mistral, with bounded Lean REPL and `lean-lsp-mcp` tooling.
+
+**Supported/open path**:
+- **Planner**: MiniMaxAI/MiniMax-M2.7, arcee-ai/Trinity-Large-Thinking, Qwen/DeepSeek class models, or other strong open informal reasoners via HF.
+- **Formalizer**: `mistralai/Leanstral-2603` — native Lean 4 code agent.
+- **Prover**: `Goedel-LM/Goedel-Prover-V2-32B` remains supported as an open ATP backend; Leanstral is the current mathlib-native proving focus because it is optimized for Lean and `lean-lsp-mcp` workflows.
 
 **Local Research/Audit (Feynman)**: Ollama with 32B+ class (Qwen2.5-Coder-32B or DeepSeek-R1-32B distilled). Zero cost, full context, perfect for gap analysis vs HILBERT paper.
 
@@ -90,7 +98,26 @@ Python harness is deliberately minimal.
 - **Job Store**: SQLite (async verification, SSE subscribers, review state).
 - **Memory**: SQLite + sentence-transformers embeddings (local or HF) for semantic retrieval of past traces.
 - **Preamble**: Lean source of truth + JSON metadata index (versioned, reproducible lake build).
-- **Benchmarks**: `evals/claim_sets/` + `benchmark_baselines/v3_alpha/` (pinned model SHAs, exact prompts).
+- **Benchmarks**: `evals/claim_sets/` + `benchmark_baselines/v3_alpha/` (pinned model SHAs, exact prompts). Canonical benchmark buckets separate difficulty from type: `tier1_core_preamble_definable`, `tier2_frontier_preamble_definable`, and `tier2_frontier_mathlib_native`.
+
+---
+
+## 4A. Claim-Type Routing and Lean LSP
+The prover receives `claim_type` from the benchmark manifest/formalization packet when available:
+
+- `preamble_definable`: LeanEcon Preamble metadata and proven lemmas are trusted as the first search surface. Direct closure remains enabled up to the normal bounded cap.
+- `mathlib_native`: the prover sets `mathlib_native_mode=True`, disables Preamble-derived shortcut use, allows only a tiny compile-checked direct-close budget, and then uses `lean-lsp-mcp` to inspect the proof state and search Mathlib.
+
+The mathlib-native route currently performs a bounded LSP pass:
+
+1. `lean_diagnostic_messages` around the active proof line.
+2. `lean_goal` at the active proof position.
+3. `lean_code_actions` for "try this" tactics.
+4. `lean_hover_info` for local type context.
+5. `lean_leansearch` over the natural-language claim, theorem goal, and active goal.
+6. Compile-check candidate tactics extracted from code actions, search results, and narrow mathlib heuristics.
+
+Every trace step is enriched with `claim_type`, `claim_type_policy`, `target_kind`, `mathlib_native_mode`, `lsp_tool_call`, and `native_search_attempt` so subgoals and theorem bodies are equally auditable.
 
 ---
 
@@ -98,15 +125,16 @@ Python harness is deliberately minimal.
 1. Lean kernel is the **only** authority. `lake env lean` exit code + no warnings = success.
 2. Every formalization must pass **semantic faithfulness gate** (new frame-based scorer) before Prover sees it.
 3. Planner never produces vacuous or identity theorems.
-4. All tool calls go through `ToolSpec` registry with budget enforcement.
+4. All model-facing tool calls go through `ToolSpec` registry with budget enforcement.
 5. Human review gates are **not optional** in alpha — enforced in API state machine.
-6. Every PR updates `benchmark_baselines/` and must not regress local-gate.
+6. Every benchmark run must preserve claim-type observability: claim-type policy, LSP tool calls, native search attempts, and mathlib-native mode usage must be visible in summaries/history.
+7. Every PR updates `benchmark_baselines/` and must not regress local-gate.
 
 ---
 
 ## 6. Deployment & CI
 - **Docker**: Multi-stage, cached Lean base image (GHCR), HF model weights cached at build (for self-hosting path).
-- **Railway**: Same as v2 but with v3 env vars (`LEANECON_PLANNER_MODEL=hf:Qwen2.5-72B`, etc.).
+- **Railway**: Same core pattern as v2 with v3 env vars, Mistral/Leanstral credentials, cached Lean workspace, and `uvx lean-lsp-mcp` available in the runtime image. Deployment readiness requires `/health`, `/metrics`, `lake build`, and benchmark-mode smoke/local-gate checks.
 - **CI Gate**: `.github/workflows/ci.yml` should target the normalized benchmark surface, not the historical mixed files: `tier1_core_preamble_definable`, `tier2_frontier_mathlib_native`, and `tier2_frontier_preamble_definable`.
 
 ---
@@ -120,4 +148,4 @@ Python harness is deliberately minimal.
 This architecture is deliberately **simple enough to reason about** and **powerful enough to hit PhD-qualifying coverage**.
 
 — User, Founder and Grok, CTO  
-19 April 2026
+Original: 19 April 2026. Sprint 20 operating update: 24 April 2026.

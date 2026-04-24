@@ -8,11 +8,13 @@
   ],
   "tactic_hints": [
     "constructor",
-    "exact hx.2 hy"
+    "exact hx.2 hy",
+    "exact exists_isConstrainedMaximum_of_isCompact_continuousOn hcompact hne hcontinuous"
   ],
   "proven_lemmas": [
     "IsConstrainedMaximum.feasible",
-    "IsConstrainedMaximum.value_le"
+    "IsConstrainedMaximum.value_le",
+    "exists_isConstrainedMaximum_of_isCompact_continuousOn"
   ],
   "textbook_source": "MWG Ch. 3",
   "status": "proven",

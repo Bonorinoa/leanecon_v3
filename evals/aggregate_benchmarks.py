@@ -64,6 +64,7 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
     total_cost = round(sum(_total_cost(summary) for summary in summaries), 8)
 
     overview_rows: list[list[str]] = []
+    tooling_rows: list[list[str]] = []
     latency_rows: list[list[str]] = []
     failure_counts: Counter[str] = Counter()
     failure_by_tier: dict[str, Counter[str]] = {}
@@ -93,6 +94,15 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
                 _format_duration_ms(_average_stage_latency_ms(summary, "formalizer_ms")),
                 _format_duration_ms(_average_stage_latency_ms(summary, "prover_ms")),
                 _format_duration_ms(_average_stage_latency_ms(summary, "total_ms")),
+            ]
+        )
+        tooling_rows.append(
+            [
+                claim_set,
+                str(summary.get("average_tool_calls", "0.0")),
+                str(summary.get("average_lsp_tool_calls", "0.0")),
+                str(summary.get("average_native_search_attempts", "0.0")),
+                str(summary.get("mathlib_native_mode_usage", "0")),
             ]
         )
 
@@ -133,6 +143,16 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
             ),
         ]
     )
+    all_results = [result for summary in summaries for result in summary.get("results", [])]
+    tooling_rows.append(
+        [
+            "overall",
+            str(round(sum(int(item.get("tool_calls") or 0) for item in all_results) / len(all_results), 3) if all_results else 0.0),
+            str(round(sum(int(item.get("lsp_tool_calls") or 0) for item in all_results) / len(all_results), 3) if all_results else 0.0),
+            str(round(sum(int(item.get("native_search_attempts") or 0) for item in all_results) / len(all_results), 3) if all_results else 0.0),
+            str(sum(int(item.get("mathlib_native_mode_usage") or 0) for item in all_results)),
+        ]
+    )
 
     lines = [
         "# Benchmark Summary",
@@ -152,6 +172,13 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
         "## Average Latency By Stage",
         "",
         _render_markdown_table(["Claim Set", "Planner", "Formalizer", "Prover", "Total"], latency_rows),
+        "",
+        "## Tooling Observability",
+        "",
+        _render_markdown_table(
+            ["Claim Set", "Avg Tool Calls", "Avg LSP Tool Calls", "Avg Native Search Attempts", "Mathlib Native Mode Uses"],
+            tooling_rows,
+        ),
         "",
         "## Failure Breakdown",
         "",

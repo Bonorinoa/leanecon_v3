@@ -8,10 +8,12 @@
   ],
   "tactic_hints": [
     "exact hkt.slackness i",
+    "exact KuhnTuckerPoint.multiplier_eq_zero_of_slack hkt hslack",
     "cases hkt"
   ],
   "proven_lemmas": [
-    "KuhnTuckerPoint.complementary_slackness"
+    "KuhnTuckerPoint.complementary_slackness",
+    "KuhnTuckerPoint.multiplier_eq_zero_of_slack"
   ],
   "textbook_source": "MWG Ch. 5",
   "status": "proven",

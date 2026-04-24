@@ -1,0 +1,21 @@
+{
+  "id": "monotone_sequence",
+  "domain": "analysis",
+  "concepts": [
+    "monotone_sequence",
+    "bounded_sequence",
+    "convergence"
+  ],
+  "tactic_hints": [
+    "exact monotone_boundedAbove_converges hu_mono hu_bdd"
+  ],
+  "proven_lemmas": [
+    "monotone_boundedAbove_converges"
+  ],
+  "textbook_source": "MWG App. M",
+  "status": "proven",
+  "related": [
+    "topological_space",
+    "fixed_point_theorem"
+  ]
+}

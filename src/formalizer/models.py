@@ -94,6 +94,8 @@ class FormalizationPacket(FormalizerModel):
     lean_code: str = Field(min_length=1)
     theorem_with_sorry: str = Field(min_length=1)
     theorem_name: str = Field(min_length=1)
+    # Claim type is policy metadata for the prover, not a proof hint:
+    # mathlib-native claims should not be closed by LeanEcon Preamble shortcuts.
     claim_type: Literal["preamble_definable", "mathlib_native"] | None = None
     imports: list[str] = Field(default_factory=list)
     selected_imports: list[str] = Field(default_factory=list)

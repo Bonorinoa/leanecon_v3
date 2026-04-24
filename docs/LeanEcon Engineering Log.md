@@ -509,7 +509,7 @@ Supporting Layers (always present)
 * API Surface — FastAPI + async jobs + SSE streaming + /health + /metrics
 
 ——
-Session 17 — April 22, 2026
+## Session 17 — April 22, 2026
 
 Type: Prover audit -> simplification sprint -> direct-close efficiency lift Trigger: Planner hardening removed compile disagreement and exposed prover-side unsolved_goals as the main bottleneck.
 Decisions
@@ -547,10 +547,11 @@ Verification
 * PYTHONPATH=. pytest -q -o addopts='' tests/test_local_gate.py
 
 ——
-Session 18 — April 22, 2026
+## Session 18 — April 22, 2026
 
 Type: Full-pipeline closure + baseline promotion + deployment readiness sprint
 Trigger: Session 17 prover direct-close lift (10/10 on canonical sample, 0 tool calls, 0 decomposition depth) eliminated the last major bottleneck. The system can now be evaluated end-to-end on the complete tier1_core + tier2_frontier sets with confidence. Partial tier2 run from earlier in the day was interrupted; now safe to complete and promote.
+
 Decisions
 * Scope Session 18 strictly to full end-to-end rerun, new canonical baselines, and minimal cleanup required for Railway Hobby deployment.
 * Promote benchmark_baselines/v3_alpha/tier1_core.json and tier2_frontier.json with the new direct-close prover results (preserve historical rows with explicit “pre-direct-close” provenance).
@@ -558,6 +559,7 @@ Decisions
 * Deprecate LeanLSPClient (move to src/observability/lean_lsp_client.py → experimental/optional; primary path remains pure REPL + direct-close).
 * Generate skills/leanecon_v3_SKILL.md for frontend agents (Lovable or new GitHub repo) and update docs/ARCHITECTURE_v3.md.
 * Target: ≥90% combined on full tier1 + tier2 before any deployment or autoresearch discussion.
+
 Audit findings
 * With direct-close prover, 100% of the previous 5/10 failures on the canonical 10-claim set are now closed in 0 turns via preamble lemma projection or exact hypothesis.
 * Remaining tier2 friction is almost entirely planner schema_invalid on two edge claims (Pareto dominance + utilitarian SWF) — already mitigated by the repair pass but still visible in raw responses.
@@ -571,6 +573,7 @@ Changes shipped
 * Deprecated default_lean_lsp_client usage in prover path; added warning + experimental flag.
 * Generated skills/leanecon_v3_SKILL.md (condensed architecture + integration patterns for frontend agents).
 * Minor: removed two unused imports and one dead ProverTarget recursion path that was never reached after Session 17 changes.
+
 Results
 Canonical 10-claim prover sample (same ids as Session 17 before-state):
 * Before (pre-Session 17): 5/10
@@ -612,3 +615,67 @@ Next open items (explicitly deferred to Session 19)
 * Railway Hobby deploy + leanecon_v3_SKILL.md handoff to frontend team.
 * Only after ≥95% sustained on full sets: re-open autoresearch loop discussion.
 Session 18 closes the prover simplification arc and brings the system to deployment-grade reliability on PhD-level claims.
+
+## Session 19 — April 23, 2026
+
+Type: Prover efficiency hardening + observability foundation + capability boundary clarification
+Trigger: After the direct-close prover wins of Sessions 17–18, we needed to lock in the gains, add proper measurement infrastructure, and understand the new performance surface created by claim-type awareness.
+Decisions
+
+Run three focused tasks in parallel: Benchmark Flywheel, Preamble Gap Detector, and Prover Claim-Type Awareness + Efficiency.
+Explicitly separate difficulty (tiers) from type (preamble-definable vs mathlib-native) in all benchmarking.
+Centralize on Mistral (Leanstral) after Ollama instability.
+Defer Cheeky Formalizer and adaptive routing until we better understand the mathlib-native path.
+Write the Engineering Log entry only at the end of the sprint with full hindsight.
+
+What Was Built
+
+Benchmark-to-Track-Progress Flywheel: Added metrics_aggregator.py, benchmark_history.jsonl, --save-history flag, and structured event capture. We now have a living, queryable history of every run.
+Preamble Gap Detector: Created gap_detector.py + gap_report CLI. It successfully surfaces missing lemmas and bridge definitions from failed traces (especially useful on the 3 remaining tier2_preamble_definable failures).
+Prover Claim-Type Awareness + Efficiency: Implemented claim_type metadata passing, disabled direct-close on mathlib-native claims, and hardened no_progress_stall detection. This produced cleaner, more honest failures and measurable speedups on preamble_definable claims (70.4s avg vs previous ~85s).
+
+Results & Key Learnings (with Hindsight)
+
+tier2_frontier_preamble_definable: Held steady at 7/10 and became meaningfully faster. The efficiency work paid off exactly where we had strong preamble structure.
+tier2_frontier_mathlib_native: Regressed from 1/3 → 0/3. The claim-type throttling worked perfectly (0 direct-close attempts), but the prover had no replacement strategy, leading to shallow apply_tactic/get_goals loops.
+Core Insight: “Less is more” successfully removed wasteful behavior, but it also revealed that our current prover has almost no intelligent search capability once direct-close is removed. Preamble-definable failures are mostly missing lemmas; mathlib-native failures are missing strategy.
+Confirmed that Leanstral was specifically trained and optimized for lean-lsp-mcp. This explains both our current limitations and our biggest opportunity.
+
+Verification
+
+Full test suite remained green (96+ passed).
+Benchmark harness now properly separates difficulty and type.
+All new observability (history, gaps, claim-type logging) is working and captured in artifacts.
+
+Session 19 Outcome
+We successfully stabilized and instrumented the system. The regression on mathlib-native claims was disappointing in the short term but extremely valuable — it gave us a clear diagnosis and pointed directly at Leanstral’s native strengths (lean-lsp-mcp optimization) as the highest-leverage next move.
+
+## Sprint 20 Summary — April 24, 2026
+
+Type: Mathlib-native prover activation + final documentation polish + deployment-readiness observability.
+
+Trigger: Session 19 showed that claim-type throttling made preamble-definable claims faster and cleaner, but left mathlib-native claims without an intelligent replacement strategy. The next highest-leverage move was to route those claims through Leanstral's `lean-lsp-mcp` strengths instead of asking the generic prover loop to guess.
+
+What shipped
+
+* Added `mathlib_native_mode` as a real prover path, not just a logging label. Mathlib-native claims now cap direct closure, skip Preamble-derived shortcut reuse, and run bounded LSP-assisted inspection/search.
+* Integrated `lean-lsp-mcp` into the mathlib-native route with diagnostics, active-goal inspection, code actions, hover/type context, LeanSearch, and compile-checked candidate tactics.
+* Expanded observability so subgoal and theorem-body traces carry claim type, claim-type policy, target kind, mathlib-native mode, LSP tool-call flags, and native-search attempt flags.
+* Added benchmark flywheel metrics for LSP tool calls, native search attempts, and mathlib-native mode usage.
+* Extended the Preamble with new dynamic-programming, optimization, and sequence entries, including Bellman contraction and additional bridge lemmas.
+* Updated architecture, charter, README, capability metadata, and Lean proving skill guidance to reflect the Sprint 20 architecture.
+
+Current capability boundary
+
+* Preamble-definable claims remain the reliable fast path: metadata-backed direct closure and deterministic repair do most of the work.
+* Mathlib-native claims now have the right search surface and trace instrumentation, but should still be treated as an active frontier until benchmark history shows sustained pass-rate improvement.
+* The deployment path is clear: Lean workspace build, Mistral/Leanstral credentials, SQLite job store, `/health`, `/metrics`, benchmark-mode local-gate, and runtime availability of `uvx lean-lsp-mcp`.
+
+Verification
+
+```{Bash}
+PYTHONPATH=. pytest -q -o addopts='' tests/test_metrics_aggregator.py tests/test_prover.py
+PYTHONPATH=. pytest -q -o addopts='' tests/test_local_gate.py
+```
+
+Founder finalization note: before public-facing release language, rerun benchmark-mode local-gate on the canonical split sets and promote the resulting `benchmark_history.jsonl` row only if the new LSP/native-search metrics are present.

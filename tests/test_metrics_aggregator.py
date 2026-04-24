@@ -39,6 +39,9 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
                         "verified_via": "full_pipeline",
                         "termination_reason": "verified",
                         "tool_calls": 1,
+                        "lsp_tool_calls": 0,
+                        "native_search_attempts": 0,
+                        "mathlib_native_mode_usage": 0,
                         "decomposition_depth": 0,
                         "timing_breakdown": {"total_ms": 3000.0},
                         "progress_events": [{"message": "Closed via direct definable closure.", "metadata": {}}],
@@ -51,6 +54,9 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
                         "verified_via": "full_pipeline",
                         "termination_reason": "verified",
                         "tool_calls": 2,
+                        "lsp_tool_calls": 1,
+                        "native_search_attempts": 0,
+                        "mathlib_native_mode_usage": 0,
                         "decomposition_depth": 1,
                         "timing_breakdown": {"total_ms": 5000.0},
                         "progress_events": [],
@@ -83,6 +89,9 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
                         "verified_via": "full_pipeline",
                         "termination_reason": "no_progress_stall",
                         "tool_calls": 3,
+                        "lsp_tool_calls": 5,
+                        "native_search_attempts": 2,
+                        "mathlib_native_mode_usage": 1,
                         "decomposition_depth": 2,
                         "timing_breakdown": {"total_ms": 7000.0},
                         "progress_events": [],
@@ -103,11 +112,18 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
     assert row["avg_latency_total"] == 5000.0
     assert row["direct_close_rate"] == 0.333333
     assert row["avg_tool_calls"] == 2.0
+    assert row["avg_lsp_tool_calls"] == 2.0
+    assert row["total_lsp_tool_calls"] == 6
+    assert row["avg_native_search_attempts"] == 0.667
+    assert row["total_native_search_attempts"] == 2
+    assert row["mathlib_native_mode_usage"] == 1
     assert row["avg_decomposition_depth"] == 1.0
     assert row["no_progress_stall_count"] == 1
     assert row["schema_invalid_rate"] == 0.333333
     assert row["claim_type_mix"] == {"preamble_definable": 2, "mathlib_native": 1}
     assert row["bucket_breakdown"]["tier1_core_preamble_definable"]["direct_close_rate"] == 0.5
+    assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["total_lsp_tool_calls"] == 5
+    assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["mathlib_native_mode_usage"] == 1
     assert row["bucket_breakdown"]["tier2_frontier_preamble_definable"]["present"] is False
     assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["no_progress_stall_count"] == 1
     assert appended["row_id"] == "run_000001"

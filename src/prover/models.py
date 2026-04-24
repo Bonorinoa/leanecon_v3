@@ -55,6 +55,7 @@ class ProverTraceStep(ProverModel):
     turn: int = Field(ge=1)
     backend: str = Field(min_length=1)
     target_name: str = Field(min_length=1)
+    target_kind: Literal["subgoal", "theorem_body", "apollo_lemma"] | None = None
     action_type: str = Field(min_length=1)
     success: bool
     rationale: str = ""
@@ -67,6 +68,11 @@ class ProverTraceStep(ProverModel):
     decomposition_theorem: str | None = None
     error_code: str | None = None
     repl_local_solved: bool = False
+    claim_type: Literal["preamble_definable", "mathlib_native"] | None = None
+    claim_type_policy: str | None = None
+    mathlib_native_mode: bool = False
+    lsp_tool_call: bool = False
+    native_search_attempt: bool = False
 
 
 class ProverFailure(ProverModel):

@@ -636,6 +636,9 @@ async def _run_claim_set_async(
         theorem_name: str | None = None
         verified_via = "full_pipeline"
         tool_calls = 0
+        lsp_tool_calls = 0
+        native_search_attempts = 0
+        mathlib_native_mode_usage = 0
         decomposition_steps = 0
         decomposition_depth = 0
         progress_events: list[dict[str, Any]] = []
@@ -697,6 +700,10 @@ async def _run_claim_set_async(
                         "target_timeouts": target_timeouts.model_dump(mode="json"),
                         "theorem_stub_reference": theorem_stub,
                         "timing_breakdown": stage_timings,
+                        "tool_calls": tool_calls,
+                        "lsp_tool_calls": lsp_tool_calls,
+                        "native_search_attempts": native_search_attempts,
+                        "mathlib_native_mode_usage": mathlib_native_mode_usage,
                         "usage_by_stage": {},
                         "progress_events": progress_events,
                         "trivial_shortcut": {
@@ -776,7 +783,11 @@ async def _run_claim_set_async(
                     stage="prover",
                     status="running",
                     message="Prover started.",
-                    metadata={"benchmark_mode": benchmark_mode},
+                    metadata={
+                        "benchmark_mode": benchmark_mode,
+                        "claim_type": claim_bucket if claim_bucket in {"preamble_definable", "mathlib_native"} else None,
+                        "mathlib_native_mode": claim_bucket == "mathlib_native",
+                    },
                 )
             )
             prover_packet = formalize_result.payload.model_copy(
@@ -807,7 +818,11 @@ async def _run_claim_set_async(
             if prove_result.failure is not None:
                 failure_code = prove_result.failure.error_code or prove_result.failure.reason
             result_status = prove_result.status
-            tool_calls = int((prove_result.tool_budget or {}).get("total_tool_calls") or 0)
+            tool_budget = prove_result.tool_budget or {}
+            tool_calls = int(tool_budget.get("total_tool_calls") or 0)
+            lsp_tool_calls = int(tool_budget.get("lsp_tool_calls") or 0)
+            native_search_attempts = int(tool_budget.get("native_search_attempts") or 0)
+            mathlib_native_mode_usage = int(tool_budget.get("mathlib_native_mode_uses") or 0)
             decomposition_steps = sum(1 for step in prove_result.trace if step.action_type == "decompose")
             decomposition_depth = max((target.recursion_depth for target in prove_result.targets), default=0)
             record_progress(
@@ -817,7 +832,13 @@ async def _run_claim_set_async(
                     stage="prover",
                     status=prove_result.status,
                     message=f"Prover finished with status `{prove_result.status}`.",
-                    metadata={"termination_reason": prove_result.termination_reason},
+                    metadata={
+                        "termination_reason": prove_result.termination_reason,
+                        "tool_calls": tool_calls,
+                        "lsp_tool_calls": lsp_tool_calls,
+                        "native_search_attempts": native_search_attempts,
+                        "mathlib_native_mode_usage": mathlib_native_mode_usage,
+                    },
                 )
             )
         except StageExecutionError as exc:
@@ -887,6 +908,9 @@ async def _run_claim_set_async(
                 "theorem_stub_reference": theorem_stub,
                 "timing_breakdown": stage_timings,
                 "tool_calls": tool_calls,
+                "lsp_tool_calls": lsp_tool_calls,
+                "native_search_attempts": native_search_attempts,
+                "mathlib_native_mode_usage": mathlib_native_mode_usage,
                 "decomposition_steps": decomposition_steps,
                 "decomposition_depth": decomposition_depth,
                 "usage_by_stage": {
@@ -908,6 +932,17 @@ async def _run_claim_set_async(
     claims_passed = sum(1 for item in results if item["status"] == "verified")
     claims_total = len(results)
     average_tool_calls = round(sum(int(item.get("tool_calls") or 0) for item in results) / claims_total, 3) if claims_total else 0.0
+    average_lsp_tool_calls = (
+        round(sum(int(item.get("lsp_tool_calls") or 0) for item in results) / claims_total, 3)
+        if claims_total
+        else 0.0
+    )
+    average_native_search_attempts = (
+        round(sum(int(item.get("native_search_attempts") or 0) for item in results) / claims_total, 3)
+        if claims_total
+        else 0.0
+    )
+    mathlib_native_mode_usage = sum(int(item.get("mathlib_native_mode_usage") or 0) for item in results)
     average_decomposition_steps = round(
         sum(int(item.get("decomposition_steps") or 0) for item in results) / claims_total,
         3,
@@ -929,6 +964,9 @@ async def _run_claim_set_async(
         "claims_failed": claims_total - claims_passed,
         "pass_at_1": round(claims_passed / claims_total, 6) if claims_total else 0.0,
         "average_tool_calls": average_tool_calls,
+        "average_lsp_tool_calls": average_lsp_tool_calls,
+        "average_native_search_attempts": average_native_search_attempts,
+        "mathlib_native_mode_usage": mathlib_native_mode_usage,
         "average_decomposition_steps": average_decomposition_steps,
         "average_decomposition_depth": average_decomposition_depth,
         "executed": True,
@@ -1007,6 +1045,23 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     claims_passed = sum(int(summary.get("claims_passed") or 0) for summary in summaries)
     benchmark_mode = any(bool(summary.get("benchmark_mode")) for summary in summaries)
     target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
+    all_results = [result for summary in summaries for result in summary.get("results", [])]
+    average_tool_calls = (
+        round(sum(int(item.get("tool_calls") or 0) for item in all_results) / len(all_results), 3)
+        if all_results
+        else 0.0
+    )
+    average_lsp_tool_calls = (
+        round(sum(int(item.get("lsp_tool_calls") or 0) for item in all_results) / len(all_results), 3)
+        if all_results
+        else 0.0
+    )
+    average_native_search_attempts = (
+        round(sum(int(item.get("native_search_attempts") or 0) for item in all_results) / len(all_results), 3)
+        if all_results
+        else 0.0
+    )
+    mathlib_native_mode_usage = sum(int(item.get("mathlib_native_mode_usage") or 0) for item in all_results)
     return {
         "claim_set": "local_gate",
         "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
@@ -1017,6 +1072,10 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "claims_passed": claims_passed,
         "claims_failed": claims_total - claims_passed,
         "pass_at_1": round(claims_passed / claims_total, 6) if claims_total else 0.0,
+        "average_tool_calls": average_tool_calls,
+        "average_lsp_tool_calls": average_lsp_tool_calls,
+        "average_native_search_attempts": average_native_search_attempts,
+        "mathlib_native_mode_usage": mathlib_native_mode_usage,
         "readiness": {
             "ready": all(bool(summary.get("readiness", {}).get("ready")) for summary in summaries),
             "claim_sets": {summary["claim_set"]: summary.get("readiness", {}) for summary in summaries},

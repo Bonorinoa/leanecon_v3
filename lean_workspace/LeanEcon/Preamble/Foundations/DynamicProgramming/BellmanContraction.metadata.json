@@ -1,0 +1,27 @@
+{
+  "id": "bellman_contraction",
+  "domain": "dynamic_programming",
+  "concepts": [
+    "bellman_contraction",
+    "contraction_mapping",
+    "value_function",
+    "fixed_point"
+  ],
+  "tactic_hints": [
+    "exact h.isContraction",
+    "exact BellmanContractionCertificate.exists_fixedPoint h",
+    "exact BellmanContractionCertificate.valueFunction_isFixedPt h"
+  ],
+  "proven_lemmas": [
+    "BellmanContractionCertificate.isContraction",
+    "BellmanContractionCertificate.exists_fixedPoint",
+    "BellmanContractionCertificate.valueFunction_isFixedPt"
+  ],
+  "textbook_source": "SLP Ch. 4",
+  "status": "proven",
+  "related": [
+    "bellman_operator",
+    "contraction_mapping",
+    "value_function"
+  ]
+}

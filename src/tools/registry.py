@@ -73,6 +73,24 @@ def build_default_registry() -> ToolRegistry:
                 "Query Lean hover/type information via LSP when available.",
                 lean_specific=True,
             ),
+            ToolSpec(
+                "lean_diagnostic_messages",
+                "Query Lean diagnostics via LSP when available.",
+                {"severity": {"type": "string"}},
+                lean_specific=True,
+            ),
+            ToolSpec(
+                "lean_leansearch",
+                "Search Mathlib by natural-language theorem intent.",
+                {"query": {"type": "string"}, "num_results": {"type": "integer"}},
+                lean_specific=True,
+            ),
+            ToolSpec(
+                "lean_loogle",
+                "Search Mathlib by declaration name or type pattern.",
+                {"query": {"type": "string"}, "num_results": {"type": "integer"}},
+                lean_specific=True,
+            ),
             ToolSpec("memory_retrieve", "Retrieve similar episodic proof traces."),
         ]
     )

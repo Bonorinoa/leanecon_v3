@@ -66,6 +66,7 @@ from src.prover.tactics import (
     validate_action,
 )
 from src.providers import normalize_huggingface_provider
+from src.observability.tool_tracker import LSP_TOOL_NAMES, NATIVE_SEARCH_TOOL_NAMES
 from src.tools import ToolCall, ToolRegistry, ToolResult, build_default_registry
 
 
@@ -97,6 +98,11 @@ _HINT_FIRST_PREAMBLES = frozenset(
 _WRAPPER_SIMPA_SHAPES = frozenset({"Monotone", "Antitone", "StrictMono", "StrictAnti"})
 _RECOGNIZED_CLAIM_TYPES = frozenset({"preamble_definable", "mathlib_native"})
 MATHLIB_NATIVE_DIRECT_CLOSE_LIMIT = 2
+MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT = 6
+MATHLIB_NATIVE_LSP_SEARCH_RESULTS = 8
+MATHLIB_NATIVE_PROMPT_ONLY_TOOLS = frozenset(
+    {"lean_diagnostic_messages", "lean_leansearch", "lean_loogle"}
+)
 
 
 class ProverDriverError(RuntimeError):
@@ -651,6 +657,10 @@ class Prover:
         return None
 
     def _direct_close_policy(self, packet: FormalizationPacket) -> DirectClosePolicy:
+        # Keep claim-type handling centralized: mathlib-native claims may use a
+        # small compile-checked direct-close budget, but Preamble-derived
+        # shortcuts stay disabled so failures honestly reflect missing Mathlib
+        # search strategy rather than accidental LeanEcon lemma reuse.
         claim_type = self._normalized_claim_type(packet)
         if claim_type == "mathlib_native":
             return DirectClosePolicy(
@@ -838,6 +848,7 @@ class Prover:
                 filename=f"{job_id}_final.lean",
             )
             telemetry.record_lean(compile_started_at)
+            self._enrich_trace_context(packet=packet, targets=targets, trace=trace)
             stage_usage = self._aggregate_stage_usage(provider_usage)
             timing_breakdown = {
                 "prover_ms": telemetry.snapshot()["wall_clock_ms"],
@@ -989,6 +1000,8 @@ class Prover:
         # Keep a single explicit mode flag here so the next sprint can branch mathlib-native
         # search behavior without re-deriving it from raw claim metadata throughout the loop.
         mathlib_native_mode = direct_close_policy.claim_type == "mathlib_native"
+        if mathlib_native_mode:
+            self.budget_tracker.record_mathlib_native_mode_use()
         direct_close_budget = (
             {"remaining": direct_close_policy.attempt_cap}
             if mathlib_native_mode
@@ -1064,6 +1077,7 @@ class Prover:
         repeated_failure_streak = 0
         last_schema_invalid_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = None
         schema_invalid_repeats = 0
+        lsp_search_attempted_states: set[tuple[str, tuple[str, ...]]] = set()
 
         try:
             for turn in range(1, max_turns + 1):
@@ -1238,18 +1252,33 @@ class Prover:
                     last_structural_state = structural_state
                     continue
 
+                if mathlib_native_mode and structural_state not in lsp_search_attempted_states:
+                    lsp_search_attempted_states.add(structural_state)
+                    lsp_closed = self._try_mathlib_native_lsp_search(
+                        packet=packet,
+                        target=target,
+                        session=session,
+                        trace=trace,
+                        audit_events=audit_events,
+                        backend=active_backend,
+                        turn=turn,
+                        timeout=timeout,
+                        lean_feedback=lean_feedback,
+                        goals=goals,
+                        job_id=job_id,
+                        on_progress=on_progress,
+                    )
+                    if lsp_closed is not None:
+                        if active_backend.name not in attempted_backends:
+                            attempted_backends.append(active_backend.name)
+                        session.write_code(lsp_closed)
+                        return True, session.read_code(), None
+
                 prompt = _build_prompt(
                     packet=packet,
                     target=target,
                     current_code=current_code,
-                    tool_specs=[
-                        {
-                            "name": spec.name,
-                            "description": spec.description,
-                            "args": spec.args,
-                        }
-                        for spec in self.registry.list()
-                    ],
+                    tool_specs=self._tool_specs_for_prompt(packet),
                     lean_feedback=lean_feedback,
                     goals=goals,
                     prior_trace=trace,
@@ -1898,6 +1927,562 @@ class Prover:
             }
             for trace in examples
         ]
+
+    def _tool_specs_for_prompt(self, packet: FormalizationPacket) -> list[dict[str, Any]]:
+        mathlib_native_mode = self._normalized_claim_type(packet) == "mathlib_native"
+        specs = []
+        for spec in self.registry.list():
+            # LSP search tools are exposed to the model only for mathlib-native
+            # claims; preamble-definable claims should first exercise the local
+            # indexed lemmas and bounded compile checks.
+            if spec.name in MATHLIB_NATIVE_PROMPT_ONLY_TOOLS and not mathlib_native_mode:
+                continue
+            specs.append(
+                {
+                    "name": spec.name,
+                    "description": spec.description,
+                    "args": spec.args,
+                }
+            )
+        return specs
+
+    def _try_mathlib_native_lsp_search(
+        self,
+        *,
+        packet: FormalizationPacket,
+        target: ProverTarget,
+        session: _ActiveProofSession,
+        trace: list[ProverTraceStep],
+        audit_events: list[AuditEvent],
+        backend: ProverBackend,
+        turn: int,
+        timeout: int,
+        lean_feedback: list[str],
+        goals: list[str],
+        job_id: str,
+        on_progress: Callable[[str, dict[str, Any]], None] | None,
+    ) -> str | None:
+        if session.proof_path is None:
+            self._record_mathlib_native_lsp_summary(
+                trace=trace,
+                audit_events=audit_events,
+                backend=backend,
+                target=target,
+                turn=turn,
+                success=False,
+                error_code="lsp_unavailable",
+                message="lsp_unavailable: no proof file is attached to the session.",
+                lean_feedback=lean_feedback,
+                goals=goals,
+                code_snapshot=session.read_code(),
+                metadata={"mathlib_native_mode": True},
+            )
+            return None
+
+        code = session.read_code()
+        policy = self._direct_close_policy(packet)
+        self.budget_tracker.record_native_search_attempt()
+        proof_line = self._active_proof_line(code)
+        proof_column = self._hover_column_for_line(code, proof_line)
+        lsp_payloads: dict[str, Any] = {}
+        first_error_code: str | None = None
+
+        def call_lsp(tool_name: str, callback: Callable[[], Any]) -> Any | None:
+            nonlocal first_error_code
+            self.budget_tracker.record(tool_name)
+            metadata = {
+                "target_name": target.name,
+                "tool_name": tool_name,
+                "lsp_tool_name": tool_name,
+                "claim_type": policy.claim_type,
+                "claim_type_policy": policy.claim_type_policy,
+                "target_kind": target.kind,
+                "mathlib_native_mode": True,
+                "candidate_count": 0,
+                "compiled_candidate_count": 0,
+                "selected_lemma": None,
+                "search_query": None,
+            }
+            try:
+                payload = callback()
+            except LeanLSPUnavailableError as exc:
+                error_code = "lsp_search_exhausted" if "no results" in str(exc).lower() else "lsp_unavailable"
+                first_error_code = first_error_code or error_code
+                self._emit_progress(
+                    on_progress,
+                    "prover_tool",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message=f"LSP tool `{tool_name}` failed.",
+                    metadata={**metadata, "success": False, "error_code": error_code},
+                )
+                audit_events.append(
+                    AuditEvent(
+                        stage="prover",
+                        event_type="mathlib_native_lsp_tool",
+                        provider=backend.provider,
+                        model=backend.model,
+                        success=False,
+                        error_code=error_code,
+                        error_message=str(exc),
+                        metadata={"turn": turn, **metadata},
+                    )
+                )
+                return None
+            self._emit_progress(
+                on_progress,
+                "prover_tool",
+                job_id=job_id,
+                stage="prover",
+                status="running_prover",
+                message=f"LSP tool `{tool_name}` executed.",
+                metadata={**metadata, "success": True, "error_code": None},
+            )
+            audit_events.append(
+                AuditEvent(
+                    stage="prover",
+                    event_type="mathlib_native_lsp_tool",
+                    provider=backend.provider,
+                    model=backend.model,
+                    success=True,
+                    metadata={"turn": turn, **metadata},
+                )
+            )
+            return payload
+
+        lsp_payloads["diagnostics"] = call_lsp(
+            "lean_diagnostic_messages",
+            lambda: self.lsp_client.lean_diagnostic_messages(
+                session.proof_path,
+                severity="error",
+                start_line=max(1, proof_line - 2),
+                end_line=proof_line + 2,
+            ),
+        )
+        lsp_payloads["goal"] = call_lsp(
+            "lean_goal",
+            lambda: self.lsp_client.lean_goal(session.proof_path, line=proof_line, column=proof_column),
+        )
+        lsp_payloads["code_actions"] = call_lsp(
+            "lean_code_actions",
+            lambda: self.lsp_client.lean_code_actions(session.proof_path, line=proof_line),
+        )
+        lsp_payloads["hover"] = call_lsp(
+            "lean_hover_info",
+            lambda: self.lsp_client.lean_hover_info(session.proof_path, line=proof_line, column=proof_column),
+        )
+
+        search_query = self._mathlib_native_search_query(packet=packet, goals=goals, current_code=code)
+        lsp_payloads["leansearch"] = call_lsp(
+            "lean_leansearch",
+            lambda: self.lsp_client.lean_leansearch(
+                search_query,
+                num_results=MATHLIB_NATIVE_LSP_SEARCH_RESULTS,
+            ),
+        )
+        candidates = self._mathlib_native_lsp_candidates(
+            packet=packet,
+            current_code=code,
+            code_actions=lsp_payloads.get("code_actions"),
+            search_results=lsp_payloads.get("leansearch"),
+        )
+        attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
+        theorem_name = self._target_theorem_name(packet, target)
+        compiled_candidate_count = 0
+        selected_lemma: str | None = None
+        for proof, source, lemma_name in candidates[:MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT]:
+            try:
+                candidate_code = _replace_named_theorem_body(code, theorem_name, proof)
+            except ValueError:
+                continue
+            compiled_candidate_count += 1
+            self.budget_tracker.record("compile_check")
+            try:
+                result = compile_check(candidate_code, timeout=attempt_timeout)
+            except Exception:
+                continue
+            if result.get("success"):
+                selected_lemma = lemma_name
+                metadata = {
+                    "claim_type": policy.claim_type,
+                    "claim_type_policy": policy.claim_type_policy,
+                    "target_kind": target.kind,
+                    "mathlib_native_mode": True,
+                    "lsp_tool_name": source,
+                    "candidate_count": len(candidates),
+                    "compiled_candidate_count": compiled_candidate_count,
+                    "selected_lemma": selected_lemma,
+                    "search_query": search_query,
+                }
+                self._emit_progress(
+                    on_progress,
+                    "prover_tool",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message="Closed via mathlib-native LSP-assisted search.",
+                    metadata={"target_name": target.name, "tool_name": "mathlib_native_lsp_search", "success": True, **metadata},
+                )
+                self._record_mathlib_native_lsp_summary(
+                    trace=trace,
+                    audit_events=audit_events,
+                    backend=backend,
+                    target=target,
+                    turn=turn,
+                    success=True,
+                    error_code=None,
+                    message=f"Closed via `{proof.splitlines()[0]}`.",
+                    lean_feedback=lean_feedback,
+                    goals=[],
+                    code_snapshot=candidate_code,
+                    metadata={**metadata, "proof": proof},
+                )
+                return candidate_code
+
+        error_code = first_error_code or "lsp_search_exhausted"
+        metadata = {
+            "claim_type": policy.claim_type,
+            "claim_type_policy": policy.claim_type_policy,
+            "target_kind": target.kind,
+            "mathlib_native_mode": True,
+            "lsp_tool_name": "lean_leansearch",
+            "candidate_count": len(candidates),
+            "compiled_candidate_count": compiled_candidate_count,
+            "selected_lemma": selected_lemma,
+            "search_query": search_query,
+        }
+        self._emit_progress(
+            on_progress,
+            "prover_tool",
+            job_id=job_id,
+            stage="prover",
+            status="running_prover",
+            message="Mathlib-native LSP-assisted search did not close the target.",
+            metadata={"target_name": target.name, "tool_name": "mathlib_native_lsp_search", "success": False, "error_code": error_code, **metadata},
+        )
+        self._record_mathlib_native_lsp_summary(
+            trace=trace,
+            audit_events=audit_events,
+            backend=backend,
+            target=target,
+            turn=turn,
+            success=False,
+            error_code=error_code,
+            message="LSP-assisted search exhausted compile-validated candidates.",
+            lean_feedback=lean_feedback,
+            goals=goals,
+            code_snapshot=code,
+            metadata=metadata,
+        )
+        return None
+
+    def _record_mathlib_native_lsp_summary(
+        self,
+        *,
+        trace: list[ProverTraceStep],
+        audit_events: list[AuditEvent],
+        backend: ProverBackend,
+        target: ProverTarget,
+        turn: int,
+        success: bool,
+        error_code: str | None,
+        message: str,
+        lean_feedback: list[str],
+        goals: list[str],
+        code_snapshot: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        trace.append(
+            ProverTraceStep(
+                turn=turn,
+                backend=backend.name,
+                target_name=target.name,
+                action_type="mathlib_native_lsp_search",
+                success=success,
+                rationale="Use bounded lean-lsp-mcp search for a mathlib-native claim.",
+                tool_name="mathlib_native_lsp_search",
+                tool_arguments=metadata,
+                tool_result=message,
+                lean_feedback=lean_feedback,
+                goals=goals,
+                code_snapshot=code_snapshot,
+                error_code=error_code,
+            )
+        )
+        audit_events.append(
+            AuditEvent(
+                stage="prover",
+                event_type="mathlib_native_lsp_search",
+                provider=backend.provider,
+                model=backend.model,
+                success=success,
+                error_code=error_code,
+                error_message=None if success else message,
+                metadata={"turn": turn, "target_name": target.name, **metadata},
+            )
+        )
+
+    def _active_proof_line(self, code: str) -> int:
+        lines = code.splitlines()
+        for index, line in enumerate(lines, start=1):
+            if line.strip() in {"sorry", "exact?", "by"} or "sorry" in line:
+                return index
+        for index in range(len(lines), 0, -1):
+            if lines[index - 1].strip():
+                return index
+        return 1
+
+    def _hover_column_for_line(self, code: str, line: int) -> int:
+        lines = code.splitlines()
+        if not lines:
+            return 1
+        text = lines[max(0, min(line - 1, len(lines) - 1))]
+        match = re.search(r"[A-Za-z_][A-Za-z0-9_'.]*", text)
+        return (match.start() + 1) if match is not None else max(1, len(text) - len(text.lstrip()) + 1)
+
+    def _mathlib_native_search_query(
+        self,
+        *,
+        packet: FormalizationPacket,
+        goals: list[str],
+        current_code: str,
+    ) -> str:
+        theorem_goal = theorem_goal_statement(current_code) or ""
+        chunks = [packet.claim, theorem_goal, *(goals[:1])]
+        return " ".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())[:900]
+
+    def _extract_code_action_tactics(self, payload: Any) -> list[str]:
+        tactics: list[str] = []
+
+        def add(value: str) -> None:
+            tactic = value.strip()
+            if tactic.startswith("Try this:"):
+                tactic = tactic.removeprefix("Try this:").strip()
+            if not tactic or tactic == "sorry" or "\n\n" in tactic:
+                return
+            if tactic not in tactics:
+                tactics.append(tactic)
+
+        def walk(value: Any) -> None:
+            if isinstance(value, dict):
+                new_text = value.get("new_text")
+                if isinstance(new_text, str):
+                    add(new_text)
+                title = value.get("title")
+                if isinstance(title, str) and title.startswith("Try this:"):
+                    add(title)
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+
+        walk(payload)
+        return tactics
+
+    def _extract_search_item_names(self, payload: Any) -> list[str]:
+        names: list[str] = []
+        items = payload.get("items") if isinstance(payload, dict) else payload
+        if not isinstance(items, list):
+            return names
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if isinstance(name, str) and name and name not in names:
+                names.append(name)
+        return names
+
+    def _mathlib_native_lsp_candidates(
+        self,
+        *,
+        packet: FormalizationPacket,
+        current_code: str,
+        code_actions: Any,
+        search_results: Any,
+    ) -> list[tuple[str, str, str | None]]:
+        candidates: list[tuple[str, str, str | None]] = []
+        theorem_names = self._extract_search_item_names(search_results)
+        candidates.extend(self._mathlib_native_heuristic_candidates(current_code=current_code, theorem_names=theorem_names))
+        for tactic in self._extract_code_action_tactics(code_actions):
+            candidates.append((tactic, "lean_code_actions", None))
+        for name in theorem_names:
+            candidates.append((f"exact {name}", "lean_leansearch", name))
+            candidates.append((f"simpa using {name}", "lean_leansearch", name))
+
+        deduped: list[tuple[str, str, str | None]] = []
+        seen: set[str] = set()
+        for proof, source, lemma_name in candidates:
+            normalized = proof.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append((normalized, source, lemma_name))
+        return deduped
+
+    def _mathlib_native_heuristic_candidates(
+        self,
+        *,
+        current_code: str,
+        theorem_names: list[str],
+    ) -> list[tuple[str, str, str | None]]:
+        candidates: list[tuple[str, str, str | None]] = []
+        names = set(theorem_names)
+        is_contraction = self._is_contraction_context(current_code)
+        if is_contraction is not None:
+            hf, intro_prefix = is_contraction
+            if "∃!" in current_code or "ExistsUnique" in current_code:
+                candidates.append(
+                    (
+                        f"{intro_prefix}exact contraction_has_unique_fixedPoint {hf}",
+                        "lean_leansearch",
+                        "contraction_has_unique_fixedPoint",
+                    )
+                )
+            candidates.append(
+                (
+                    f"{intro_prefix}exact contraction_has_fixedPoint {hf}",
+                    "lean_leansearch",
+                    "contraction_has_fixedPoint",
+                )
+            )
+
+        contracting = self._contracting_hypothesis(current_code)
+        if contracting is not None and (
+            "ContractingWith.fixedPoint_isFixedPt" in names
+            or "ContractingWith.fixedPoint_unique" in names
+            or "ContractingWith.fixedPoint" in names
+        ):
+            hf, f_name = contracting
+            if "∃!" in current_code or "ExistsUnique" in current_code:
+                candidates.append(
+                    (
+                        "\n".join(
+                            [
+                                f"refine ⟨ContractingWith.fixedPoint {f_name} {hf}, ?_, ?_⟩",
+                                f"· exact ContractingWith.fixedPoint_isFixedPt (f := {f_name}) {hf}",
+                                "· intro y hy",
+                                f"  exact (ContractingWith.fixedPoint_unique (f := {f_name}) {hf} hy).symm",
+                            ]
+                        ),
+                        "lean_leansearch",
+                        "ContractingWith.fixedPoint_unique",
+                    )
+                )
+            candidates.append(
+                (
+                    f"exact ContractingWith.fixedPoint_isFixedPt (f := {f_name}) {hf}",
+                    "lean_leansearch",
+                    "ContractingWith.fixedPoint_isFixedPt",
+                )
+            )
+            candidates.append(
+                (
+                    f"exact ⟨ContractingWith.fixedPoint {f_name} {hf}, ContractingWith.fixedPoint_isFixedPt (f := {f_name}) {hf}⟩",
+                    "lean_leansearch",
+                    "ContractingWith.fixedPoint_isFixedPt",
+                )
+            )
+
+        compact = self._compact_extreme_value_context(current_code)
+        if compact is not None:
+            hcompact, hnonempty, hcontinuous, intro_prefix = compact
+            if "IsConstrainedMaximum" in current_code:
+                candidates.append(
+                    (
+                        f"{intro_prefix}exact exists_isConstrainedMaximum_of_isCompact_continuousOn {hcompact} {hnonempty} {hcontinuous}",
+                        "lean_leansearch",
+                        "exists_isConstrainedMaximum_of_isCompact_continuousOn",
+                    )
+                )
+            if "IsCompact.exists_isMaxOn" not in names and "IsCompact.exists_sSup_image_eq_and_ge" not in names:
+                return candidates
+            candidates.append(
+                (
+                    f"{intro_prefix}exact IsCompact.exists_isMaxOn {hcompact} {hnonempty} {hcontinuous}",
+                    "lean_leansearch",
+                    "IsCompact.exists_isMaxOn",
+                )
+            )
+            candidates.append(
+                (
+                    "\n".join(
+                        [
+                            f"{intro_prefix}obtain ⟨x, hx, hmax⟩ := IsCompact.exists_isMaxOn {hcompact} {hnonempty} {hcontinuous}",
+                            "exact ⟨x, hx, hmax⟩",
+                        ]
+                    ),
+                    "lean_leansearch",
+                    "IsCompact.exists_isMaxOn",
+                )
+            )
+            candidates.append(
+                (
+                    "\n".join(
+                        [
+                            f"{intro_prefix}obtain ⟨x, hx, _hsup, hmax⟩ := IsCompact.exists_sSup_image_eq_and_ge {hcompact} {hnonempty} {hcontinuous}",
+                            "exact ⟨x, hx, hmax⟩",
+                        ]
+                    ),
+                    "lean_leansearch",
+                    "IsCompact.exists_sSup_image_eq_and_ge",
+                )
+            )
+
+        monotone = self._monotone_convergence_context(current_code)
+        if monotone is not None and "tendsto_of_monotone" in names:
+            hmono, hbdd = monotone
+            candidates.append(("exact (tendsto_of_monotone " + hmono + ").resolve_left " + hbdd, "lean_leansearch", "tendsto_of_monotone"))
+            candidates.append(("rcases tendsto_of_monotone " + hmono + " with htop | hconv\n· exfalso\n  exact " + hbdd + ".not_tendsto_atTop htop\n· exact hconv", "lean_leansearch", "tendsto_of_monotone"))
+        return candidates
+
+    def _is_contraction_context(self, code: str) -> tuple[str, str] | None:
+        named = re.search(r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*IsContraction\s+[A-Za-z_][A-Za-z0-9_']*\s*\)", code)
+        if named is not None:
+            return named.group(1), ""
+        if re.search(r"IsContraction\s+[A-Za-z_][A-Za-z0-9_']*\s*→", code):
+            return "hf", "intro α _ _ _ f hf\n"
+        return None
+
+    def _contracting_hypothesis(self, code: str) -> tuple[str, str] | None:
+        match = re.search(
+            r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*ContractingWith\s+[^()\n]+?\s+([A-Za-z_][A-Za-z0-9_']*)\s*\)",
+            code,
+        )
+        if match is None:
+            return None
+        return match.group(1), match.group(2)
+
+    def _compact_extreme_value_context(self, code: str) -> tuple[str, str, str, str] | None:
+        compact = re.search(r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*IsCompact\s+([A-Za-z_][A-Za-z0-9_']*)\s*\)", code)
+        if compact is not None:
+            set_name = compact.group(2)
+            nonempty = re.search(rf"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*{re.escape(set_name)}\.Nonempty\s*\)", code)
+            continuous = re.search(rf"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*ContinuousOn\s+[A-Za-z_][A-Za-z0-9_']*\s+{re.escape(set_name)}\s*\)", code)
+            if nonempty is None or continuous is None:
+                return None
+            return compact.group(1), nonempty.group(1), continuous.group(1), ""
+        if re.search(r"IsCompact\s+[A-Za-z_][A-Za-z0-9_']*\s*→", code) and re.search(
+            r"[A-Za-z_][A-Za-z0-9_']*\.Nonempty\s*→", code
+        ) and re.search(r"ContinuousOn\s+[A-Za-z_][A-Za-z0-9_']*\s+[A-Za-z_][A-Za-z0-9_']*\s*→", code):
+            return "hcompact", "hne", "hcontinuous", "intro α _ _ _ _ f feasible hcompact hne hcontinuous\n"
+        return None
+
+    def _monotone_convergence_context(self, code: str) -> tuple[str, str] | None:
+        monotone = re.search(r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*Monotone\s+([A-Za-z_][A-Za-z0-9_']*)\s*\)", code)
+        if monotone is None:
+            return None
+        seq_name = monotone.group(2)
+        bdd = re.search(
+            rf"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*BddAbove\s+\((?:Set\.)?range\s+{re.escape(seq_name)}\)\s*\)",
+            code,
+        )
+        if bdd is None:
+            bdd = re.search(r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*BddAbove\s+[^)]*\)", code)
+        if bdd is None:
+            return None
+        return monotone.group(1), bdd.group(1)
 
     def _lemma_application_candidates(
         self,
@@ -2818,9 +3403,33 @@ class Prover:
     def _reset_budget_tracker(self) -> None:
         self.budget_tracker.search_tool_calls = 0
         self.budget_tracker.total_tool_calls = 0
+        self.budget_tracker.lsp_tool_calls = 0
+        self.budget_tracker.native_search_attempts = 0
+        self.budget_tracker.mathlib_native_mode_uses = 0
         self.budget_tracker.sub_agent_calls = 0
         self.budget_tracker.tool_history.clear()
         self.budget_tracker.sub_agent_history.clear()
+
+    def _enrich_trace_context(
+        self,
+        *,
+        packet: FormalizationPacket,
+        targets: list[ProverTarget],
+        trace: list[ProverTraceStep],
+    ) -> None:
+        policy = self._direct_close_policy(packet)
+        target_kinds = {target.name: target.kind for target in targets}
+        mathlib_native_mode = policy.claim_type == "mathlib_native"
+        for step in trace:
+            step.claim_type = step.claim_type or policy.claim_type
+            step.claim_type_policy = step.claim_type_policy or policy.claim_type_policy
+            step.mathlib_native_mode = bool(step.mathlib_native_mode or mathlib_native_mode)
+            step.target_kind = step.target_kind or target_kinds.get(step.target_name)
+            tool_name = step.tool_name or ""
+            if tool_name in LSP_TOOL_NAMES or step.action_type == "mathlib_native_lsp_search":
+                step.lsp_tool_call = True
+            if tool_name in NATIVE_SEARCH_TOOL_NAMES or step.action_type == "mathlib_native_lsp_search":
+                step.native_search_attempt = True
 
     def _aggregate_stage_usage(self, provider_usage: list[TokenUsage]) -> TokenUsage | None:
         if not provider_usage:
@@ -2931,7 +3540,7 @@ class Prover:
         if tool.name == "memory_retrieve":
             payload = self._memory_examples(packet)
             return ToolResult(call.id, json.dumps(payload, ensure_ascii=True))
-        if tool.name in {"lean_goal", "lean_code_actions", "lean_hover_info"}:
+        if tool.name in {"lean_goal", "lean_code_actions", "lean_hover_info", "lean_diagnostic_messages"}:
             if session.proof_path is None:
                 return ToolResult(call.id, "lsp_unavailable: no proof file is attached to the session.", is_error=True)
             line = int(tool.arguments.get("line", max(1, len(session.read_code().splitlines()))))
@@ -2941,8 +3550,28 @@ class Prover:
                     payload = self.lsp_client.lean_goal(session.proof_path, line=line, column=column)
                 elif tool.name == "lean_code_actions":
                     payload = self.lsp_client.lean_code_actions(session.proof_path, line=line)
+                elif tool.name == "lean_diagnostic_messages":
+                    payload = self.lsp_client.lean_diagnostic_messages(
+                        session.proof_path,
+                        severity=tool.arguments.get("severity"),
+                        start_line=tool.arguments.get("start_line"),
+                        end_line=tool.arguments.get("end_line"),
+                    )
                 else:
                     payload = self.lsp_client.lean_hover_info(session.proof_path, line=line, column=column)
+            except LeanLSPUnavailableError as exc:
+                return ToolResult(call.id, f"lsp_unavailable: {exc}", is_error=True)
+            return ToolResult(call.id, json.dumps(payload, ensure_ascii=True))
+        if tool.name in {"lean_leansearch", "lean_loogle"}:
+            query = str(tool.arguments.get("query", "")).strip()
+            if not query:
+                return ToolResult(call.id, "Missing query.", is_error=True)
+            num_results = int(tool.arguments.get("num_results", MATHLIB_NATIVE_LSP_SEARCH_RESULTS))
+            try:
+                if tool.name == "lean_leansearch":
+                    payload = self.lsp_client.lean_leansearch(query, num_results=num_results)
+                else:
+                    payload = self.lsp_client.lean_loogle(query, num_results=num_results)
             except LeanLSPUnavailableError as exc:
                 return ToolResult(call.id, f"lsp_unavailable: {exc}", is_error=True)
             return ToolResult(call.id, json.dumps(payload, ensure_ascii=True))

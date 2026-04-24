@@ -58,6 +58,35 @@ class LeanLSPClient:
             },
         )
 
+    def lean_diagnostic_messages(
+        self,
+        file_path: Path,
+        *,
+        severity: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+    ) -> Any:
+        arguments: dict[str, Any] = {"file_path": self._normalize_file_path(file_path)}
+        if severity is not None:
+            arguments["severity"] = severity
+        if start_line is not None:
+            arguments["start_line"] = int(start_line)
+        if end_line is not None:
+            arguments["end_line"] = int(end_line)
+        return self._call_tool("lean_diagnostic_messages", arguments)
+
+    def lean_leansearch(self, query: str, *, num_results: int = 8) -> Any:
+        return self._call_tool(
+            "lean_leansearch",
+            {"query": query, "num_results": int(num_results)},
+        )
+
+    def lean_loogle(self, query: str, *, num_results: int = 8) -> Any:
+        return self._call_tool(
+            "lean_loogle",
+            {"query": query, "num_results": int(num_results)},
+        )
+
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         try:
             with self._lock:

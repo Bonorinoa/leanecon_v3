@@ -107,9 +107,9 @@ EXPERIMENTAL_RUNTIME_CAPABILITIES: dict[str, dict[str, Any]] = {
     },
     "lean_lsp": {
         "name": "lean_lsp",
-        "experimental": True,
-        "production_supported": False,
-        "notes": "Lean LSP tooling exists but is not part of the happy-path proving baseline.",
+        "experimental": False,
+        "production_supported": True,
+        "notes": "lean-lsp-mcp is part of the mathlib-native proving path and exposes goal, diagnostic, code-action, hover, LeanSearch, and Loogle tools.",
     },
 }
 

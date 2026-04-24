@@ -1,4 +1,5 @@
 import LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanOperator
+import LeanEcon.Preamble.Foundations.DynamicProgramming.BellmanContraction
 import LeanEcon.Preamble.Foundations.DynamicProgramming.ContractionMapping
 import LeanEcon.Preamble.Foundations.DynamicProgramming.ValueFunction
 import LeanEcon.Preamble.Foundations.DynamicProgramming.PolicyIteration
