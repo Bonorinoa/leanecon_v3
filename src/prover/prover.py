@@ -72,6 +72,7 @@ from src.tools import ToolCall, ToolRegistry, ToolResult, build_default_registry
 SHORTCUT_ATTEMPT_TIMEOUT_SECONDS = 25
 MAX_DIRECT_CLOSURE_CANDIDATES = 24
 POST_DIRECT_CLOSURE_STALL_LIMIT = 2
+SHALLOW_LOOP_WINDOW = 4
 
 SHORTCUT_FALLBACK_TACTICS: tuple[tuple[str, str], ...] = (
     ("assumption", "Goal matches a local hypothesis; closing via `assumption`."),
@@ -985,12 +986,15 @@ class Prover:
     ) -> tuple[bool, str, ProverFailure | None]:
         theorem_name = self._target_theorem_name(packet, target)
         direct_close_policy = self._direct_close_policy(packet)
+        # Keep a single explicit mode flag here so the next sprint can branch mathlib-native
+        # search behavior without re-deriving it from raw claim metadata throughout the loop.
+        mathlib_native_mode = direct_close_policy.claim_type == "mathlib_native"
         direct_close_budget = (
             {"remaining": direct_close_policy.attempt_cap}
-            if direct_close_policy.claim_type == "mathlib_native"
+            if mathlib_native_mode
             else None
         )
-        if target.kind == "theorem_body" and direct_close_policy.claim_type is not None:
+        if direct_close_policy.claim_type is not None:
             self._record_claim_type_awareness(
                 trace=trace,
                 audit_events=audit_events,
@@ -1000,6 +1004,7 @@ class Prover:
                 job_id=job_id,
                 on_progress=on_progress,
                 policy=direct_close_policy,
+                mathlib_native_mode=mathlib_native_mode,
             )
         direct_close, direct_close_summary = self._try_direct_definable_closure(
             packet=packet,
@@ -1611,6 +1616,27 @@ class Prover:
                         },
                     )
                 )
+                shallow_loop_pattern = self._detect_shallow_loop_pattern(trace=trace, target=target)
+                if shallow_loop_pattern is not None:
+                    if pre_tool_structural_state in exhausted_direct_closure_states:
+                        return False, session.read_code(), self._direct_close_stall_failure(
+                            target=target,
+                            turn=turn,
+                            backend=active_backend,
+                            lean_feedback=session.get_goals(),
+                            exhaustion=exhausted_direct_closure_states[pre_tool_structural_state],
+                            error_code=step.error_code or "unsolved_goals",
+                            loop_pattern=shallow_loop_pattern,
+                        )
+                    return False, session.read_code(), ProverFailure(
+                        reason="no_progress_stall",
+                        message=f"Shallow tool loop detected: {shallow_loop_pattern}.",
+                        error_code=step.error_code or "unsolved_goals",
+                        target_name=target.name,
+                        turn=turn,
+                        backend=active_backend.name,
+                        lean_feedback=session.get_goals(),
+                    )
                 if tool_result.is_error:
                     failed_turns += 1
                     failure_action_key = (
@@ -2030,6 +2056,7 @@ class Prover:
         attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
         theorem_name = self._target_theorem_name(packet, target)
         policy = self._direct_close_policy(packet)
+        mathlib_native_mode = policy.claim_type == "mathlib_native"
         candidates = self._direct_candidate_proofs(
             packet=packet,
             current_code=current_code,
@@ -2062,6 +2089,7 @@ class Prover:
                         "claim_type_policy": policy.claim_type_policy,
                         "direct_close_attempt_cap": policy.attempt_cap,
                         "preamble_shortcuts_enabled": policy.preamble_shortcuts_enabled,
+                        "mathlib_native_mode": mathlib_native_mode,
                     },
                 )
             try:
@@ -2127,6 +2155,7 @@ class Prover:
         claim_type = policy.claim_type if policy is not None else None
         claim_type_policy = policy.claim_type_policy if policy is not None else "default"
         preamble_shortcuts_enabled = policy.preamble_shortcuts_enabled if policy is not None else True
+        mathlib_native_mode = claim_type == "mathlib_native"
         trace.append(
             ProverTraceStep(
                 turn=turn,
@@ -2141,6 +2170,7 @@ class Prover:
                     "claim_type": claim_type,
                     "claim_type_policy": claim_type_policy,
                     "preamble_shortcuts_enabled": preamble_shortcuts_enabled,
+                    "mathlib_native_mode": mathlib_native_mode,
                 },
                 tool_result=f"Closed via `{proof.splitlines()[0]}` using `{source}`.",
                 lean_feedback=lean_feedback,
@@ -2163,6 +2193,7 @@ class Prover:
                     "claim_type": claim_type,
                     "claim_type_policy": claim_type_policy,
                     "preamble_shortcuts_enabled": preamble_shortcuts_enabled,
+                    "mathlib_native_mode": mathlib_native_mode,
                 },
             )
         )
@@ -2567,20 +2598,37 @@ class Prover:
         job_id: str,
         on_progress: Callable[[str, dict[str, Any]], None] | None,
         policy: DirectClosePolicy,
+        mathlib_native_mode: bool,
     ) -> None:
         metadata = {
             "claim_type": policy.claim_type,
             "claim_type_policy": policy.claim_type_policy,
             "direct_close_attempt_cap": policy.attempt_cap,
             "preamble_shortcuts_enabled": policy.preamble_shortcuts_enabled,
+            "mathlib_native_mode": mathlib_native_mode,
+            "target_kind": target.kind,
         }
+        if mathlib_native_mode:
+            message = "claim_type = mathlib_native; mathlib_native_mode=True; skipping preamble-derived direct-close candidates."
+            rationale = "Use the benchmark claim type to avoid spending prover turns on preamble-only shortcuts."
+            tool_result = (
+                "claim_type = mathlib_native; mathlib_native_mode=True; "
+                "skipping preamble-derived direct-close candidates and capping direct-close attempts."
+            )
+        else:
+            message = "claim_type = preamble_definable; mathlib_native_mode=False; preamble-derived direct-close candidates remain enabled."
+            rationale = "Use the benchmark claim type to keep preamble-backed direct-close candidates enabled."
+            tool_result = (
+                "claim_type = preamble_definable; mathlib_native_mode=False; "
+                "preamble-derived direct-close candidates remain enabled."
+            )
         self._emit_progress(
             on_progress,
             "prover_turn",
             job_id=job_id,
             stage="prover",
             status="running_prover",
-            message="Claim-type-aware direct-close policy is active.",
+            message=message,
             metadata={"target_name": target.name, **metadata},
         )
         trace.append(
@@ -2590,13 +2638,10 @@ class Prover:
                 target_name=target.name,
                 action_type="claim_type_awareness",
                 success=True,
-                rationale="Use the benchmark claim type to limit direct-close work.",
+                rationale=rationale,
                 tool_name="claim_type_policy",
                 tool_arguments=metadata,
-                tool_result=(
-                    f"Claim type `{policy.claim_type}` active with policy "
-                    f"`{policy.claim_type_policy}`."
-                ),
+                tool_result=tool_result,
                 code_snapshot="",
             )
         )
@@ -2620,14 +2665,17 @@ class Prover:
         lean_feedback: list[str],
         exhaustion: dict[str, Any],
         error_code: str = "unsolved_goals",
+        loop_pattern: str | None = None,
     ) -> ProverFailure:
         claim_type = exhaustion.get("claim_type")
         claim_type_note = f" under claim type `{claim_type}`" if isinstance(claim_type, str) else ""
+        loop_note = f" Observed loop pattern: {loop_pattern}." if loop_pattern is not None else ""
         return ProverFailure(
             reason="no_progress_stall",
             message=(
                 "Direct-close candidates were exhausted"
                 f"{claim_type_note}, and the subsequent tool action did not change the proof state."
+                f"{loop_note}"
             ),
             error_code=error_code,
             target_name=target.name,
@@ -2635,6 +2683,55 @@ class Prover:
             backend=backend.name,
             lean_feedback=lean_feedback,
         )
+
+    def _recent_tool_steps(
+        self,
+        *,
+        trace: list[ProverTraceStep],
+        target: ProverTarget,
+        limit: int = SHALLOW_LOOP_WINDOW,
+    ) -> list[ProverTraceStep]:
+        return [
+            step
+            for step in trace
+            if step.target_name == target.name and step.tool_name is not None
+        ][-limit:]
+
+    def _detect_shallow_loop_pattern(
+        self,
+        *,
+        trace: list[ProverTraceStep],
+        target: ProverTarget,
+    ) -> str | None:
+        recent = self._recent_tool_steps(trace=trace, target=target)
+        if len(recent) < SHALLOW_LOOP_WINDOW:
+            return None
+
+        names = [step.tool_name for step in recent]
+        if names == ["apply_tactic", "get_goals", "apply_tactic", "get_goals"]:
+            if all(step.success for step in recent):
+                goal_signatures = {
+                    tuple(step.goals)
+                    for step in recent
+                    if step.tool_name == "get_goals"
+                }
+                tactics = [
+                    str(step.tool_arguments.get("tactic") or "")
+                    for step in recent
+                    if step.tool_name == "apply_tactic"
+                ]
+                if len(goal_signatures) == 1 and len(set(tactics)) == 1:
+                    return "repeated `apply_tactic` -> `get_goals` cycle without changing the active goal"
+
+        if names == ["write_current_code", "compile_current_code", "write_current_code", "compile_current_code"]:
+            compile_steps = [step for step in recent if step.tool_name == "compile_current_code"]
+            if len(compile_steps) == 2 and all(not step.success for step in compile_steps):
+                compile_failures = {step.tool_result for step in compile_steps}
+                goal_signatures = {tuple(step.goals) for step in compile_steps}
+                if len(compile_failures) == 1 and len(goal_signatures) == 1:
+                    return "repeated `write_current_code` -> `compile_current_code` cycle with the same compile failure"
+
+        return None
 
     def _repeated_solved_repl_tactic(
         self,

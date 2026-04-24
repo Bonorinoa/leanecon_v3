@@ -442,8 +442,245 @@ async def test_mathlib_native_claim_caps_direct_close_attempts_and_logs_awarenes
     assert awareness_steps[0].tool_arguments["claim_type"] == "mathlib_native"
     assert awareness_steps[0].tool_arguments["direct_close_attempt_cap"] == 2
     assert awareness_steps[0].tool_arguments["preamble_shortcuts_enabled"] is False
+    assert awareness_steps[0].tool_arguments["mathlib_native_mode"] is True
+    assert "claim_type = mathlib_native" in awareness_steps[0].tool_result
+    assert "skipping preamble-derived direct-close candidates" in awareness_steps[0].tool_result
     assert attempt_counter["count"] <= 2
     assert result.status in {"verified", "failed"}
+
+
+@pytest.mark.anyio
+async def test_claim_type_awareness_logs_for_subgoals_and_theorem_body(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "h_sub": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Close the extracted subgoal directly.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                    }
+                ],
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Close the main theorem once the helper is available.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                    }
+                ],
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="claim_type_subgoal_logging",
+            claim="Claim-type awareness should be visible on subgoals and the theorem body.",
+            lean_code=(
+                "import Mathlib\n\n"
+                "theorem claim_type_subgoal_logging : True := by\n"
+                "  have h_sub : True := by\n"
+                "    sorry\n"
+                "  exact h_sub\n"
+            ),
+            subgoals=[{"name": "h_sub", "statement": "True"}],
+            claim_type="mathlib_native",
+        ),
+        "job_claim_type_subgoal_logging",
+    )
+
+    assert result.status == "verified"
+    awareness_targets = {
+        step.target_name
+        for step in result.trace
+        if step.action_type == "claim_type_awareness"
+    }
+    assert {"h_sub", "theorem_body"} <= awareness_targets
+
+
+@pytest.mark.anyio
+async def test_prover_detects_apply_get_goals_shallow_loop(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    class LoopingReplSession(FakeReplSession):
+        def apply_tactic(self, tactic: str, timeout=None):
+            self.tactics.append(tactic)
+            return SimpleNamespace(
+                has_errors=lambda: False,
+                goals=[f"goal:{self.theorem_name}"],
+                proof_status="InProgress",
+                proof_state=len(self.tactics) + 1,
+            )
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", LoopingReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_apply_deterministic_repair",
+        lambda self, **kwargs: (False, None, None),
+    )
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Try a tactic that keeps the same goal active.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "simp"}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Read goals without changing the proof state.",
+                        "tool": {"name": "get_goals", "arguments": {}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Repeat the same no-op tactic cycle.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "simp"}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Confirm the goal still has not moved.",
+                        "tool": {"name": "get_goals", "arguments": {}},
+                    },
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="apply_get_goals_loop",
+            claim="A claim that gets stuck in an apply_tactic and get_goals loop.",
+            lean_code="import Mathlib\n\ntheorem apply_get_goals_loop : True := by\n  sorry\n",
+        ),
+        "job_apply_get_goals_loop",
+        max_turns=6,
+    )
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.reason == "no_progress_stall"
+    assert "apply_tactic` -> `get_goals`" in result.failure.message
+
+
+@pytest.mark.anyio
+async def test_prover_detects_write_compile_shallow_loop(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    def _compile_missing_proof(code: str, **_: object) -> dict[str, object]:
+        if "missing_proof" in code:
+            errors = ["unknown constant `missing_proof`"]
+            return {
+                "success": False,
+                "has_sorry": False,
+                "axiom_warnings": [],
+                "output": "\n".join(errors),
+                "errors": errors,
+                "warnings": [],
+                "stdout": "",
+                "stderr": "\n".join(errors),
+                "exit_code": 1,
+            }
+        return _fake_compile(code)
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _compile_missing_proof)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_apply_deterministic_repair",
+        lambda self, **kwargs: (False, None, None),
+    )
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Write one broken proof body.",
+                        "tool": {
+                            "name": "write_current_code",
+                            "arguments": {
+                                "code": "import Mathlib\n\ntheorem write_compile_loop : True := by\n  exact missing_proof\n",
+                            },
+                        },
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Compile the broken proof body.",
+                        "tool": {"name": "compile_current_code", "arguments": {}},
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Rewrite the proof with the same semantic mistake.",
+                        "tool": {
+                            "name": "write_current_code",
+                            "arguments": {
+                                "code": "import Mathlib\n\ntheorem write_compile_loop : True := by\n  exact (missing_proof)\n",
+                            },
+                        },
+                    },
+                    {
+                        "action_type": "tool",
+                        "rationale": "Compile the same failure again.",
+                        "tool": {"name": "compile_current_code", "arguments": {}},
+                    },
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="write_compile_loop",
+            claim="A claim that gets stuck rewriting the same compile failure.",
+            lean_code="import Mathlib\n\ntheorem write_compile_loop : True := by\n  sorry\n",
+        ),
+        "job_write_compile_loop",
+        max_turns=6,
+    )
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.reason == "no_progress_stall"
+    assert "write_current_code` -> `compile_current_code`" in result.failure.message
 
 
 @pytest.mark.anyio

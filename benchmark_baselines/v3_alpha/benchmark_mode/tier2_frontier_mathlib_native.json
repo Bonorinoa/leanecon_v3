@@ -1,7 +1,7 @@
 {
   "average_decomposition_depth": 0.0,
   "average_decomposition_steps": 0.0,
-  "average_tool_calls": 5.667,
+  "average_tool_calls": 2.667,
   "benchmark_mode": true,
   "claim_set": "tier2_frontier_mathlib_native",
   "claim_set_manifest": {
@@ -54,14 +54,14 @@
       "provider": "mistral"
     },
     "mistral:mistral-large-2512": {
-      "estimated_cost_usd": 0.002219,
+      "estimated_cost_usd": 0.002303,
       "model": "mistral-large-2512",
       "provider": "mistral"
     }
   },
   "cost_by_stage": {
     "formalizer": 0.0,
-    "planner": 0.002219,
+    "planner": 0.002303,
     "prover": 0.0
   },
   "executed": true,
@@ -69,7 +69,7 @@
     "compile_failed": 1,
     "unsolved_goals": 2
   },
-  "generated_at": "2026-04-24T03:09:28.137607+00:00",
+  "generated_at": "2026-04-24T03:57:22.343668+00:00",
   "mode": "benchmark_pipeline",
   "pass_at_1": 0.0,
   "progress_log_path": "benchmark_baselines/v3_alpha/benchmark_mode/tier2_frontier_mathlib_native.progress.jsonl",
@@ -127,7 +127,7 @@
       "benchmark_mode": true,
       "decomposition_depth": 0,
       "decomposition_steps": 0,
-      "failure_code": "unsolved_goals",
+      "failure_code": "compile_failed",
       "id": "t2_contraction_mapping_fixed_point",
       "progress_events": [
         {
@@ -141,7 +141,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-24T03:04:46.183332+00:00"
+          "timestamp": "2026-04-24T03:52:53.402148+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -154,7 +154,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-24T03:04:56.143082+00:00"
+          "timestamp": "2026-04-24T03:53:00.796771+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -167,7 +167,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-24T03:04:56.144276+00:00"
+          "timestamp": "2026-04-24T03:53:00.797531+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -180,7 +180,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-24T03:05:12.762500+00:00"
+          "timestamp": "2026-04-24T03:53:11.172578+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -193,7 +193,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-24T03:05:12.763658+00:00"
+          "timestamp": "2026-04-24T03:53:11.173203+00:00"
         },
         {
           "claim_id": null,
@@ -208,7 +208,26 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:05:12.764666+00:00"
+          "timestamp": "2026-04-24T03:53:11.173976+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "claim_type = mathlib_native; mathlib_native_mode=True; skipping preamble-derived direct-close candidates.",
+          "metadata": {
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "direct_close_attempt_cap": 2,
+            "mathlib_native_mode": true,
+            "preamble_shortcuts_enabled": false,
+            "target_kind": "subgoal",
+            "target_name": "h_contraction_fixed_point"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:53:11.174134+00:00"
         },
         {
           "claim_id": null,
@@ -224,7 +243,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:05:46.758698+00:00"
+          "timestamp": "2026-04-24T03:53:50.109463+00:00"
         },
         {
           "claim_id": null,
@@ -241,7 +260,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:05:46.766844+00:00"
+          "timestamp": "2026-04-24T03:53:50.118659+00:00"
         },
         {
           "claim_id": null,
@@ -257,24 +276,24 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:06:20.521425+00:00"
+          "timestamp": "2026-04-24T03:54:27.938191+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_contraction_mapping_fixed_point",
-          "message": "Tool `lean_code_actions` executed.",
+          "message": "Tool `apply_tactic` executed.",
           "metadata": {
-            "error_code": null,
-            "success": true,
+            "error_code": "compile_failed",
+            "success": false,
             "target_name": "h_contraction_fixed_point",
-            "tool_name": "lean_code_actions",
+            "tool_name": "apply_tactic",
             "turn": 4
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:06:28.242661+00:00"
+          "timestamp": "2026-04-24T03:54:27.943221+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -287,7 +306,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "failed",
-          "timestamp": "2026-04-24T03:06:32.988456+00:00"
+          "timestamp": "2026-04-24T03:54:33.672588+00:00"
         }
       ],
       "raw_claim": "A contraction mapping on a complete metric space has a unique fixed point.",
@@ -301,20 +320,20 @@
       "theorem_name": "formalizer_contraction_mapping_unique_fixed_point",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 16617.0085829217,
-        "planner_ms": 9959.230750100687,
-        "prover_ms": 80223.285,
-        "total_ms": 106799.524
+        "formalizer_ms": 10374.230375047773,
+        "planner_ms": 7394.0832919906825,
+        "prover_ms": 82497.586,
+        "total_ms": 100265.9
       },
       "tool_calls": 4,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6581,
-          "latency_ms": 16617.009,
+          "input_tokens": 6551,
+          "latency_ms": 10374.23,
           "model": "labs-leanstral-2603",
-          "output_tokens": 499,
+          "output_tokens": 492,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -322,11 +341,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.000551,
+          "estimated_cost_usd": 0.0005345,
           "input_tokens": 508,
-          "latency_ms": 9959.231,
+          "latency_ms": 7394.083,
           "model": "mistral-large-2512",
-          "output_tokens": 198,
+          "output_tokens": 187,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -335,10 +354,10 @@
         "prover": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 3356,
-          "latency_ms": 2337.217,
+          "input_tokens": 3452,
+          "latency_ms": 2750.483,
           "model": "labs-leanstral-2603",
-          "output_tokens": 180,
+          "output_tokens": 213,
           "provider": "mistral",
           "stage": "prover",
           "success": true,
@@ -366,7 +385,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-24T03:06:32.989436+00:00"
+          "timestamp": "2026-04-24T03:54:33.674063+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -379,7 +398,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-24T03:06:41.105176+00:00"
+          "timestamp": "2026-04-24T03:54:40.231448+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -392,7 +411,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-24T03:06:41.106343+00:00"
+          "timestamp": "2026-04-24T03:54:40.232408+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -405,7 +424,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-24T03:06:49.030106+00:00"
+          "timestamp": "2026-04-24T03:54:54.031680+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -418,22 +437,41 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-24T03:06:49.030704+00:00"
+          "timestamp": "2026-04-24T03:54:54.032566+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_extreme_value_repair",
-          "message": "Starting target `h_existence`.",
+          "message": "Starting target `h_evt`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_existence",
+            "target_name": "h_evt",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:06:49.031369+00:00"
+          "timestamp": "2026-04-24T03:54:54.033405+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "claim_type = mathlib_native; mathlib_native_mode=True; skipping preamble-derived direct-close candidates.",
+          "metadata": {
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "direct_close_attempt_cap": 2,
+            "mathlib_native_mode": true,
+            "preamble_shortcuts_enabled": false,
+            "target_kind": "subgoal",
+            "target_name": "h_evt"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:54:54.033559+00:00"
         },
         {
           "claim_id": null,
@@ -443,129 +481,30 @@
           "metadata": {
             "action_type": "tool",
             "backend": "leanstral",
-            "target_name": "h_existence",
-            "turn": 3
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:07:08.035586+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_extreme_value_repair",
-          "message": "Tool `apply_tactic` executed.",
-          "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_existence",
-            "tool_name": "apply_tactic",
-            "turn": 3
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:07:08.053919+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_extreme_value_repair",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_existence",
+            "target_name": "h_evt",
             "turn": 4
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:07:13.770810+00:00"
+          "timestamp": "2026-04-24T03:55:56.171908+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_extreme_value_repair",
-          "message": "Tool `get_goals` executed.",
+          "message": "Tool `write_current_code` executed.",
           "metadata": {
             "error_code": null,
             "success": true,
-            "target_name": "h_existence",
-            "tool_name": "get_goals",
+            "target_name": "h_evt",
+            "tool_name": "write_current_code",
             "turn": 4
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:07:13.771855+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_extreme_value_repair",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_existence",
-            "turn": 5
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:07:19.842067+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_extreme_value_repair",
-          "message": "Tool `apply_tactic` executed.",
-          "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_existence",
-            "tool_name": "apply_tactic",
-            "turn": 5
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:07:19.848762+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_extreme_value_repair",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_existence",
-            "turn": 7
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:07:59.342700+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_extreme_value_repair",
-          "message": "Tool `get_goals` executed.",
-          "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_existence",
-            "tool_name": "get_goals",
-            "turn": 7
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:07:59.345206+00:00"
+          "timestamp": "2026-04-24T03:56:01.230734+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -578,7 +517,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "failed",
-          "timestamp": "2026-04-24T03:08:04.473214+00:00"
+          "timestamp": "2026-04-24T03:56:06.034000+00:00"
         }
       ],
       "raw_claim": "A strictly concave function attains a maximum on a compact set.",
@@ -592,20 +531,20 @@
       "theorem_name": "formalizer_strictly_concave_function_attains_maximum_on_compact",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 7923.338250024244,
-        "planner_ms": 8115.523749962449,
-        "prover_ms": 75440.568,
-        "total_ms": 91479.43
+        "formalizer_ms": 13798.271291190758,
+        "planner_ms": 6556.905374862254,
+        "prover_ms": 71999.998,
+        "total_ms": 92355.175
       },
-      "tool_calls": 6,
+      "tool_calls": 1,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 3205,
-          "latency_ms": 7923.338,
+          "input_tokens": 6965,
+          "latency_ms": 13798.271,
           "model": "labs-leanstral-2603",
-          "output_tokens": 306,
+          "output_tokens": 939,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -613,11 +552,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.000873,
+          "estimated_cost_usd": 0.000813,
           "input_tokens": 480,
-          "latency_ms": 8115.524,
+          "latency_ms": 6556.905,
           "model": "mistral-large-2512",
-          "output_tokens": 422,
+          "output_tokens": 382,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -626,10 +565,10 @@
         "prover": {
           "error_code": "schema_invalid",
           "estimated_cost_usd": 0.0,
-          "input_tokens": 8383,
-          "latency_ms": 6545.395,
+          "input_tokens": 6561,
+          "latency_ms": 8768.32,
           "model": "labs-leanstral-2603",
-          "output_tokens": 381,
+          "output_tokens": 219,
           "provider": "mistral",
           "stage": "prover",
           "success": false,
@@ -643,7 +582,7 @@
       "benchmark_mode": true,
       "decomposition_depth": 0,
       "decomposition_steps": 0,
-      "failure_code": "compile_failed",
+      "failure_code": "unsolved_goals",
       "id": "t2_monotone_sequence_converges",
       "progress_events": [
         {
@@ -657,7 +596,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-24T03:08:04.474406+00:00"
+          "timestamp": "2026-04-24T03:56:06.035281+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -670,7 +609,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-24T03:08:11.987797+00:00"
+          "timestamp": "2026-04-24T03:56:14.448264+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -683,7 +622,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-24T03:08:11.988658+00:00"
+          "timestamp": "2026-04-24T03:56:14.449588+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -696,7 +635,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-24T03:08:22.350686+00:00"
+          "timestamp": "2026-04-24T03:56:24.669006+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -709,22 +648,41 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-24T03:08:22.351624+00:00"
+          "timestamp": "2026-04-24T03:56:24.669803+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Starting target `h_monotone_bounded_converges`.",
+          "message": "Starting target `h_monotone_convergence`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_monotone_bounded_converges",
+            "target_name": "h_monotone_convergence",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:22.352289+00:00"
+          "timestamp": "2026-04-24T03:56:24.670452+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "claim_type = mathlib_native; mathlib_native_mode=True; skipping preamble-derived direct-close candidates.",
+          "metadata": {
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "direct_close_attempt_cap": 2,
+            "mathlib_native_mode": true,
+            "preamble_shortcuts_enabled": false,
+            "target_kind": "subgoal",
+            "target_name": "h_monotone_convergence"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:56:24.670596+00:00"
         },
         {
           "claim_id": null,
@@ -734,13 +692,13 @@
           "metadata": {
             "action_type": "tool",
             "backend": "leanstral",
-            "target_name": "h_monotone_bounded_converges",
+            "target_name": "h_monotone_convergence",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:31.595678+00:00"
+          "timestamp": "2026-04-24T03:56:33.789218+00:00"
         },
         {
           "claim_id": null,
@@ -750,14 +708,14 @@
           "metadata": {
             "error_code": null,
             "success": true,
-            "target_name": "h_monotone_bounded_converges",
+            "target_name": "h_monotone_convergence",
             "tool_name": "get_goals",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:31.597168+00:00"
+          "timestamp": "2026-04-24T03:56:33.790658+00:00"
         },
         {
           "claim_id": null,
@@ -767,13 +725,46 @@
           "metadata": {
             "action_type": "tool",
             "backend": "leanstral",
-            "target_name": "h_monotone_bounded_converges",
+            "target_name": "h_monotone_convergence",
             "turn": 2
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:38.152167+00:00"
+          "timestamp": "2026-04-24T03:56:38.810450+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "Tool `get_goals` executed.",
+          "metadata": {
+            "error_code": null,
+            "success": true,
+            "target_name": "h_monotone_convergence",
+            "tool_name": "get_goals",
+            "turn": 2
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:56:38.812335+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "Provider produced action `tool`.",
+          "metadata": {
+            "action_type": "tool",
+            "backend": "leanstral",
+            "target_name": "h_monotone_convergence",
+            "turn": 4
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:57:15.272500+00:00"
         },
         {
           "claim_id": null,
@@ -783,179 +774,14 @@
           "metadata": {
             "error_code": null,
             "success": true,
-            "target_name": "h_monotone_bounded_converges",
+            "target_name": "h_monotone_convergence",
             "tool_name": "write_current_code",
-            "turn": 2
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:41.291157+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_monotone_bounded_converges",
-            "turn": 3
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:45.327422+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Tool `get_goals` executed.",
-          "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_monotone_bounded_converges",
-            "tool_name": "get_goals",
-            "turn": 3
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:45.328690+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_monotone_bounded_converges",
             "turn": 4
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:49.311005+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Tool `get_goals` executed.",
-          "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_monotone_bounded_converges",
-            "tool_name": "get_goals",
-            "turn": 4
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:49.312171+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_monotone_bounded_converges",
-            "turn": 5
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:54.755352+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Tool `write_current_code` executed.",
-          "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_monotone_bounded_converges",
-            "tool_name": "write_current_code",
-            "turn": 5
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:08:57.646005+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_monotone_bounded_converges",
-            "turn": 6
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:09:01.485635+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Tool `compile_current_code` executed.",
-          "metadata": {
-            "error_code": "compile_failed",
-            "success": false,
-            "target_name": "h_monotone_bounded_converges",
-            "tool_name": "compile_current_code",
-            "turn": 6
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:09:04.191588+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_monotone_bounded_converges",
-            "turn": 7
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:09:21.629639+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Tool `compile_current_code` executed.",
-          "metadata": {
-            "error_code": "compile_failed",
-            "success": false,
-            "target_name": "h_monotone_bounded_converges",
-            "tool_name": "compile_current_code",
-            "turn": 7
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:09:24.332806+00:00"
+          "timestamp": "2026-04-24T03:57:18.464177+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -968,7 +794,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "failed",
-          "timestamp": "2026-04-24T03:09:28.136983+00:00"
+          "timestamp": "2026-04-24T03:57:22.343034+00:00"
         }
       ],
       "raw_claim": "A monotone sequence bounded above converges.",
@@ -982,20 +808,20 @@
       "theorem_name": "formalizer_monotone_sequence_bounded_above_converges",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 10361.438625026494,
-        "planner_ms": 7512.898667016998,
-        "prover_ms": 65783.344,
-        "total_ms": 83657.681
+        "formalizer_ms": 10218.709333101287,
+        "planner_ms": 8412.581375101581,
+        "prover_ms": 57671.771,
+        "total_ms": 76303.062
       },
-      "tool_calls": 7,
+      "tool_calls": 3,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6839,
-          "latency_ms": 10361.439,
+          "input_tokens": 6959,
+          "latency_ms": 10218.709,
           "model": "labs-leanstral-2603",
-          "output_tokens": 571,
+          "output_tokens": 585,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -1003,26 +829,26 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.000795,
+          "estimated_cost_usd": 0.0009555,
           "input_tokens": 453,
-          "latency_ms": 7512.899,
+          "latency_ms": 8412.581,
           "model": "mistral-large-2512",
-          "output_tokens": 379,
+          "output_tokens": 486,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
           "usage_source": "provider"
         },
         "prover": {
-          "error_code": null,
+          "error_code": "schema_invalid",
           "estimated_cost_usd": 0.0,
-          "input_tokens": 11703,
-          "latency_ms": 10921.214,
+          "input_tokens": 5937,
+          "latency_ms": 8197.612,
           "model": "labs-leanstral-2603",
-          "output_tokens": 905,
+          "output_tokens": 470,
           "provider": "mistral",
           "stage": "prover",
-          "success": true,
+          "success": false,
           "usage_source": "provider"
         }
       },
@@ -1043,16 +869,16 @@
   },
   "tokens_by_stage": {
     "formalizer": {
-      "input_tokens": 16625,
-      "output_tokens": 1376
+      "input_tokens": 20475,
+      "output_tokens": 2016
     },
     "planner": {
       "input_tokens": 1441,
-      "output_tokens": 999
+      "output_tokens": 1055
     },
     "prover": {
-      "input_tokens": 23442,
-      "output_tokens": 1466
+      "input_tokens": 15950,
+      "output_tokens": 902
     }
   }
 }
