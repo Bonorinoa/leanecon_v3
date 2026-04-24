@@ -27,9 +27,7 @@ For mathlib-native proving, make sure `lean-lsp-mcp` is available either in `.ve
 - `docs/CHARTER_v3.md`: mission, assets, liabilities, and alpha success metrics.
 - `docs/ARCHITECTURE_v3.md`: authoritative v3 runtime architecture.
 - `docs/LeanEcon Engineering Log.md`: sprint-by-sprint implementation history, including the Sprint 20 mathlib-native/LSP update.
-
 - `docs/RAILWAY_DEPLOYMENT_CHECKLIST.md`: minimum deployment bar before any Railway readiness claim.
-
 - `skills/*.md`: runtime process knowledge for HILBERT, APOLLO, guardrails, and the preamble model.
 - `evals/claim_sets/`: canonical benchmark inputs plus the v3 alpha PhD-qual additions. Historical mixed sets live under `evals/claim_sets/archive/`, and regression-only utilities live under `evals/claim_sets/regressions/`.
 - `evals/benchmark_manifest.json`: claim-set bucket mix, theorem-stub usage, and integrity status.
