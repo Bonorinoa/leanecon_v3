@@ -279,6 +279,71 @@ async def test_prover_reports_no_progress_stall_for_unchanged_repl_state(tmp_pat
 
 
 @pytest.mark.anyio
+async def test_prover_fails_fast_after_direct_closure_exhaustion_stalls(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    theorem_code = "import Mathlib\n\ntheorem stalled_after_shortcuts : True := by\n  sorry\n"
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(prover_module.Prover, "_has_direct_candidates", lambda self, **_: True)
+    monkeypatch.setattr(prover_module.Prover, "_try_direct_definable_closure", lambda self, **_: None)
+    monkeypatch.setattr(prover_module.Prover, "_try_repl_compile_recovery", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    driver = ScriptedDriver(
+        {
+            "theorem_body": [
+                {
+                    "action_type": "tool",
+                    "rationale": "Rewrite the same code back into the session.",
+                    "tool": {"name": "write_current_code", "arguments": {"code": theorem_code}},
+                },
+                {
+                    "action_type": "tool",
+                    "rationale": "Try a tactic that still does not compile.",
+                    "tool": {"name": "apply_tactic", "arguments": {"tactic": "bad_tactic"}},
+                },
+                {
+                    "action_type": "tool",
+                    "rationale": "The prover should not need this third turn.",
+                    "tool": {"name": "apply_tactic", "arguments": {"tactic": "bad_tactic"}},
+                },
+            ]
+        }
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=driver,
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="stalled_after_shortcuts",
+            claim="A claim that should stop once shortcut recovery and tool turns stop changing state.",
+            lean_code=theorem_code,
+            selected_preamble=[],
+        ),
+        "job_stalled_after_shortcuts",
+        max_turns=6,
+    )
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.reason == "no_progress_stall"
+    assert driver.call_count == 1
+
+
+@pytest.mark.anyio
 async def test_prover_closes_simple_algebra_with_field_simp_and_ring(tmp_path, monkeypatch) -> None:
     import src.prover.prover as prover_module
 

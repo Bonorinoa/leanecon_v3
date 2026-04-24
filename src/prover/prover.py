@@ -71,6 +71,7 @@ from src.tools import ToolCall, ToolRegistry, ToolResult, build_default_registry
 
 SHORTCUT_ATTEMPT_TIMEOUT_SECONDS = 25
 MAX_DIRECT_CLOSURE_CANDIDATES = 24
+POST_DIRECT_CLOSURE_STALL_LIMIT = 2
 
 SHORTCUT_FALLBACK_TACTICS: tuple[tuple[str, str], ...] = (
     ("assumption", "Goal matches a local hypothesis; closing via `assumption`."),
@@ -915,6 +916,14 @@ class Prover:
         audit_events: list[AuditEvent],
         on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> tuple[bool, str, ProverFailure | None]:
+        theorem_name = self._target_theorem_name(packet, target)
+        initial_direct_candidate_count = len(
+            self._direct_candidate_proofs(
+                packet=packet,
+                current_code=current_code,
+                include_fallback_tactics=False,
+            )
+        )
         direct_close = self._try_direct_definable_closure(
             packet=packet,
             target=target,
@@ -959,10 +968,13 @@ class Prover:
         soft_repair_used = False
         no_progress_streak = 0
         last_progress_fingerprint: tuple[str, tuple[str, ...], tuple[str, ...], str] | None = None
+        last_structural_state: tuple[str, tuple[str, ...]] | None = None
+        structural_stall_streak = 0
         force_deterministic_recovery = False
         seen_failures: dict[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str], int] = {}
         scaffold_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]] = set()
         branch_tactic_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]] = set()
+        exhausted_direct_closure_states: set[tuple[str, tuple[str, ...]]] = set()
         last_failure_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = None
         repeated_failure_streak = 0
         last_schema_invalid_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = None
@@ -983,6 +995,14 @@ class Prover:
                 compile_result = session.compile_current_code()
                 lean_feedback = failure_feedback_messages(compile_result)
                 goals = session.get_goals()
+                structural_state = self._structural_state_fingerprint(
+                    session=session,
+                    theorem_name=theorem_name,
+                )
+                if last_structural_state is None:
+                    last_structural_state = structural_state
+                if turn == 1 and initial_direct_candidate_count > 0:
+                    exhausted_direct_closure_states.add(structural_state)
 
                 if compile_result["success"] and (not session.active_repl or not goals):
                     return True, current_code, None
@@ -1052,9 +1072,12 @@ class Prover:
                             failed_turns = 0
                             continue
 
-                has_targeted_recovery = self._has_direct_candidates(
-                    packet=packet,
-                    current_code=current_code,
+                has_targeted_recovery = (
+                    structural_state not in exhausted_direct_closure_states
+                    and self._has_direct_candidates(
+                        packet=packet,
+                        current_code=current_code,
+                    )
                 ) or self._has_targeted_fast_path(current_code)
                 recovery_forced = force_deterministic_recovery
                 repaired, repaired_code, repaired_failure = self._apply_deterministic_repair(
@@ -1070,6 +1093,7 @@ class Prover:
                     include_fallback_tactics=force_deterministic_recovery or failed_turns > 0 or no_progress_streak > 0,
                     scaffold_attempts=scaffold_attempts,
                     branch_tactic_attempts=branch_tactic_attempts,
+                    exhausted_direct_closure_states=exhausted_direct_closure_states,
                 )
                 force_deterministic_recovery = False
                 if repaired_failure is not None:
@@ -1109,6 +1133,15 @@ class Prover:
                         no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
                     )
                     last_progress_fingerprint = fingerprint
+                    structural_state = self._structural_state_fingerprint(
+                        session=session,
+                        theorem_name=theorem_name,
+                    )
+                    if structural_state == last_structural_state:
+                        structural_stall_streak += 1
+                    else:
+                        structural_stall_streak = 0
+                    last_structural_state = structural_state
                     continue
 
                 prompt = _build_prompt(
@@ -1522,11 +1555,33 @@ class Prover:
                         no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
                     )
                     last_progress_fingerprint = fingerprint
+                    structural_state = self._structural_state_fingerprint(
+                        session=session,
+                        theorem_name=theorem_name,
+                    )
+                    if structural_state == last_structural_state:
+                        structural_stall_streak += 1
+                    else:
+                        structural_stall_streak = 0
+                    last_structural_state = structural_state
                     if "no_progress_stall:" in tool_result.content:
                         return False, session.read_code(), ProverFailure(
                             reason="no_progress_stall",
                             message="REPL tactics stopped making progress on the active goal.",
                             error_code="unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=session.get_goals(),
+                        )
+                    if (
+                        structural_state in exhausted_direct_closure_states
+                        and structural_stall_streak >= POST_DIRECT_CLOSURE_STALL_LIMIT
+                    ):
+                        return False, session.read_code(), ProverFailure(
+                            reason="no_progress_stall",
+                            message="The proof state did not change after direct closure was exhausted.",
+                            error_code=step.error_code or "unsolved_goals",
                             target_name=target.name,
                             turn=turn,
                             backend=active_backend.name,
@@ -1558,6 +1613,28 @@ class Prover:
                     no_progress_streak + 1 if fingerprint == last_progress_fingerprint else 0
                 )
                 last_progress_fingerprint = fingerprint
+                structural_state = self._structural_state_fingerprint(
+                    session=session,
+                    theorem_name=theorem_name,
+                )
+                if structural_state == last_structural_state:
+                    structural_stall_streak += 1
+                else:
+                    structural_stall_streak = 0
+                last_structural_state = structural_state
+                if (
+                    structural_state in exhausted_direct_closure_states
+                    and structural_stall_streak >= POST_DIRECT_CLOSURE_STALL_LIMIT
+                ):
+                    return False, session.read_code(), ProverFailure(
+                        reason="no_progress_stall",
+                        message="The proof state did not change after direct closure was exhausted.",
+                        error_code="unsolved_goals",
+                        target_name=target.name,
+                        turn=turn,
+                        backend=active_backend.name,
+                        lean_feedback=session.get_goals(),
+                    )
 
             return False, session.read_code(), ProverFailure(
                 reason="max_turns_exhausted",
@@ -2008,9 +2085,22 @@ class Prover:
         lean_feedback: list[str],
     ) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
         return (
+            *self._structural_state_fingerprint(
+                session=session,
+                theorem_name=theorem_name,
+            ),
+            normalized_diagnostic_signature(lean_feedback),
+        )
+
+    def _structural_state_fingerprint(
+        self,
+        *,
+        session: _ActiveProofSession,
+        theorem_name: str,
+    ) -> tuple[str, tuple[str, ...]]:
+        return (
             _proof_body_fingerprint(session.read_code(), theorem_name),
             tuple(session.get_goals()),
-            normalized_diagnostic_signature(lean_feedback),
         )
 
     def _progress_fingerprint(
@@ -2111,6 +2201,7 @@ class Prover:
         include_fallback_tactics: bool,
         scaffold_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]],
         branch_tactic_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]],
+        exhausted_direct_closure_states: set[tuple[str, tuple[str, ...]]],
     ) -> tuple[bool, str | None, ProverFailure | None]:
         theorem_name = self._target_theorem_name(packet, target)
         goals = session.get_goals()
@@ -2175,7 +2266,14 @@ class Prover:
                     )
                 return False, session.read_code(), None
 
-        if include_fallback_tactics or self._has_direct_candidates(packet=packet, current_code=session.read_code()):
+        structural_state = self._structural_state_fingerprint(
+            session=session,
+            theorem_name=theorem_name,
+        )
+        can_retry_direct_recovery = structural_state not in exhausted_direct_closure_states and (
+            include_fallback_tactics or self._has_direct_candidates(packet=packet, current_code=session.read_code())
+        )
+        if can_retry_direct_recovery:
             recovery = self._try_repl_compile_recovery(
                 packet=packet,
                 target=target,
@@ -2198,6 +2296,7 @@ class Prover:
                     rationale=recovery["rationale"],
                 )
                 return True, session.read_code(), None
+            exhausted_direct_closure_states.add(structural_state)
 
         if session.get_goals() and not self._active_goal_matches_theorem_goal(session):
             state_key = self._state_fingerprint(
@@ -2457,6 +2556,8 @@ class Prover:
             return ToolResult(call.id, session.read_code())
         if tool.name == "write_current_code":
             code = str(tool.arguments.get("code", ""))
+            if session.read_code().strip() == code.strip():
+                return ToolResult(call.id, "no_progress_stall: write_current_code did not change the proof.", is_error=True)
             session.write_code(code)
             return ToolResult(call.id, "Updated the current proof code.")
         if tool.name == "lean_run_code":
