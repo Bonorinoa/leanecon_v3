@@ -9,7 +9,7 @@ from pathlib import Path
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 from src.config import (
     BENCHMARK_MAX_RECURSION_DEPTH,
@@ -94,6 +94,8 @@ _HINT_FIRST_PREAMBLES = frozenset(
     }
 )
 _WRAPPER_SIMPA_SHAPES = frozenset({"Monotone", "Antitone", "StrictMono", "StrictAnti"})
+_RECOGNIZED_CLAIM_TYPES = frozenset({"preamble_definable", "mathlib_native"})
+MATHLIB_NATIVE_DIRECT_CLOSE_LIMIT = 2
 
 
 class ProverDriverError(RuntimeError):
@@ -106,6 +108,41 @@ class ProverBackend:
     provider: str
     model: str
     notes: str
+
+
+ClaimType = Literal["preamble_definable", "mathlib_native"]
+
+
+@dataclass(frozen=True)
+class DirectClosePolicy:
+    claim_type: ClaimType | None
+    claim_type_policy: str
+    attempt_cap: int
+    preamble_shortcuts_enabled: bool
+
+
+@dataclass(frozen=True)
+class DirectCloseAttemptSummary:
+    candidate_count: int
+    attempt_limit: int
+    attempts_used: int
+    claim_type: ClaimType | None
+    claim_type_policy: str
+    preamble_shortcuts_enabled: bool
+
+    @property
+    def exhausted(self) -> bool:
+        return self.candidate_count > 0 and self.attempts_used >= self.attempt_limit
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "candidate_count": self.candidate_count,
+            "attempt_limit": self.attempt_limit,
+            "attempts_used": self.attempts_used,
+            "claim_type": self.claim_type,
+            "claim_type_policy": self.claim_type_policy,
+            "preamble_shortcuts_enabled": self.preamble_shortcuts_enabled,
+        }
 
 
 class ProverDriver(Protocol):
@@ -451,6 +488,7 @@ def _build_prompt(
     prompt_payload = {
         "claim": packet.claim,
         "theorem_name": packet.theorem_name,
+        "claim_type": getattr(packet, "claim_type", None),
         "selected_preamble": packet.selected_preamble,
         "target": target.model_dump(mode="json"),
         "current_code": current_code,
@@ -604,6 +642,35 @@ class Prover:
             if entry is not None:
                 entries.append(entry)
         return entries
+
+    def _normalized_claim_type(self, packet: FormalizationPacket) -> ClaimType | None:
+        claim_type = getattr(packet, "claim_type", None)
+        if claim_type in _RECOGNIZED_CLAIM_TYPES:
+            return claim_type
+        return None
+
+    def _direct_close_policy(self, packet: FormalizationPacket) -> DirectClosePolicy:
+        claim_type = self._normalized_claim_type(packet)
+        if claim_type == "mathlib_native":
+            return DirectClosePolicy(
+                claim_type=claim_type,
+                claim_type_policy="mathlib_native_cap_2_no_preamble_shortcuts",
+                attempt_cap=MATHLIB_NATIVE_DIRECT_CLOSE_LIMIT,
+                preamble_shortcuts_enabled=False,
+            )
+        if claim_type == "preamble_definable":
+            return DirectClosePolicy(
+                claim_type=claim_type,
+                claim_type_policy="preamble_definable_default",
+                attempt_cap=MAX_DIRECT_CLOSURE_CANDIDATES,
+                preamble_shortcuts_enabled=True,
+            )
+        return DirectClosePolicy(
+            claim_type=None,
+            claim_type_policy="default",
+            attempt_cap=MAX_DIRECT_CLOSURE_CANDIDATES,
+            preamble_shortcuts_enabled=True,
+        )
 
     async def prove(
         self,
@@ -917,20 +984,31 @@ class Prover:
         on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> tuple[bool, str, ProverFailure | None]:
         theorem_name = self._target_theorem_name(packet, target)
-        initial_direct_candidate_count = len(
-            self._direct_candidate_proofs(
-                packet=packet,
-                current_code=current_code,
-                include_fallback_tactics=False,
-            )
+        direct_close_policy = self._direct_close_policy(packet)
+        direct_close_budget = (
+            {"remaining": direct_close_policy.attempt_cap}
+            if direct_close_policy.claim_type == "mathlib_native"
+            else None
         )
-        direct_close = self._try_direct_definable_closure(
+        if target.kind == "theorem_body" and direct_close_policy.claim_type is not None:
+            self._record_claim_type_awareness(
+                trace=trace,
+                audit_events=audit_events,
+                backend=self.primary_backend,
+                target=target,
+                turn=1,
+                job_id=job_id,
+                on_progress=on_progress,
+                policy=direct_close_policy,
+            )
+        direct_close, direct_close_summary = self._try_direct_definable_closure(
             packet=packet,
             target=target,
             current_code=current_code,
             timeout=timeout,
             job_id=job_id,
             on_progress=on_progress,
+            attempt_budget=direct_close_budget,
         )
         if direct_close is not None:
             self._emit_progress(
@@ -953,6 +1031,7 @@ class Prover:
                 proof=direct_close["proof"],
                 source=direct_close["source"],
                 rationale=direct_close["rationale"],
+                policy=direct_close_policy,
             )
             return True, direct_close["code"], None
 
@@ -974,7 +1053,8 @@ class Prover:
         seen_failures: dict[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str], int] = {}
         scaffold_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]] = set()
         branch_tactic_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]] = set()
-        exhausted_direct_closure_states: set[tuple[str, tuple[str, ...]]] = set()
+        exhausted_direct_closure_states: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+        pending_direct_close_exhaustion = direct_close_summary if direct_close_summary.exhausted else None
         last_failure_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = None
         repeated_failure_streak = 0
         last_schema_invalid_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = None
@@ -1001,8 +1081,12 @@ class Prover:
                 )
                 if last_structural_state is None:
                     last_structural_state = structural_state
-                if turn == 1 and initial_direct_candidate_count > 0:
-                    exhausted_direct_closure_states.add(structural_state)
+                if pending_direct_close_exhaustion is not None:
+                    exhausted_direct_closure_states.setdefault(
+                        structural_state,
+                        pending_direct_close_exhaustion.metadata(),
+                    )
+                    pending_direct_close_exhaustion = None
 
                 if compile_result["success"] and (not session.active_repl or not goals):
                     return True, current_code, None
@@ -1011,12 +1095,13 @@ class Prover:
                     repeated_solved = self._repeated_solved_repl_tactic(trace=trace, target=target)
                     if repeated_solved:
                         if soft_repair_used:
-                            recovered = self._try_repl_compile_recovery(
+                            recovered, recovery_summary = self._try_repl_compile_recovery(
                                 packet=packet,
                                 target=target,
                                 current_code=self.file_controller.build_final_code(job_id, session.read_code()),
                                 timeout=timeout,
                                 include_fallback_tactics=force_deterministic_recovery,
+                                attempt_budget=direct_close_budget,
                             )
                             if recovered is not None:
                                 session.write_code(recovered["code"])
@@ -1031,8 +1116,11 @@ class Prover:
                                     proof=recovered["proof"],
                                     source=recovered["source"],
                                     rationale=recovered["rationale"],
+                                    policy=direct_close_policy,
                                 )
                                 return True, session.read_code(), None
+                            if recovery_summary.exhausted:
+                                exhausted_direct_closure_states[structural_state] = recovery_summary.metadata()
                             disagreement_fail = self._detect_repl_compile_disagreement(
                                 trace=trace,
                                 target=target,
@@ -1094,6 +1182,7 @@ class Prover:
                     scaffold_attempts=scaffold_attempts,
                     branch_tactic_attempts=branch_tactic_attempts,
                     exhausted_direct_closure_states=exhausted_direct_closure_states,
+                    direct_close_budget=direct_close_budget,
                 )
                 force_deterministic_recovery = False
                 if repaired_failure is not None:
@@ -1462,6 +1551,7 @@ class Prover:
                     )
 
                 assert action.tool is not None
+                pre_tool_structural_state = structural_state
                 tool_result = self._execute_tool(
                     session=session,
                     tool=action.tool,
@@ -1565,6 +1655,15 @@ class Prover:
                         structural_stall_streak = 0
                     last_structural_state = structural_state
                     if "no_progress_stall:" in tool_result.content:
+                        if pre_tool_structural_state in exhausted_direct_closure_states:
+                            return False, session.read_code(), self._direct_close_stall_failure(
+                                target=target,
+                                turn=turn,
+                                backend=active_backend,
+                                lean_feedback=session.get_goals(),
+                                exhaustion=exhausted_direct_closure_states[pre_tool_structural_state],
+                                error_code=step.error_code or "unsolved_goals",
+                            )
                         return False, session.read_code(), ProverFailure(
                             reason="no_progress_stall",
                             message="REPL tactics stopped making progress on the active goal.",
@@ -1578,14 +1677,13 @@ class Prover:
                         structural_state in exhausted_direct_closure_states
                         and structural_stall_streak >= POST_DIRECT_CLOSURE_STALL_LIMIT
                     ):
-                        return False, session.read_code(), ProverFailure(
-                            reason="no_progress_stall",
-                            message="The proof state did not change after direct closure was exhausted.",
-                            error_code=step.error_code or "unsolved_goals",
-                            target_name=target.name,
+                        return False, session.read_code(), self._direct_close_stall_failure(
+                            target=target,
                             turn=turn,
-                            backend=active_backend.name,
+                            backend=active_backend,
                             lean_feedback=session.get_goals(),
+                            exhaustion=exhausted_direct_closure_states[structural_state],
+                            error_code=step.error_code or "unsolved_goals",
                         )
                     if failure_repeats >= 3:
                         return False, session.read_code(), ProverFailure(
@@ -1623,17 +1721,26 @@ class Prover:
                     structural_stall_streak = 0
                 last_structural_state = structural_state
                 if (
+                    pre_tool_structural_state in exhausted_direct_closure_states
+                    and structural_state == pre_tool_structural_state
+                ):
+                    return False, session.read_code(), self._direct_close_stall_failure(
+                        target=target,
+                        turn=turn,
+                        backend=active_backend,
+                        lean_feedback=session.get_goals(),
+                        exhaustion=exhausted_direct_closure_states[pre_tool_structural_state],
+                    )
+                if (
                     structural_state in exhausted_direct_closure_states
                     and structural_stall_streak >= POST_DIRECT_CLOSURE_STALL_LIMIT
                 ):
-                    return False, session.read_code(), ProverFailure(
-                        reason="no_progress_stall",
-                        message="The proof state did not change after direct closure was exhausted.",
-                        error_code="unsolved_goals",
-                        target_name=target.name,
+                    return False, session.read_code(), self._direct_close_stall_failure(
+                        target=target,
                         turn=turn,
-                        backend=active_backend.name,
+                        backend=active_backend,
                         lean_feedback=session.get_goals(),
+                        exhaustion=exhausted_direct_closure_states[structural_state],
                     )
 
             return False, session.read_code(), ProverFailure(
@@ -1802,6 +1909,7 @@ class Prover:
         from src.planner.retrieval import _entry_tactic_hints, _load_metadata
 
         candidates: list[tuple[str, str, str]] = []
+        policy = self._direct_close_policy(packet)
         theorem_goal = theorem_goal_statement(current_code) or ""
         goal_shape = classify_goal_shape(theorem_goal)
         parameter_names = theorem_parameter_names(current_code)
@@ -1828,48 +1936,49 @@ class Prover:
                 ]
             )
 
-        for entry in self._selected_preamble_entries(packet):
-            metadata = _load_metadata(entry)
-            hint_candidates = [
-                (hint, entry.name, f"Metadata tactic hint from `{entry.name}`.")
-                for hint in _entry_tactic_hints(entry, metadata)
-            ]
-            lemma_candidates: list[tuple[str, str, str]] = []
-            rewrite_tokens = [str(name) for name in entry.definitions if str(name).strip()]
-            for lemma_name in entry.planner_proven_lemmas:
-                for expression in self._lemma_application_candidates(
-                    lemma_name,
-                    hypothesis_arg_names,
-                    explicit_goal_arg_names,
-                ):
-                    lemma_candidates.append(
-                        (f"exact {expression}", entry.name, f"Exact preamble lemma `{expression}` closes the goal.")
-                    )
-                    lemma_candidates.append(
-                        (f"simpa using {expression}", entry.name, f"Simplify using preamble lemma `{expression}`.")
-                    )
-                    if rewrite_tokens:
+        if policy.preamble_shortcuts_enabled:
+            for entry in self._selected_preamble_entries(packet):
+                metadata = _load_metadata(entry)
+                hint_candidates = [
+                    (hint, entry.name, f"Metadata tactic hint from `{entry.name}`.")
+                    for hint in _entry_tactic_hints(entry, metadata)
+                ]
+                lemma_candidates: list[tuple[str, str, str]] = []
+                rewrite_tokens = [str(name) for name in entry.definitions if str(name).strip()]
+                for lemma_name in entry.planner_proven_lemmas:
+                    for expression in self._lemma_application_candidates(
+                        lemma_name,
+                        hypothesis_arg_names,
+                        explicit_goal_arg_names,
+                    ):
                         lemma_candidates.append(
-                            (
-                                f"simpa [{', '.join(rewrite_tokens)}] using {expression}",
-                                entry.name,
-                                f"Normalize definitional wrappers before using `{expression}`.",
-                            )
+                            (f"exact {expression}", entry.name, f"Exact preamble lemma `{expression}` closes the goal.")
                         )
-                    if goal_shape.wrapper in _WRAPPER_SIMPA_SHAPES:
                         lemma_candidates.append(
-                            (
-                                f"simpa [{goal_shape.wrapper}] using {expression}",
-                                entry.name,
-                                f"Normalize the `{goal_shape.wrapper}` wrapper before using `{expression}`.",
-                            )
+                            (f"simpa using {expression}", entry.name, f"Simplify using preamble lemma `{expression}`.")
                         )
-            if entry.name in _HINT_FIRST_PREAMBLES:
-                candidates.extend(hint_candidates)
-                candidates.extend(lemma_candidates)
-            else:
-                candidates.extend(lemma_candidates)
-                candidates.extend(hint_candidates)
+                        if rewrite_tokens:
+                            lemma_candidates.append(
+                                (
+                                    f"simpa [{', '.join(rewrite_tokens)}] using {expression}",
+                                    entry.name,
+                                    f"Normalize definitional wrappers before using `{expression}`.",
+                                )
+                            )
+                        if goal_shape.wrapper in _WRAPPER_SIMPA_SHAPES:
+                            lemma_candidates.append(
+                                (
+                                    f"simpa [{goal_shape.wrapper}] using {expression}",
+                                    entry.name,
+                                    f"Normalize the `{goal_shape.wrapper}` wrapper before using `{expression}`.",
+                                )
+                            )
+                if entry.name in _HINT_FIRST_PREAMBLES:
+                    candidates.extend(hint_candidates)
+                    candidates.extend(lemma_candidates)
+                else:
+                    candidates.extend(lemma_candidates)
+                    candidates.extend(hint_candidates)
 
         if include_fallback_tactics:
             for tactic, rationale in SHORTCUT_FALLBACK_TACTICS:
@@ -1916,16 +2025,22 @@ class Prover:
         include_fallback_tactics: bool = False,
         job_id: str | None = None,
         on_progress: Callable[[str, dict[str, Any]], None] | None = None,
-    ) -> dict[str, Any] | None:
+        attempt_budget: dict[str, int] | None = None,
+    ) -> tuple[dict[str, Any] | None, DirectCloseAttemptSummary]:
         attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
         theorem_name = self._target_theorem_name(packet, target)
+        policy = self._direct_close_policy(packet)
         candidates = self._direct_candidate_proofs(
             packet=packet,
             current_code=current_code,
             include_fallback_tactics=include_fallback_tactics,
         )
-        attempt_limit = min(len(candidates), MAX_DIRECT_CLOSURE_CANDIDATES)
+        remaining_budget = attempt_budget.get("remaining") if attempt_budget is not None else None
+        attempt_cap = policy.attempt_cap if remaining_budget is None else min(policy.attempt_cap, max(remaining_budget, 0))
+        attempt_limit = min(len(candidates), attempt_cap)
+        attempts_used = 0
         for index, (proof, source, rationale) in enumerate(candidates[:attempt_limit], start=1):
+            attempts_used = index
             if job_id is not None:
                 self._emit_progress(
                     on_progress,
@@ -1943,24 +2058,56 @@ class Prover:
                         "attempt_limit": attempt_limit,
                         "candidate_count": len(candidates),
                         "compile_timeout_seconds": attempt_timeout,
+                        "claim_type": policy.claim_type,
+                        "claim_type_policy": policy.claim_type_policy,
+                        "direct_close_attempt_cap": policy.attempt_cap,
+                        "preamble_shortcuts_enabled": policy.preamble_shortcuts_enabled,
                     },
                 )
             try:
                 candidate_code = _replace_named_theorem_body(current_code, theorem_name, proof)
             except ValueError:
-                return None
+                return None, DirectCloseAttemptSummary(
+                    candidate_count=len(candidates),
+                    attempt_limit=attempt_limit,
+                    attempts_used=attempts_used,
+                    claim_type=policy.claim_type,
+                    claim_type_policy=policy.claim_type_policy,
+                    preamble_shortcuts_enabled=policy.preamble_shortcuts_enabled,
+                )
             try:
                 result = compile_check(candidate_code, timeout=attempt_timeout)
             except Exception:
                 continue
             if result.get("success"):
-                return {
-                    "code": candidate_code,
-                    "proof": proof,
-                    "source": source,
-                    "rationale": rationale,
-                }
-        return None
+                if attempt_budget is not None and remaining_budget is not None:
+                    attempt_budget["remaining"] = max(remaining_budget - attempts_used, 0)
+                return (
+                    {
+                        "code": candidate_code,
+                        "proof": proof,
+                        "source": source,
+                        "rationale": rationale,
+                    },
+                    DirectCloseAttemptSummary(
+                        candidate_count=len(candidates),
+                        attempt_limit=attempt_limit,
+                        attempts_used=attempts_used,
+                        claim_type=policy.claim_type,
+                        claim_type_policy=policy.claim_type_policy,
+                        preamble_shortcuts_enabled=policy.preamble_shortcuts_enabled,
+                    ),
+                )
+        if attempt_budget is not None and remaining_budget is not None:
+            attempt_budget["remaining"] = max(remaining_budget - attempts_used, 0)
+        return None, DirectCloseAttemptSummary(
+            candidate_count=len(candidates),
+            attempt_limit=attempt_limit,
+            attempts_used=attempts_used,
+            claim_type=policy.claim_type,
+            claim_type_policy=policy.claim_type_policy,
+            preamble_shortcuts_enabled=policy.preamble_shortcuts_enabled,
+        )
 
     def _record_direct_definable_closure(
         self,
@@ -1975,7 +2122,11 @@ class Prover:
         proof: str,
         source: str,
         rationale: str,
+        policy: DirectClosePolicy | None = None,
     ) -> None:
+        claim_type = policy.claim_type if policy is not None else None
+        claim_type_policy = policy.claim_type_policy if policy is not None else "default"
+        preamble_shortcuts_enabled = policy.preamble_shortcuts_enabled if policy is not None else True
         trace.append(
             ProverTraceStep(
                 turn=turn,
@@ -1985,7 +2136,12 @@ class Prover:
                 success=True,
                 rationale=rationale,
                 tool_name="compile_check",
-                tool_arguments={"proof": proof},
+                tool_arguments={
+                    "proof": proof,
+                    "claim_type": claim_type,
+                    "claim_type_policy": claim_type_policy,
+                    "preamble_shortcuts_enabled": preamble_shortcuts_enabled,
+                },
                 tool_result=f"Closed via `{proof.splitlines()[0]}` using `{source}`.",
                 lean_feedback=lean_feedback,
                 goals=[],
@@ -2004,6 +2160,9 @@ class Prover:
                     "target_name": target.name,
                     "proof": proof,
                     "source": source,
+                    "claim_type": claim_type,
+                    "claim_type_policy": claim_type_policy,
+                    "preamble_shortcuts_enabled": preamble_shortcuts_enabled,
                 },
             )
         )
@@ -2041,29 +2200,34 @@ class Prover:
         current_code: str,
         timeout: int,
         include_fallback_tactics: bool = False,
-    ) -> dict[str, str] | None:
-        direct_close = self._try_direct_definable_closure(
+        attempt_budget: dict[str, int] | None = None,
+    ) -> tuple[dict[str, str] | None, DirectCloseAttemptSummary]:
+        direct_close, direct_close_summary = self._try_direct_definable_closure(
             packet=packet,
             target=target,
             current_code=current_code,
             timeout=timeout,
             include_fallback_tactics=include_fallback_tactics,
+            attempt_budget=attempt_budget,
         )
         if direct_close is not None:
-            return direct_close
+            return direct_close, direct_close_summary
         normalization = self._try_compile_normalization_pass(
             theorem_name=self._target_theorem_name(packet, target),
             current_code=current_code,
             timeout=timeout,
         )
         if normalization is not None:
-            return {
-                "code": normalization["code"],
-                "proof": normalization["proof"],
-                "source": "compile_normalization",
-                "rationale": normalization["rationale"],
-            }
-        return None
+            return (
+                {
+                    "code": normalization["code"],
+                    "proof": normalization["proof"],
+                    "source": "compile_normalization",
+                    "rationale": normalization["rationale"],
+                },
+                direct_close_summary,
+            )
+        return None, direct_close_summary
 
     def _metadata_tactic_hints(self, packet: FormalizationPacket) -> list[str]:
         from src.planner.retrieval import _entry_tactic_hints, _load_metadata
@@ -2201,9 +2365,11 @@ class Prover:
         include_fallback_tactics: bool,
         scaffold_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]],
         branch_tactic_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]],
-        exhausted_direct_closure_states: set[tuple[str, tuple[str, ...]]],
+        exhausted_direct_closure_states: dict[tuple[str, tuple[str, ...]], dict[str, Any]],
+        direct_close_budget: dict[str, int] | None,
     ) -> tuple[bool, str | None, ProverFailure | None]:
         theorem_name = self._target_theorem_name(packet, target)
+        policy = self._direct_close_policy(packet)
         goals = session.get_goals()
         if goals:
             state_key = self._state_fingerprint(
@@ -2274,12 +2440,13 @@ class Prover:
             include_fallback_tactics or self._has_direct_candidates(packet=packet, current_code=session.read_code())
         )
         if can_retry_direct_recovery:
-            recovery = self._try_repl_compile_recovery(
+            recovery, recovery_summary = self._try_repl_compile_recovery(
                 packet=packet,
                 target=target,
                 current_code=session.read_code(),
                 timeout=timeout,
                 include_fallback_tactics=include_fallback_tactics,
+                attempt_budget=direct_close_budget,
             )
             if recovery is not None:
                 session.write_code(recovery["code"])
@@ -2294,9 +2461,11 @@ class Prover:
                     proof=recovery["proof"],
                     source=recovery["source"],
                     rationale=recovery["rationale"],
+                    policy=policy,
                 )
                 return True, session.read_code(), None
-            exhausted_direct_closure_states.add(structural_state)
+            if recovery_summary.exhausted:
+                exhausted_direct_closure_states[structural_state] = recovery_summary.metadata()
 
         if session.get_goals() and not self._active_goal_matches_theorem_goal(session):
             state_key = self._state_fingerprint(
@@ -2387,6 +2556,86 @@ class Prover:
     def _target_theorem_name(self, packet: FormalizationPacket, target: ProverTarget) -> str:
         return packet.theorem_name if target.kind == "theorem_body" else target.helper_theorem_name or target.name
 
+    def _record_claim_type_awareness(
+        self,
+        *,
+        trace: list[ProverTraceStep],
+        audit_events: list[AuditEvent],
+        backend: ProverBackend,
+        target: ProverTarget,
+        turn: int,
+        job_id: str,
+        on_progress: Callable[[str, dict[str, Any]], None] | None,
+        policy: DirectClosePolicy,
+    ) -> None:
+        metadata = {
+            "claim_type": policy.claim_type,
+            "claim_type_policy": policy.claim_type_policy,
+            "direct_close_attempt_cap": policy.attempt_cap,
+            "preamble_shortcuts_enabled": policy.preamble_shortcuts_enabled,
+        }
+        self._emit_progress(
+            on_progress,
+            "prover_turn",
+            job_id=job_id,
+            stage="prover",
+            status="running_prover",
+            message="Claim-type-aware direct-close policy is active.",
+            metadata={"target_name": target.name, **metadata},
+        )
+        trace.append(
+            ProverTraceStep(
+                turn=turn,
+                backend=backend.name,
+                target_name=target.name,
+                action_type="claim_type_awareness",
+                success=True,
+                rationale="Use the benchmark claim type to limit direct-close work.",
+                tool_name="claim_type_policy",
+                tool_arguments=metadata,
+                tool_result=(
+                    f"Claim type `{policy.claim_type}` active with policy "
+                    f"`{policy.claim_type_policy}`."
+                ),
+                code_snapshot="",
+            )
+        )
+        audit_events.append(
+            AuditEvent(
+                stage="prover",
+                event_type="claim_type_awareness",
+                provider=backend.provider,
+                model=backend.model,
+                success=True,
+                metadata={"turn": turn, "target_name": target.name, **metadata},
+            )
+        )
+
+    def _direct_close_stall_failure(
+        self,
+        *,
+        target: ProverTarget,
+        turn: int,
+        backend: ProverBackend,
+        lean_feedback: list[str],
+        exhaustion: dict[str, Any],
+        error_code: str = "unsolved_goals",
+    ) -> ProverFailure:
+        claim_type = exhaustion.get("claim_type")
+        claim_type_note = f" under claim type `{claim_type}`" if isinstance(claim_type, str) else ""
+        return ProverFailure(
+            reason="no_progress_stall",
+            message=(
+                "Direct-close candidates were exhausted"
+                f"{claim_type_note}, and the subsequent tool action did not change the proof state."
+            ),
+            error_code=error_code,
+            target_name=target.name,
+            turn=turn,
+            backend=backend.name,
+            lean_feedback=lean_feedback,
+        )
+
     def _repeated_solved_repl_tactic(
         self,
         *,
@@ -2422,12 +2671,13 @@ class Prover:
         current_code: str,
         timeout: int,
     ) -> dict[str, Any] | None:
-        shortcut = self._try_direct_definable_closure(
+        shortcut, _summary = self._try_direct_definable_closure(
             packet=packet,
             target=ProverTarget(name="theorem_body", statement=packet.theorem_name, kind="theorem_body"),
             current_code=current_code,
             timeout=timeout,
             include_fallback_tactics=True,
+            attempt_budget=None,
         )
         if shortcut is None:
             return None

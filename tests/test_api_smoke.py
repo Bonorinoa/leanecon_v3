@@ -413,3 +413,21 @@ def test_health_metrics_and_prometheus(monkeypatch, tmp_path) -> None:
 
     assert prometheus.status_code == 200
     assert "leanecon_benchmark_claims" in prometheus.text
+
+
+def test_metrics_history_endpoint(monkeypatch, tmp_path) -> None:
+    api_module = _configure_api(monkeypatch, tmp_path)
+    history_path = tmp_path / "benchmark_history.jsonl"
+    history_path.write_text(
+        '{"row_id":"run_000001","timestamp":"2026-04-23T23:15:00+00:00","overall_pass_rate":0.865}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_module, "CANONICAL_HISTORY_PATH", history_path)
+    client = TestClient(api_module.app)
+
+    response = client.get("/metrics/history")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["path"] == str(history_path)
+    assert payload["rows"][0]["row_id"] == "run_000001"

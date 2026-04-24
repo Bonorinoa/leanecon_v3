@@ -1,7 +1,7 @@
 {
   "average_decomposition_depth": 0.0,
   "average_decomposition_steps": 0.0,
-  "average_tool_calls": 1.2,
+  "average_tool_calls": 0.6,
   "benchmark_mode": true,
   "claim_set": "tier2_frontier_preamble_definable",
   "claim_set_manifest": {
@@ -103,24 +103,25 @@
       "provider": "mistral"
     },
     "mistral:mistral-large-2512": {
-      "estimated_cost_usd": 0.0061735,
+      "estimated_cost_usd": 0.0059965,
       "model": "mistral-large-2512",
       "provider": "mistral"
     }
   },
   "cost_by_stage": {
     "formalizer": 0.0,
-    "planner": 0.0061735,
+    "planner": 0.0059965,
     "prover": 0.0
   },
   "executed": true,
   "failure_counts": {
-    "unsolved_goals": 3
+    "compile_failed": 1,
+    "unsolved_goals": 2
   },
-  "generated_at": "2026-04-23T21:57:01.007470+00:00",
+  "generated_at": "2026-04-24T03:21:11.930962+00:00",
   "mode": "benchmark_pipeline",
   "pass_at_1": 0.7,
-  "progress_log_path": "/Users/bonorinoa/Desktop/Github_Repositories/leanecon_v3/benchmark_baselines/v3_alpha/benchmark_mode/tier2_frontier_preamble_definable.progress.jsonl",
+  "progress_log_path": "benchmark_baselines/v3_alpha/benchmark_mode/tier2_frontier_preamble_definable.progress.jsonl",
   "readiness": {
     "blockers": [],
     "capabilities": {
@@ -189,7 +190,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:41:09.180168+00:00"
+          "timestamp": "2026-04-24T03:09:28.140405+00:00"
         },
         {
           "claim_id": "t2_pareto_dominance_transitive",
@@ -202,7 +203,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:41:19.613977+00:00"
+          "timestamp": "2026-04-24T03:09:33.534785+00:00"
         },
         {
           "claim_id": "t2_pareto_dominance_transitive",
@@ -215,7 +216,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:41:19.614783+00:00"
+          "timestamp": "2026-04-24T03:09:33.535474+00:00"
         },
         {
           "claim_id": "t2_pareto_dominance_transitive",
@@ -228,7 +229,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:41:30.455836+00:00"
+          "timestamp": "2026-04-24T03:09:44.971633+00:00"
         },
         {
           "claim_id": "t2_pareto_dominance_transitive",
@@ -241,7 +242,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:41:30.456565+00:00"
+          "timestamp": "2026-04-24T03:09:44.972188+00:00"
         },
         {
           "claim_id": null,
@@ -256,7 +257,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:41:30.457328+00:00"
+          "timestamp": "2026-04-24T03:09:44.972720+00:00"
         },
         {
           "claim_id": null,
@@ -267,7 +268,11 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact BellmanOperator.monotone",
             "source": "bellman_operator",
             "target_name": "h_bellman_monotone",
@@ -276,7 +281,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:41:30.458643+00:00"
+          "timestamp": "2026-04-24T03:09:44.973595+00:00"
         },
         {
           "claim_id": null,
@@ -291,7 +296,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:41:34.692066+00:00"
+          "timestamp": "2026-04-24T03:09:49.754737+00:00"
         },
         {
           "claim_id": null,
@@ -306,7 +311,24 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:41:34.693512+00:00"
+          "timestamp": "2026-04-24T03:09:49.756142+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_pareto_dominance_transitive",
+          "message": "Claim-type-aware direct-close policy is active.",
+          "metadata": {
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "target_name": "theorem_body"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:09:49.756271+00:00"
         },
         {
           "claim_id": null,
@@ -317,7 +339,11 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact BellmanOperator.monotone",
             "source": "bellman_operator",
             "target_name": "theorem_body",
@@ -326,7 +352,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:41:34.694305+00:00"
+          "timestamp": "2026-04-24T03:09:49.756814+00:00"
         },
         {
           "claim_id": null,
@@ -341,7 +367,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:41:39.224218+00:00"
+          "timestamp": "2026-04-24T03:09:54.565383+00:00"
         },
         {
           "claim_id": "t2_pareto_dominance_transitive",
@@ -354,7 +380,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "verified",
-          "timestamp": "2026-04-23T21:41:43.858489+00:00"
+          "timestamp": "2026-04-24T03:09:59.224616+00:00"
         }
       ],
       "raw_claim": "If one continuation-value function dominates another and \u03b2 is nonnegative, Bellman operator monotonicity preserves that ranking state by state.",
@@ -365,23 +391,23 @@
         "theorem_body": 120
       },
       "termination_reason": "verified",
-      "theorem_name": "formalizer_bellman_operator_monotonicity_preserves_ranking",
+      "theorem_name": "formalizer_bellman_operator_monotonicity",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 10840.465041110292,
-        "planner_ms": 10433.292249916121,
-        "prover_ms": 13400.424,
-        "total_ms": 34674.181
+        "formalizer_ms": 11435.572667047381,
+        "planner_ms": 5394.037916790694,
+        "prover_ms": 14250.651,
+        "total_ms": 31080.262
       },
       "tool_calls": 0,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6756,
-          "latency_ms": 10840.465,
+          "input_tokens": 6782,
+          "latency_ms": 11435.573,
           "model": "labs-leanstral-2603",
-          "output_tokens": 655,
+          "output_tokens": 656,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -389,11 +415,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.000602,
+          "estimated_cost_usd": 0.000632,
           "input_tokens": 511,
-          "latency_ms": 10433.292,
+          "latency_ms": 5394.038,
           "model": "mistral-large-2512",
-          "output_tokens": 231,
+          "output_tokens": 251,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -421,7 +447,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:41:43.859752+00:00"
+          "timestamp": "2026-04-24T03:09:59.225627+00:00"
         },
         {
           "claim_id": "t2_utilitarian_swf_pareto_monotone",
@@ -434,7 +460,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:41:48.797678+00:00"
+          "timestamp": "2026-04-24T03:10:03.450356+00:00"
         },
         {
           "claim_id": "t2_utilitarian_swf_pareto_monotone",
@@ -447,7 +473,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:41:48.798437+00:00"
+          "timestamp": "2026-04-24T03:10:03.451085+00:00"
         },
         {
           "claim_id": "t2_utilitarian_swf_pareto_monotone",
@@ -460,7 +486,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:41:57.672900+00:00"
+          "timestamp": "2026-04-24T03:10:12.097067+00:00"
         },
         {
           "claim_id": "t2_utilitarian_swf_pareto_monotone",
@@ -473,22 +499,22 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:41:57.673541+00:00"
+          "timestamp": "2026-04-24T03:10:12.097490+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_utilitarian_swf_pareto_monotone",
-          "message": "Starting target `h_value_le`.",
+          "message": "Starting target `h_weak_dominance`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_value_le",
+            "target_name": "h_weak_dominance",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:41:57.674139+00:00"
+          "timestamp": "2026-04-24T03:10:12.098149+00:00"
         },
         {
           "claim_id": null,
@@ -499,16 +525,20 @@
             "attempt_index": 1,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "constructor",
             "source": "constrained_optimization",
-            "target_name": "h_value_le",
+            "target_name": "h_weak_dominance",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:41:57.675177+00:00"
+          "timestamp": "2026-04-24T03:10:12.098893+00:00"
         },
         {
           "claim_id": null,
@@ -519,16 +549,20 @@
             "attempt_index": 2,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact hx.2 hy",
             "source": "constrained_optimization",
-            "target_name": "h_value_le",
+            "target_name": "h_weak_dominance",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:01.299941+00:00"
+          "timestamp": "2026-04-24T03:10:15.817410+00:00"
         },
         {
           "claim_id": null,
@@ -539,16 +573,20 @@
             "attempt_index": 3,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact IsConstrainedMaximum.feasible",
             "source": "constrained_optimization",
-            "target_name": "h_value_le",
+            "target_name": "h_weak_dominance",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:04.964369+00:00"
+          "timestamp": "2026-04-24T03:10:19.559101+00:00"
         },
         {
           "claim_id": null,
@@ -559,16 +597,20 @@
             "attempt_index": 4,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using IsConstrainedMaximum.feasible",
             "source": "constrained_optimization",
-            "target_name": "h_value_le",
+            "target_name": "h_weak_dominance",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:08.616616+00:00"
+          "timestamp": "2026-04-24T03:10:23.344472+00:00"
         },
         {
           "claim_id": null,
@@ -579,16 +621,20 @@
             "attempt_index": 5,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [IsConstrainedMaximum] using IsConstrainedMaximum.feasible",
             "source": "constrained_optimization",
-            "target_name": "h_value_le",
+            "target_name": "h_weak_dominance",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:12.283846+00:00"
+          "timestamp": "2026-04-24T03:10:27.148917+00:00"
         },
         {
           "claim_id": null,
@@ -599,16 +645,20 @@
             "attempt_index": 6,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact IsConstrainedMaximum.value_le",
             "source": "constrained_optimization",
-            "target_name": "h_value_le",
+            "target_name": "h_weak_dominance",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:16.109386+00:00"
+          "timestamp": "2026-04-24T03:10:31.115336+00:00"
         },
         {
           "claim_id": null,
@@ -617,13 +667,13 @@
           "message": "Closed via direct definable closure.",
           "metadata": {
             "proof": "exact IsConstrainedMaximum.value_le",
-            "target_name": "h_value_le",
+            "target_name": "h_weak_dominance",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:19.788854+00:00"
+          "timestamp": "2026-04-24T03:10:34.938638+00:00"
         },
         {
           "claim_id": null,
@@ -638,7 +688,24 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:19.790119+00:00"
+          "timestamp": "2026-04-24T03:10:34.940133+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_utilitarian_swf_pareto_monotone",
+          "message": "Claim-type-aware direct-close policy is active.",
+          "metadata": {
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "target_name": "theorem_body"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:10:34.940280+00:00"
         },
         {
           "claim_id": null,
@@ -649,7 +716,11 @@
             "attempt_index": 1,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "constructor",
             "source": "constrained_optimization",
             "target_name": "theorem_body",
@@ -658,7 +729,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:19.791108+00:00"
+          "timestamp": "2026-04-24T03:10:34.941038+00:00"
         },
         {
           "claim_id": null,
@@ -669,7 +740,11 @@
             "attempt_index": 2,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact hx.2 hy",
             "source": "constrained_optimization",
             "target_name": "theorem_body",
@@ -678,7 +753,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:23.503813+00:00"
+          "timestamp": "2026-04-24T03:10:38.794064+00:00"
         },
         {
           "claim_id": null,
@@ -689,7 +764,11 @@
             "attempt_index": 3,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact IsConstrainedMaximum.feasible",
             "source": "constrained_optimization",
             "target_name": "theorem_body",
@@ -698,7 +777,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:27.239036+00:00"
+          "timestamp": "2026-04-24T03:10:42.722862+00:00"
         },
         {
           "claim_id": null,
@@ -709,7 +788,11 @@
             "attempt_index": 4,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using IsConstrainedMaximum.feasible",
             "source": "constrained_optimization",
             "target_name": "theorem_body",
@@ -718,7 +801,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:30.902730+00:00"
+          "timestamp": "2026-04-24T03:10:46.656599+00:00"
         },
         {
           "claim_id": null,
@@ -729,7 +812,11 @@
             "attempt_index": 5,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [IsConstrainedMaximum] using IsConstrainedMaximum.feasible",
             "source": "constrained_optimization",
             "target_name": "theorem_body",
@@ -738,7 +825,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:34.559293+00:00"
+          "timestamp": "2026-04-24T03:10:50.594586+00:00"
         },
         {
           "claim_id": null,
@@ -749,7 +836,11 @@
             "attempt_index": 6,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact IsConstrainedMaximum.value_le",
             "source": "constrained_optimization",
             "target_name": "theorem_body",
@@ -758,7 +849,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:38.340395+00:00"
+          "timestamp": "2026-04-24T03:10:54.619813+00:00"
         },
         {
           "claim_id": null,
@@ -773,7 +864,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:42:42.028207+00:00"
+          "timestamp": "2026-04-24T03:10:58.535186+00:00"
         },
         {
           "claim_id": "t2_utilitarian_swf_pareto_monotone",
@@ -786,7 +877,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "verified",
-          "timestamp": "2026-04-23T21:42:45.688031+00:00"
+          "timestamp": "2026-04-24T03:11:02.412353+00:00"
         }
       ],
       "raw_claim": "A constrained maximizer weakly dominates every feasible alternative in the objective ordering.",
@@ -800,20 +891,20 @@
       "theorem_name": "formalizer_constrained_maximizer_weakly_dominates_feasible",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 8873.84658306837,
-        "planner_ms": 4937.510374933481,
-        "prover_ms": 48013.461,
-        "total_ms": 61824.818
+        "formalizer_ms": 8645.224082982168,
+        "planner_ms": 4224.240582901984,
+        "prover_ms": 50313.181,
+        "total_ms": 63182.646
       },
       "tool_calls": 0,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6709,
-          "latency_ms": 8873.847,
+          "input_tokens": 6623,
+          "latency_ms": 8645.224,
           "model": "labs-leanstral-2603",
-          "output_tokens": 480,
+          "output_tokens": 462,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -821,11 +912,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.0006405,
+          "estimated_cost_usd": 0.000558,
           "input_tokens": 456,
-          "latency_ms": 4937.51,
+          "latency_ms": 4224.241,
           "model": "mistral-large-2512",
-          "output_tokens": 275,
+          "output_tokens": 220,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -853,7 +944,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:42:45.689178+00:00"
+          "timestamp": "2026-04-24T03:11:02.413305+00:00"
         },
         {
           "claim_id": "t2_bellman_monotone_value_function",
@@ -866,7 +957,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:42:51.773610+00:00"
+          "timestamp": "2026-04-24T03:11:06.841297+00:00"
         },
         {
           "claim_id": "t2_bellman_monotone_value_function",
@@ -879,7 +970,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:42:51.774591+00:00"
+          "timestamp": "2026-04-24T03:11:06.842343+00:00"
         },
         {
           "claim_id": "t2_bellman_monotone_value_function",
@@ -892,7 +983,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:43:02.288726+00:00"
+          "timestamp": "2026-04-24T03:11:17.678864+00:00"
         },
         {
           "claim_id": "t2_bellman_monotone_value_function",
@@ -905,7 +996,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:43:02.289535+00:00"
+          "timestamp": "2026-04-24T03:11:17.680145+00:00"
         },
         {
           "claim_id": null,
@@ -920,7 +1011,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:02.290222+00:00"
+          "timestamp": "2026-04-24T03:11:17.680888+00:00"
         },
         {
           "claim_id": null,
@@ -931,7 +1022,11 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [ValueFunction] using ContractingWith.fixedPoint_isFixedPt (f := T) hT",
             "source": "value_function",
             "target_name": "h_value_function_fixed_point",
@@ -940,7 +1035,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:02.290984+00:00"
+          "timestamp": "2026-04-24T03:11:17.681582+00:00"
         },
         {
           "claim_id": null,
@@ -951,7 +1046,11 @@
             "attempt_index": 2,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact ContractingWith.fixedPoint_isFixedPt (f := T) hT",
             "source": "value_function",
             "target_name": "h_value_function_fixed_point",
@@ -960,7 +1059,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:07.082607+00:00"
+          "timestamp": "2026-04-24T03:11:22.844451+00:00"
         },
         {
           "claim_id": null,
@@ -971,7 +1070,11 @@
             "attempt_index": 3,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact valueFunction_isFixedPt",
             "source": "value_function",
             "target_name": "h_value_function_fixed_point",
@@ -980,7 +1083,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:11.737128+00:00"
+          "timestamp": "2026-04-24T03:11:27.914203+00:00"
         },
         {
           "claim_id": null,
@@ -995,7 +1098,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:16.419672+00:00"
+          "timestamp": "2026-04-24T03:11:32.937713+00:00"
         },
         {
           "claim_id": null,
@@ -1010,7 +1113,24 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:16.420868+00:00"
+          "timestamp": "2026-04-24T03:11:32.938970+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_bellman_monotone_value_function",
+          "message": "Claim-type-aware direct-close policy is active.",
+          "metadata": {
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "target_name": "theorem_body"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:11:32.939104+00:00"
         },
         {
           "claim_id": null,
@@ -1021,7 +1141,11 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [ValueFunction] using ContractingWith.fixedPoint_isFixedPt (f := T) hT",
             "source": "value_function",
             "target_name": "theorem_body",
@@ -1030,7 +1154,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:16.421743+00:00"
+          "timestamp": "2026-04-24T03:11:32.939805+00:00"
         },
         {
           "claim_id": null,
@@ -1041,7 +1165,11 @@
             "attempt_index": 2,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact ContractingWith.fixedPoint_isFixedPt (f := T) hT",
             "source": "value_function",
             "target_name": "theorem_body",
@@ -1050,7 +1178,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:21.301883+00:00"
+          "timestamp": "2026-04-24T03:11:37.886875+00:00"
         },
         {
           "claim_id": null,
@@ -1061,7 +1189,11 @@
             "attempt_index": 3,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact valueFunction_isFixedPt",
             "source": "value_function",
             "target_name": "theorem_body",
@@ -1070,7 +1202,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:25.954525+00:00"
+          "timestamp": "2026-04-24T03:11:42.588137+00:00"
         },
         {
           "claim_id": null,
@@ -1085,7 +1217,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:30.618208+00:00"
+          "timestamp": "2026-04-24T03:11:47.310581+00:00"
         },
         {
           "claim_id": "t2_bellman_monotone_value_function",
@@ -1098,7 +1230,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "verified",
-          "timestamp": "2026-04-23T21:43:35.206214+00:00"
+          "timestamp": "2026-04-24T03:11:51.987322+00:00"
         }
       ],
       "raw_claim": "When a Bellman-style operator is contracting, the associated value function is its fixed point.",
@@ -1112,20 +1244,20 @@
       "theorem_name": "formalizer_bellman_contracting_value_function_fixed_point",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 10513.398500159383,
-        "planner_ms": 6084.043458104134,
-        "prover_ms": 32915.192,
-        "total_ms": 49512.634
+        "formalizer_ms": 10835.863208165392,
+        "planner_ms": 4427.602999843657,
+        "prover_ms": 34305.771,
+        "total_ms": 49569.237
       },
       "tool_calls": 0,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6638,
-          "latency_ms": 10513.399,
+          "input_tokens": 6531,
+          "latency_ms": 10835.863,
           "model": "labs-leanstral-2603",
-          "output_tokens": 567,
+          "output_tokens": 560,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -1133,11 +1265,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.000718,
+          "estimated_cost_usd": 0.0006145,
           "input_tokens": 494,
-          "latency_ms": 6084.043,
+          "latency_ms": 4427.603,
           "model": "mistral-large-2512",
-          "output_tokens": 314,
+          "output_tokens": 245,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -1165,7 +1297,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:43:35.207253+00:00"
+          "timestamp": "2026-04-24T03:11:51.988334+00:00"
         },
         {
           "claim_id": "t2_expected_payoff_convex_mixture",
@@ -1178,7 +1310,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:43:40.107495+00:00"
+          "timestamp": "2026-04-24T03:11:56.615121+00:00"
         },
         {
           "claim_id": "t2_expected_payoff_convex_mixture",
@@ -1191,7 +1323,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:43:40.108397+00:00"
+          "timestamp": "2026-04-24T03:11:56.616146+00:00"
         },
         {
           "claim_id": "t2_expected_payoff_convex_mixture",
@@ -1204,7 +1336,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:43:47.775952+00:00"
+          "timestamp": "2026-04-24T03:12:04.482524+00:00"
         },
         {
           "claim_id": "t2_expected_payoff_convex_mixture",
@@ -1217,22 +1349,22 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:43:47.776605+00:00"
+          "timestamp": "2026-04-24T03:12:04.483798+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_expected_payoff_convex_mixture",
-          "message": "Starting target `h_convex_utility`.",
+          "message": "Starting target `h_convex_preference`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_convex_utility",
+            "target_name": "h_convex_preference",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:47.777271+00:00"
+          "timestamp": "2026-04-24T03:12:04.484478+00:00"
         },
         {
           "claim_id": null,
@@ -1243,16 +1375,20 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact hu",
             "source": "convex_preference",
-            "target_name": "h_convex_utility",
+            "target_name": "h_convex_preference",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:47.778064+00:00"
+          "timestamp": "2026-04-24T03:12:04.485020+00:00"
         },
         {
           "claim_id": null,
@@ -1263,16 +1399,20 @@
             "attempt_index": 2,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [ConvexPreference]",
             "source": "convex_preference",
-            "target_name": "h_convex_utility",
+            "target_name": "h_convex_preference",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:52.390933+00:00"
+          "timestamp": "2026-04-24T03:12:09.263935+00:00"
         },
         {
           "claim_id": null,
@@ -1281,13 +1421,13 @@
           "message": "Closed via direct definable closure.",
           "metadata": {
             "proof": "simpa [ConvexPreference]",
-            "target_name": "h_convex_utility",
+            "target_name": "h_convex_preference",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:57.037173+00:00"
+          "timestamp": "2026-04-24T03:12:13.948548+00:00"
         },
         {
           "claim_id": null,
@@ -1302,7 +1442,24 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:57.038396+00:00"
+          "timestamp": "2026-04-24T03:12:13.950057+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_expected_payoff_convex_mixture",
+          "message": "Claim-type-aware direct-close policy is active.",
+          "metadata": {
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "target_name": "theorem_body"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:12:13.950201+00:00"
         },
         {
           "claim_id": null,
@@ -1313,7 +1470,11 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact hu",
             "source": "convex_preference",
             "target_name": "theorem_body",
@@ -1322,7 +1483,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:43:57.039040+00:00"
+          "timestamp": "2026-04-24T03:12:13.950881+00:00"
         },
         {
           "claim_id": null,
@@ -1333,7 +1494,11 @@
             "attempt_index": 2,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [ConvexPreference]",
             "source": "convex_preference",
             "target_name": "theorem_body",
@@ -1342,7 +1507,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:01.652505+00:00"
+          "timestamp": "2026-04-24T03:12:18.695780+00:00"
         },
         {
           "claim_id": null,
@@ -1357,7 +1522,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:06.261419+00:00"
+          "timestamp": "2026-04-24T03:12:23.352347+00:00"
         },
         {
           "claim_id": "t2_expected_payoff_convex_mixture",
@@ -1370,7 +1535,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "verified",
-          "timestamp": "2026-04-23T21:44:11.144758+00:00"
+          "timestamp": "2026-04-24T03:12:28.102383+00:00"
         }
       ],
       "raw_claim": "Convex preferences provide a convex utility representation on the full commodity space.",
@@ -1384,20 +1549,20 @@
       "theorem_name": "formalizer_convex_preferences_provide_a_convex_utility_representation_on",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 7666.905957972631,
-        "planner_ms": 4899.901709053665,
-        "prover_ms": 23367.102,
-        "total_ms": 35933.91
+        "formalizer_ms": 7865.804582834244,
+        "planner_ms": 4626.360082998872,
+        "prover_ms": 23617.317,
+        "total_ms": 36109.482
       },
       "tool_calls": 0,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 2869,
-          "latency_ms": 7666.906,
+          "input_tokens": 2867,
+          "latency_ms": 7865.805,
           "model": "labs-leanstral-2603",
-          "output_tokens": 244,
+          "output_tokens": 243,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -1405,11 +1570,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.0005785,
+          "estimated_cost_usd": 0.000568,
           "input_tokens": 443,
-          "latency_ms": 4899.902,
+          "latency_ms": 4626.36,
           "model": "mistral-large-2512",
-          "output_tokens": 238,
+          "output_tokens": 231,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -1437,7 +1602,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:44:11.145770+00:00"
+          "timestamp": "2026-04-24T03:12:28.103467+00:00"
         },
         {
           "claim_id": "t2_ces_crs",
@@ -1450,7 +1615,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:44:16.153036+00:00"
+          "timestamp": "2026-04-24T03:12:32.858976+00:00"
         },
         {
           "claim_id": "t2_ces_crs",
@@ -1463,7 +1628,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:44:16.154520+00:00"
+          "timestamp": "2026-04-24T03:12:32.859780+00:00"
         },
         {
           "claim_id": "t2_ces_crs",
@@ -1476,7 +1641,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:44:26.116188+00:00"
+          "timestamp": "2026-04-24T03:12:42.980002+00:00"
         },
         {
           "claim_id": "t2_ces_crs",
@@ -1489,7 +1654,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:44:26.116856+00:00"
+          "timestamp": "2026-04-24T03:12:42.981309+00:00"
         },
         {
           "claim_id": null,
@@ -1504,7 +1669,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:26.117549+00:00"
+          "timestamp": "2026-04-24T03:12:42.982140+00:00"
         },
         {
           "claim_id": null,
@@ -1515,7 +1680,11 @@
             "attempt_index": 1,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact exists_fixedPoint_of_contractingWith",
             "source": "fixed_point_theorem",
             "target_name": "h_contraction_fixed_point",
@@ -1524,7 +1693,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:26.118411+00:00"
+          "timestamp": "2026-04-24T03:12:42.982701+00:00"
         },
         {
           "claim_id": null,
@@ -1535,7 +1704,11 @@
             "attempt_index": 2,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using exists_fixedPoint_of_contractingWith",
             "source": "fixed_point_theorem",
             "target_name": "h_contraction_fixed_point",
@@ -1544,7 +1717,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:31.051572+00:00"
+          "timestamp": "2026-04-24T03:12:47.704093+00:00"
         },
         {
           "claim_id": null,
@@ -1555,7 +1728,11 @@
             "attempt_index": 3,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact fixedPoint_isFixedPt",
             "source": "fixed_point_theorem",
             "target_name": "h_contraction_fixed_point",
@@ -1564,7 +1741,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:36.208416+00:00"
+          "timestamp": "2026-04-24T03:12:52.657748+00:00"
         },
         {
           "claim_id": null,
@@ -1575,7 +1752,11 @@
             "attempt_index": 4,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using fixedPoint_isFixedPt",
             "source": "fixed_point_theorem",
             "target_name": "h_contraction_fixed_point",
@@ -1584,7 +1765,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:41.138573+00:00"
+          "timestamp": "2026-04-24T03:12:57.304478+00:00"
         },
         {
           "claim_id": null,
@@ -1595,7 +1776,11 @@
             "attempt_index": 5,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "refine \u27e8ContractingWith.fixedPoint (f := f) hf, ?_\u27e9",
             "source": "fixed_point_theorem",
             "target_name": "h_contraction_fixed_point",
@@ -1604,7 +1789,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:46.239046+00:00"
+          "timestamp": "2026-04-24T03:13:02.243828+00:00"
         },
         {
           "claim_id": null,
@@ -1615,7 +1800,11 @@
             "attempt_index": 6,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact ContractingWith.fixedPoint_isFixedPt (f := f) hf",
             "source": "fixed_point_theorem",
             "target_name": "h_contraction_fixed_point",
@@ -1624,7 +1813,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:51.176845+00:00"
+          "timestamp": "2026-04-24T03:13:06.936415+00:00"
         },
         {
           "claim_id": null,
@@ -1635,7 +1824,11 @@
             "attempt_index": 7,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact contraction_has_fixedPoint",
             "source": "contraction_mapping",
             "target_name": "h_contraction_fixed_point",
@@ -1644,7 +1837,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:44:56.111205+00:00"
+          "timestamp": "2026-04-24T03:13:11.764684+00:00"
         },
         {
           "claim_id": null,
@@ -1659,7 +1852,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:00.938982+00:00"
+          "timestamp": "2026-04-24T03:13:16.470957+00:00"
         },
         {
           "claim_id": null,
@@ -1674,7 +1867,24 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:00.940392+00:00"
+          "timestamp": "2026-04-24T03:13:16.472613+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_ces_crs",
+          "message": "Claim-type-aware direct-close policy is active.",
+          "metadata": {
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "target_name": "theorem_body"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:13:16.472752+00:00"
         },
         {
           "claim_id": null,
@@ -1685,7 +1895,11 @@
             "attempt_index": 1,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact exists_fixedPoint_of_contractingWith",
             "source": "fixed_point_theorem",
             "target_name": "theorem_body",
@@ -1694,7 +1908,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:00.941222+00:00"
+          "timestamp": "2026-04-24T03:13:16.473471+00:00"
         },
         {
           "claim_id": null,
@@ -1705,7 +1919,11 @@
             "attempt_index": 2,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using exists_fixedPoint_of_contractingWith",
             "source": "fixed_point_theorem",
             "target_name": "theorem_body",
@@ -1714,7 +1932,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:05.884913+00:00"
+          "timestamp": "2026-04-24T03:13:21.240815+00:00"
         },
         {
           "claim_id": null,
@@ -1725,7 +1943,11 @@
             "attempt_index": 3,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact fixedPoint_isFixedPt",
             "source": "fixed_point_theorem",
             "target_name": "theorem_body",
@@ -1734,7 +1956,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:10.948267+00:00"
+          "timestamp": "2026-04-24T03:13:26.084251+00:00"
         },
         {
           "claim_id": null,
@@ -1745,7 +1967,11 @@
             "attempt_index": 4,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using fixedPoint_isFixedPt",
             "source": "fixed_point_theorem",
             "target_name": "theorem_body",
@@ -1754,7 +1980,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:15.938875+00:00"
+          "timestamp": "2026-04-24T03:13:30.822560+00:00"
         },
         {
           "claim_id": null,
@@ -1765,7 +1991,11 @@
             "attempt_index": 5,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "refine \u27e8ContractingWith.fixedPoint (f := f) hf, ?_\u27e9",
             "source": "fixed_point_theorem",
             "target_name": "theorem_body",
@@ -1774,7 +2004,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:20.770459+00:00"
+          "timestamp": "2026-04-24T03:13:35.693540+00:00"
         },
         {
           "claim_id": null,
@@ -1785,7 +2015,11 @@
             "attempt_index": 6,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact ContractingWith.fixedPoint_isFixedPt (f := f) hf",
             "source": "fixed_point_theorem",
             "target_name": "theorem_body",
@@ -1794,7 +2028,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:25.441345+00:00"
+          "timestamp": "2026-04-24T03:13:40.492274+00:00"
         },
         {
           "claim_id": null,
@@ -1805,7 +2039,11 @@
             "attempt_index": 7,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact contraction_has_fixedPoint",
             "source": "contraction_mapping",
             "target_name": "theorem_body",
@@ -1814,7 +2052,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:30.051675+00:00"
+          "timestamp": "2026-04-24T03:13:45.107032+00:00"
         },
         {
           "claim_id": null,
@@ -1829,7 +2067,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:34.690274+00:00"
+          "timestamp": "2026-04-24T03:13:49.874672+00:00"
         },
         {
           "claim_id": "t2_ces_crs",
@@ -1842,7 +2080,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "verified",
-          "timestamp": "2026-04-23T21:45:39.326202+00:00"
+          "timestamp": "2026-04-24T03:13:54.607182+00:00"
         }
       ],
       "raw_claim": "A contraction theorem on a complete metric space delivers a fixed point that can serve as an equilibrium object.",
@@ -1853,23 +2091,23 @@
         "theorem_body": 120
       },
       "termination_reason": "verified",
-      "theorem_name": "formalizer_contraction_equilibrium_fixed_point",
+      "theorem_name": "formalizer_contraction_theorem_fixed_point_equilibrium",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 9960.913167102262,
-        "planner_ms": 5006.928625050932,
-        "prover_ms": 73208.188,
-        "total_ms": 88176.03
+        "formalizer_ms": 10119.566582841799,
+        "planner_ms": 4755.139041924849,
+        "prover_ms": 71624.571,
+        "total_ms": 86499.277
       },
       "tool_calls": 0,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6652,
-          "latency_ms": 9960.913,
+          "input_tokens": 6650,
+          "latency_ms": 10119.567,
           "model": "labs-leanstral-2603",
-          "output_tokens": 486,
+          "output_tokens": 458,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -1877,11 +2115,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.000651,
+          "estimated_cost_usd": 0.000639,
           "input_tokens": 510,
-          "latency_ms": 5006.929,
+          "latency_ms": 4755.139,
           "model": "mistral-large-2512",
-          "output_tokens": 264,
+          "output_tokens": 256,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -1895,7 +2133,7 @@
       "benchmark_mode": true,
       "decomposition_depth": 0,
       "decomposition_steps": 0,
-      "failure_code": "unsolved_goals",
+      "failure_code": null,
       "id": "t2_stone_geary_monotone_alpha",
       "progress_events": [
         {
@@ -1909,7 +2147,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:45:39.327163+00:00"
+          "timestamp": "2026-04-24T03:13:54.608441+00:00"
         },
         {
           "claim_id": "t2_stone_geary_monotone_alpha",
@@ -1922,7 +2160,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:45:44.933035+00:00"
+          "timestamp": "2026-04-24T03:14:00.923776+00:00"
         },
         {
           "claim_id": "t2_stone_geary_monotone_alpha",
@@ -1935,7 +2173,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:45:44.933985+00:00"
+          "timestamp": "2026-04-24T03:14:00.924866+00:00"
         },
         {
           "claim_id": "t2_stone_geary_monotone_alpha",
@@ -1948,7 +2186,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:45:52.281919+00:00"
+          "timestamp": "2026-04-24T03:14:08.313663+00:00"
         },
         {
           "claim_id": "t2_stone_geary_monotone_alpha",
@@ -1961,22 +2199,22 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:45:52.282627+00:00"
+          "timestamp": "2026-04-24T03:14:08.314314+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Starting target `h_continuous_preference`.",
+          "message": "Starting target `h_continuous_restriction`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_continuous_preference",
+            "target_name": "h_continuous_restriction",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:52.283337+00:00"
+          "timestamp": "2026-04-24T03:14:08.315097+00:00"
         },
         {
           "claim_id": null,
@@ -1987,16 +2225,20 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact hu.continuousOn",
             "source": "continuous_preference",
-            "target_name": "h_continuous_preference",
+            "target_name": "h_continuous_restriction",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:52.284066+00:00"
+          "timestamp": "2026-04-24T03:14:08.315629+00:00"
         },
         {
           "claim_id": null,
@@ -2007,16 +2249,20 @@
             "attempt_index": 2,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [ContinuousPreference]",
             "source": "continuous_preference",
-            "target_name": "h_continuous_preference",
+            "target_name": "h_continuous_restriction",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:45:56.952822+00:00"
+          "timestamp": "2026-04-24T03:14:13.078156+00:00"
         },
         {
           "claim_id": null,
@@ -2027,262 +2273,194 @@
             "attempt_index": 3,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact continuousPreference_continuousOn",
             "source": "continuous_preference",
-            "target_name": "h_continuous_preference",
+            "target_name": "h_continuous_restriction",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:46:01.630876+00:00"
+          "timestamp": "2026-04-24T03:14:17.837235+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Direct closure attempt 4/10.",
+          "message": "Closed via direct definable closure.",
           "metadata": {
-            "attempt_index": 4,
-            "attempt_limit": 10,
-            "candidate_count": 10,
-            "compile_timeout_seconds": 25,
-            "proof": "simpa using continuousPreference_continuousOn",
-            "source": "continuous_preference",
-            "target_name": "h_continuous_preference",
+            "proof": "exact continuousPreference_continuousOn",
+            "target_name": "h_continuous_restriction",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:46:06.291276+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Direct closure attempt 5/10.",
-          "metadata": {
-            "attempt_index": 5,
-            "attempt_limit": 10,
-            "candidate_count": 10,
-            "compile_timeout_seconds": 25,
-            "proof": "simpa [ContinuousPreference] using continuousPreference_continuousOn",
-            "source": "continuous_preference",
-            "target_name": "h_continuous_preference",
-            "tool_name": "compile_check"
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:46:10.959785+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Direct closure attempt 6/10.",
-          "metadata": {
-            "attempt_index": 6,
-            "attempt_limit": 10,
-            "candidate_count": 10,
-            "compile_timeout_seconds": 25,
-            "proof": "exact hu",
-            "source": "convex_preference",
-            "target_name": "h_continuous_preference",
-            "tool_name": "compile_check"
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:46:15.633537+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Direct closure attempt 7/10.",
-          "metadata": {
-            "attempt_index": 7,
-            "attempt_limit": 10,
-            "candidate_count": 10,
-            "compile_timeout_seconds": 25,
-            "proof": "simpa [ConvexPreference]",
-            "source": "convex_preference",
-            "target_name": "h_continuous_preference",
-            "tool_name": "compile_check"
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:46:20.282047+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Direct closure attempt 8/10.",
-          "metadata": {
-            "attempt_index": 8,
-            "attempt_limit": 10,
-            "candidate_count": 10,
-            "compile_timeout_seconds": 25,
-            "proof": "exact convexPreference_convexOn_univ",
-            "source": "convex_preference",
-            "target_name": "h_continuous_preference",
-            "tool_name": "compile_check"
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:46:24.904795+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Direct closure attempt 9/10.",
-          "metadata": {
-            "attempt_index": 9,
-            "attempt_limit": 10,
-            "candidate_count": 10,
-            "compile_timeout_seconds": 25,
-            "proof": "simpa using convexPreference_convexOn_univ",
-            "source": "convex_preference",
-            "target_name": "h_continuous_preference",
-            "tool_name": "compile_check"
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:46:29.560035+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Direct closure attempt 10/10.",
-          "metadata": {
-            "attempt_index": 10,
-            "attempt_limit": 10,
-            "candidate_count": 10,
-            "compile_timeout_seconds": 25,
-            "proof": "simpa [ConvexPreference] using convexPreference_convexOn_univ",
-            "source": "convex_preference",
-            "target_name": "h_continuous_preference",
-            "tool_name": "compile_check"
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:46:34.237011+00:00"
+          "timestamp": "2026-04-24T03:14:22.607317+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Provider produced action `tool`.",
+          "message": "Starting target `theorem_body`.",
           "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_continuous_preference",
-            "turn": 3
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "turn": 2
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:49:23.453900+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Tool `apply_tactic` executed.",
-          "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_continuous_preference",
-            "tool_name": "apply_tactic",
-            "turn": 3
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:49:23.463378+00:00"
+          "timestamp": "2026-04-24T03:14:22.608692+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Provider produced action `tool`.",
+          "message": "Claim-type-aware direct-close policy is active.",
           "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_continuous_preference",
-            "turn": 4
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "target_name": "theorem_body"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:49:29.392740+00:00"
+          "timestamp": "2026-04-24T03:14:22.608813+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_stone_geary_monotone_alpha",
-          "message": "Tool `apply_tactic` executed.",
+          "message": "Direct closure attempt 1/10.",
           "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_continuous_preference",
-            "tool_name": "apply_tactic",
-            "turn": 4
+            "attempt_index": 1,
+            "attempt_limit": 10,
+            "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "exact hu.continuousOn",
+            "source": "continuous_preference",
+            "target_name": "theorem_body",
+            "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:49:29.399659+00:00"
+          "timestamp": "2026-04-24T03:14:22.609466+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
+          "message": "Direct closure attempt 2/10.",
+          "metadata": {
+            "attempt_index": 2,
+            "attempt_limit": 10,
+            "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "simpa [ContinuousPreference]",
+            "source": "continuous_preference",
+            "target_name": "theorem_body",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:14:27.313768+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
+          "message": "Direct closure attempt 3/10.",
+          "metadata": {
+            "attempt_index": 3,
+            "attempt_limit": 10,
+            "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "exact continuousPreference_continuousOn",
+            "source": "continuous_preference",
+            "target_name": "theorem_body",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:14:32.104867+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_stone_geary_monotone_alpha",
+          "message": "Closed via direct definable closure.",
+          "metadata": {
+            "proof": "exact continuousPreference_continuousOn",
+            "target_name": "theorem_body",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:14:36.796415+00:00"
         },
         {
           "claim_id": "t2_stone_geary_monotone_alpha",
-          "event": "prover_failed",
+          "event": "prover_verified",
           "job_id": null,
-          "message": "Prover finished with status `failed`.",
+          "message": "Prover finished with status `verified`.",
           "metadata": {
-            "termination_reason": "no_progress_stall"
+            "termination_reason": "verified"
           },
           "review_state": null,
           "stage": "prover",
-          "status": "failed",
-          "timestamp": "2026-04-23T21:49:34.521561+00:00"
+          "status": "verified",
+          "timestamp": "2026-04-24T03:14:41.548798+00:00"
         }
       ],
       "raw_claim": "A continuous utility representation remains continuous when attention is restricted to a feasible subset.",
-      "status": "failed",
+      "status": "verified",
       "target_timeouts": {
         "apollo_lemma": 120,
         "subgoal": 120,
         "theorem_body": 120
       },
-      "termination_reason": "no_progress_stall",
+      "termination_reason": "verified",
       "theorem_name": "formalizer_continuous_utility_restriction",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 7347.317917039618,
-        "planner_ms": 5605.532957939431,
-        "prover_ms": 222237.606,
-        "total_ms": 235190.457
+        "formalizer_ms": 7388.103167060763,
+        "planner_ms": 6314.924375154078,
+        "prover_ms": 33232.997,
+        "total_ms": 46936.025
       },
-      "tool_calls": 6,
+      "tool_calls": 0,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 2869,
-          "latency_ms": 7347.318,
+          "input_tokens": 2867,
+          "latency_ms": 7388.103,
           "model": "labs-leanstral-2603",
-          "output_tokens": 231,
+          "output_tokens": 227,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -2290,25 +2468,13 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.000685,
+          "estimated_cost_usd": 0.000712,
           "input_tokens": 443,
-          "latency_ms": 5605.533,
+          "latency_ms": 6314.924,
           "model": "mistral-large-2512",
-          "output_tokens": 309,
+          "output_tokens": 327,
           "provider": "mistral",
           "stage": "planner",
-          "success": true,
-          "usage_source": "provider"
-        },
-        "prover": {
-          "error_code": null,
-          "estimated_cost_usd": 0.0,
-          "input_tokens": 3100,
-          "latency_ms": 3575.979,
-          "model": "labs-leanstral-2603",
-          "output_tokens": 214,
-          "provider": "mistral",
-          "stage": "prover",
           "success": true,
           "usage_source": "provider"
         }
@@ -2320,7 +2486,7 @@
       "benchmark_mode": true,
       "decomposition_depth": 0,
       "decomposition_steps": 0,
-      "failure_code": "unsolved_goals",
+      "failure_code": "compile_failed",
       "id": "t2_bellman_contraction",
       "progress_events": [
         {
@@ -2334,7 +2500,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:49:34.522983+00:00"
+          "timestamp": "2026-04-24T03:14:41.550193+00:00"
         },
         {
           "claim_id": "t2_bellman_contraction",
@@ -2347,7 +2513,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:49:38.854066+00:00"
+          "timestamp": "2026-04-24T03:14:45.474176+00:00"
         },
         {
           "claim_id": "t2_bellman_contraction",
@@ -2360,7 +2526,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:49:38.855024+00:00"
+          "timestamp": "2026-04-24T03:14:45.475088+00:00"
         },
         {
           "claim_id": "t2_bellman_contraction",
@@ -2373,7 +2539,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:49:50.115069+00:00"
+          "timestamp": "2026-04-24T03:14:59.857769+00:00"
         },
         {
           "claim_id": "t2_bellman_contraction",
@@ -2386,7 +2552,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:49:50.115710+00:00"
+          "timestamp": "2026-04-24T03:14:59.858555+00:00"
         },
         {
           "claim_id": null,
@@ -2401,7 +2567,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:49:50.116568+00:00"
+          "timestamp": "2026-04-24T03:14:59.859333+00:00"
         },
         {
           "claim_id": null,
@@ -2412,7 +2578,11 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact BellmanOperator.monotone",
             "source": "bellman_operator",
             "target_name": "h_bellman_contraction",
@@ -2421,7 +2591,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:49:50.117336+00:00"
+          "timestamp": "2026-04-24T03:14:59.859998+00:00"
         },
         {
           "claim_id": null,
@@ -2432,7 +2602,11 @@
             "attempt_index": 2,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using BellmanOperator.monotone",
             "source": "bellman_operator",
             "target_name": "h_bellman_contraction",
@@ -2441,7 +2615,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:49:54.815322+00:00"
+          "timestamp": "2026-04-24T03:15:04.650460+00:00"
         },
         {
           "claim_id": null,
@@ -2452,7 +2626,11 @@
             "attempt_index": 3,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [BellmanOperator] using BellmanOperator.monotone",
             "source": "bellman_operator",
             "target_name": "h_bellman_contraction",
@@ -2461,7 +2639,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:49:59.761409+00:00"
+          "timestamp": "2026-04-24T03:15:09.590667+00:00"
         },
         {
           "claim_id": null,
@@ -2472,7 +2650,11 @@
             "attempt_index": 4,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "have hmul := mul_le_mul_of_nonneg_left (hvw _) h\u03b2",
             "source": "bellman_operator",
             "target_name": "h_bellman_contraction",
@@ -2481,7 +2663,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:04.776096+00:00"
+          "timestamp": "2026-04-24T03:15:14.593829+00:00"
         },
         {
           "claim_id": null,
@@ -2492,7 +2674,11 @@
             "attempt_index": 5,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using add_le_add_left hmul _",
             "source": "bellman_operator",
             "target_name": "h_bellman_contraction",
@@ -2501,7 +2687,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:09.414943+00:00"
+          "timestamp": "2026-04-24T03:15:19.364736+00:00"
         },
         {
           "claim_id": null,
@@ -2512,7 +2698,11 @@
             "attempt_index": 6,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact contraction_has_fixedPoint",
             "source": "contraction_mapping",
             "target_name": "h_bellman_contraction",
@@ -2521,7 +2711,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:14.234428+00:00"
+          "timestamp": "2026-04-24T03:15:24.243554+00:00"
         },
         {
           "claim_id": null,
@@ -2532,7 +2722,11 @@
             "attempt_index": 7,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using contraction_has_fixedPoint",
             "source": "contraction_mapping",
             "target_name": "h_bellman_contraction",
@@ -2541,7 +2735,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:18.848079+00:00"
+          "timestamp": "2026-04-24T03:15:29.015718+00:00"
         },
         {
           "claim_id": null,
@@ -2552,7 +2746,11 @@
             "attempt_index": 8,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [IsContraction] using contraction_has_fixedPoint",
             "source": "contraction_mapping",
             "target_name": "h_bellman_contraction",
@@ -2561,7 +2759,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:23.736018+00:00"
+          "timestamp": "2026-04-24T03:15:33.967109+00:00"
         },
         {
           "claim_id": null,
@@ -2572,7 +2770,11 @@
             "attempt_index": 9,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "rcases hf with \u27e8K, hK\u27e9",
             "source": "contraction_mapping",
             "target_name": "h_bellman_contraction",
@@ -2581,7 +2783,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:28.614692+00:00"
+          "timestamp": "2026-04-24T03:15:38.882328+00:00"
         },
         {
           "claim_id": null,
@@ -2592,7 +2794,11 @@
             "attempt_index": 10,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact ContractingWith.fixedPoint_isFixedPt (f := f) hK",
             "source": "contraction_mapping",
             "target_name": "h_bellman_contraction",
@@ -2601,7 +2807,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:33.356758+00:00"
+          "timestamp": "2026-04-24T03:15:43.577901+00:00"
         },
         {
           "claim_id": null,
@@ -2617,7 +2823,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:50.512424+00:00"
+          "timestamp": "2026-04-24T03:15:59.853017+00:00"
         },
         {
           "claim_id": null,
@@ -2634,7 +2840,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:50.515887+00:00"
+          "timestamp": "2026-04-24T03:15:59.856012+00:00"
         },
         {
           "claim_id": null,
@@ -2650,24 +2856,24 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:50:59.403606+00:00"
+          "timestamp": "2026-04-24T03:16:06.368628+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_bellman_contraction",
-          "message": "Tool `write_current_code` executed.",
+          "message": "Tool `apply_tactic` executed.",
           "metadata": {
-            "error_code": null,
-            "success": true,
+            "error_code": "compile_failed",
+            "success": false,
             "target_name": "h_bellman_contraction",
-            "tool_name": "write_current_code",
+            "tool_name": "apply_tactic",
             "turn": 2
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:51:04.781200+00:00"
+          "timestamp": "2026-04-24T03:16:06.370636+00:00"
         },
         {
           "claim_id": "t2_bellman_contraction",
@@ -2680,7 +2886,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "failed",
-          "timestamp": "2026-04-23T21:51:09.802863+00:00"
+          "timestamp": "2026-04-24T03:16:11.436924+00:00"
         }
       ],
       "raw_claim": "A Bellman-style operator satisfying contraction conditions fits the contraction-mapping template used in recursive economics.",
@@ -2694,20 +2900,20 @@
       "theorem_name": "formalizer_bellman_operator_contraction_fixed_point",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 11259.427624987438,
-        "planner_ms": 4330.688250018284,
-        "prover_ms": 79685.393,
-        "total_ms": 95275.509
+        "formalizer_ms": 14382.089499849826,
+        "planner_ms": 3923.6134169623256,
+        "prover_ms": 71576.669,
+        "total_ms": 89882.372
       },
       "tool_calls": 2,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6761,
-          "latency_ms": 11259.428,
+          "input_tokens": 6753,
+          "latency_ms": 14382.089,
           "model": "labs-leanstral-2603",
-          "output_tokens": 604,
+          "output_tokens": 812,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -2715,11 +2921,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.000596,
+          "estimated_cost_usd": 0.0005225,
           "input_tokens": 490,
-          "latency_ms": 4330.688,
+          "latency_ms": 3923.613,
           "model": "mistral-large-2512",
-          "output_tokens": 234,
+          "output_tokens": 185,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -2728,10 +2934,10 @@
         "prover": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 2850,
-          "latency_ms": 5403.679,
+          "input_tokens": 2830,
+          "latency_ms": 3272.926,
           "model": "labs-leanstral-2603",
-          "output_tokens": 428,
+          "output_tokens": 255,
           "provider": "mistral",
           "stage": "prover",
           "success": true,
@@ -2759,7 +2965,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:51:09.804202+00:00"
+          "timestamp": "2026-04-24T03:16:11.438178+00:00"
         },
         {
           "claim_id": "t2_phillips_curve_stagflation",
@@ -2772,7 +2978,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:51:15.237491+00:00"
+          "timestamp": "2026-04-24T03:16:16.294630+00:00"
         },
         {
           "claim_id": "t2_phillips_curve_stagflation",
@@ -2785,7 +2991,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:51:15.239222+00:00"
+          "timestamp": "2026-04-24T03:16:16.296187+00:00"
         },
         {
           "claim_id": "t2_phillips_curve_stagflation",
@@ -2798,7 +3004,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:53:03.583609+00:00"
+          "timestamp": "2026-04-24T03:16:26.906047+00:00"
         },
         {
           "claim_id": "t2_phillips_curve_stagflation",
@@ -2811,22 +3017,22 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:53:03.585155+00:00"
+          "timestamp": "2026-04-24T03:16:26.907729+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_phillips_curve_stagflation",
-          "message": "Starting target `h_slackness`.",
+          "message": "Starting target `h_kt_complementary_slackness`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_slackness",
+            "target_name": "h_kt_complementary_slackness",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:03.585659+00:00"
+          "timestamp": "2026-04-24T03:16:26.908390+00:00"
         },
         {
           "claim_id": null,
@@ -2837,16 +3043,20 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact hkt.slackness i",
             "source": "kuhn_tucker",
-            "target_name": "h_slackness",
+            "target_name": "h_kt_complementary_slackness",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:03.586925+00:00"
+          "timestamp": "2026-04-24T03:16:26.909155+00:00"
         },
         {
           "claim_id": null,
@@ -2857,16 +3067,20 @@
             "attempt_index": 2,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "cases hkt",
             "source": "kuhn_tucker",
-            "target_name": "h_slackness",
+            "target_name": "h_kt_complementary_slackness",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:07.356639+00:00"
+          "timestamp": "2026-04-24T03:16:30.847307+00:00"
         },
         {
           "claim_id": null,
@@ -2877,16 +3091,20 @@
             "attempt_index": 3,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact KuhnTuckerPoint.complementary_slackness",
             "source": "kuhn_tucker",
-            "target_name": "h_slackness",
+            "target_name": "h_kt_complementary_slackness",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:11.232421+00:00"
+          "timestamp": "2026-04-24T03:16:34.776355+00:00"
         },
         {
           "claim_id": null,
@@ -2895,28 +3113,28 @@
           "message": "Closed via direct definable closure.",
           "metadata": {
             "proof": "exact KuhnTuckerPoint.complementary_slackness",
-            "target_name": "h_slackness",
+            "target_name": "h_kt_complementary_slackness",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:14.942507+00:00"
+          "timestamp": "2026-04-24T03:16:38.693432+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_phillips_curve_stagflation",
-          "message": "Starting target `h_vanish`.",
+          "message": "Starting target `h_slack_positive_implies_multiplier_zero`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "turn": 2
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:14.944357+00:00"
+          "timestamp": "2026-04-24T03:16:38.694941+00:00"
         },
         {
           "claim_id": null,
@@ -2927,16 +3145,20 @@
             "attempt_index": 1,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact hkt.slackness i",
             "source": "kuhn_tucker",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:14.945236+00:00"
+          "timestamp": "2026-04-24T03:16:38.695785+00:00"
         },
         {
           "claim_id": null,
@@ -2947,16 +3169,20 @@
             "attempt_index": 2,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "cases hkt",
             "source": "kuhn_tucker",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:18.694334+00:00"
+          "timestamp": "2026-04-24T03:16:42.586524+00:00"
         },
         {
           "claim_id": null,
@@ -2967,16 +3193,20 @@
             "attempt_index": 3,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact KuhnTuckerPoint.complementary_slackness",
             "source": "kuhn_tucker",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:22.463697+00:00"
+          "timestamp": "2026-04-24T03:16:46.575251+00:00"
         },
         {
           "claim_id": null,
@@ -2987,16 +3217,20 @@
             "attempt_index": 4,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using KuhnTuckerPoint.complementary_slackness",
             "source": "kuhn_tucker",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:26.241027+00:00"
+          "timestamp": "2026-04-24T03:16:50.541877+00:00"
         },
         {
           "claim_id": null,
@@ -3007,16 +3241,20 @@
             "attempt_index": 5,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [KuhnTuckerPoint] using KuhnTuckerPoint.complementary_slackness",
             "source": "kuhn_tucker",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:29.978120+00:00"
+          "timestamp": "2026-04-24T03:16:54.413288+00:00"
         },
         {
           "claim_id": null,
@@ -3027,16 +3265,20 @@
             "attempt_index": 6,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact policyImproves_refl",
             "source": "policy_iteration",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:33.717830+00:00"
+          "timestamp": "2026-04-24T03:16:58.246069+00:00"
         },
         {
           "claim_id": null,
@@ -3047,16 +3289,20 @@
             "attempt_index": 7,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa using policyImproves_refl",
             "source": "policy_iteration",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:37.417372+00:00"
+          "timestamp": "2026-04-24T03:17:02.184320+00:00"
         },
         {
           "claim_id": null,
@@ -3067,16 +3313,20 @@
             "attempt_index": 8,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [PolicyImproves] using policyImproves_refl",
             "source": "policy_iteration",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:41.066066+00:00"
+          "timestamp": "2026-04-24T03:17:06.145754+00:00"
         },
         {
           "claim_id": null,
@@ -3087,16 +3337,20 @@
             "attempt_index": 9,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact le_rfl",
             "source": "policy_iteration",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:44.806835+00:00"
+          "timestamp": "2026-04-24T03:17:09.912710+00:00"
         },
         {
           "claim_id": null,
@@ -3107,16 +3361,20 @@
             "attempt_index": 10,
             "attempt_limit": 10,
             "candidate_count": 10,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "simpa [PolicyImproves]",
             "source": "policy_iteration",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:53:48.486222+00:00"
+          "timestamp": "2026-04-24T03:17:13.694092+00:00"
         },
         {
           "claim_id": null,
@@ -3126,13 +3384,13 @@
           "metadata": {
             "action_type": "tool",
             "backend": "leanstral",
-            "target_name": "h_vanish",
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "turn": 3
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:00.504782+00:00"
+          "timestamp": "2026-04-24T03:19:18.571409+00:00"
         },
         {
           "claim_id": null,
@@ -3140,49 +3398,16 @@
           "job_id": "local_gate_t2_phillips_curve_stagflation",
           "message": "Tool `apply_tactic` executed.",
           "metadata": {
-            "error_code": "compile_failed",
-            "success": false,
-            "target_name": "h_vanish",
+            "error_code": null,
+            "success": true,
+            "target_name": "h_slack_positive_implies_multiplier_zero",
             "tool_name": "apply_tactic",
             "turn": 3
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:00.513537+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_phillips_curve_stagflation",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_vanish",
-            "turn": 4
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:05.727240+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_phillips_curve_stagflation",
-          "message": "Tool `get_goals` executed.",
-          "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_vanish",
-            "tool_name": "get_goals",
-            "turn": 4
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:05.728595+00:00"
+          "timestamp": "2026-04-24T03:19:18.579651+00:00"
         },
         {
           "claim_id": "t2_phillips_curve_stagflation",
@@ -3195,7 +3420,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "failed",
-          "timestamp": "2026-04-23T21:56:09.907345+00:00"
+          "timestamp": "2026-04-24T03:19:22.777715+00:00"
         }
       ],
       "raw_claim": "Complementary slackness forces a multiplier to vanish whenever the corresponding Kuhn-Tucker constraint is slack.",
@@ -3209,20 +3434,20 @@
       "theorem_name": "formalizer_complementary_slackness_forces_multiplier_vanish",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 12968.095374992117,
-        "planner_ms": 5432.864582864568,
-        "prover_ms": 186322.141,
-        "total_ms": 204723.101
+        "formalizer_ms": 10608.957499964163,
+        "planner_ms": 4856.026666006073,
+        "prover_ms": 175868.683,
+        "total_ms": 191333.667
       },
-      "tool_calls": 4,
+      "tool_calls": 3,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6703,
-          "latency_ms": 12968.095,
+          "input_tokens": 6534,
+          "latency_ms": 10608.957,
           "model": "labs-leanstral-2603",
-          "output_tokens": 808,
+          "output_tokens": 685,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -3230,11 +3455,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.0006375,
+          "estimated_cost_usd": 0.0006165,
           "input_tokens": 459,
-          "latency_ms": 5432.865,
+          "latency_ms": 4856.027,
           "model": "mistral-large-2512",
-          "output_tokens": 272,
+          "output_tokens": 258,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -3243,10 +3468,10 @@
         "prover": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 3798,
-          "latency_ms": 9030.279,
+          "input_tokens": 1903,
+          "latency_ms": 1748.654,
           "model": "labs-leanstral-2603",
-          "output_tokens": 216,
+          "output_tokens": 141,
           "provider": "mistral",
           "stage": "prover",
           "success": true,
@@ -3260,7 +3485,7 @@
       "benchmark_mode": true,
       "decomposition_depth": 0,
       "decomposition_steps": 0,
-      "failure_code": null,
+      "failure_code": "unsolved_goals",
       "id": "t2_indirect_utility_roys_identity",
       "progress_events": [
         {
@@ -3274,7 +3499,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:56:09.908538+00:00"
+          "timestamp": "2026-04-24T03:19:22.779062+00:00"
         },
         {
           "claim_id": "t2_indirect_utility_roys_identity",
@@ -3287,7 +3512,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:56:13.463509+00:00"
+          "timestamp": "2026-04-24T03:19:27.376048+00:00"
         },
         {
           "claim_id": "t2_indirect_utility_roys_identity",
@@ -3300,7 +3525,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:56:13.464609+00:00"
+          "timestamp": "2026-04-24T03:19:27.377198+00:00"
         },
         {
           "claim_id": "t2_indirect_utility_roys_identity",
@@ -3313,7 +3538,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:56:22.021050+00:00"
+          "timestamp": "2026-04-24T03:19:34.647393+00:00"
         },
         {
           "claim_id": "t2_indirect_utility_roys_identity",
@@ -3326,22 +3551,22 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:56:22.021592+00:00"
+          "timestamp": "2026-04-24T03:19:34.648095+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_indirect_utility_roys_identity",
-          "message": "Starting target `h_witness_nash`.",
+          "message": "Starting target `h_witness`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_witness_nash",
+            "target_name": "h_witness",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:22.021971+00:00"
+          "timestamp": "2026-04-24T03:19:34.648637+00:00"
         },
         {
           "claim_id": null,
@@ -3352,121 +3577,333 @@
             "attempt_index": 1,
             "attempt_limit": 11,
             "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact nash_exists_of_witness",
             "source": "nash_existence",
-            "target_name": "h_witness_nash",
+            "target_name": "h_witness",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:22.022652+00:00"
+          "timestamp": "2026-04-24T03:19:34.649246+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_indirect_utility_roys_identity",
-          "message": "Closed via direct definable closure.",
+          "message": "Direct closure attempt 2/11.",
           "metadata": {
-            "proof": "exact nash_exists_of_witness",
-            "target_name": "h_witness_nash",
+            "attempt_index": 2,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "simpa using nash_exists_of_witness",
+            "source": "nash_existence",
+            "target_name": "h_witness",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:26.745441+00:00"
+          "timestamp": "2026-04-24T03:19:39.363657+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_indirect_utility_roys_identity",
+          "message": "Direct closure attempt 3/11.",
+          "metadata": {
+            "attempt_index": 3,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "simpa [HasNashEquilibrium] using nash_exists_of_witness",
+            "source": "nash_existence",
+            "target_name": "h_witness",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:19:44.101870+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_indirect_utility_roys_identity",
+          "message": "Direct closure attempt 4/11.",
+          "metadata": {
+            "attempt_index": 4,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "exact \u27e8h.witness, h.is_nash\u27e9",
+            "source": "nash_existence",
+            "target_name": "h_witness",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:19:48.940627+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_indirect_utility_roys_identity",
+          "message": "Direct closure attempt 5/11.",
+          "metadata": {
+            "attempt_index": 5,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "refine \u27e8_, ?_\u27e9",
+            "source": "nash_existence",
+            "target_name": "h_witness",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:19:53.742237+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_indirect_utility_roys_identity",
+          "message": "Direct closure attempt 6/11.",
+          "metadata": {
+            "attempt_index": 6,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "exact exists_fixedPoint_of_contractingWith",
+            "source": "fixed_point_theorem",
+            "target_name": "h_witness",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:19:58.535319+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_indirect_utility_roys_identity",
+          "message": "Direct closure attempt 7/11.",
+          "metadata": {
+            "attempt_index": 7,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "simpa using exists_fixedPoint_of_contractingWith",
+            "source": "fixed_point_theorem",
+            "target_name": "h_witness",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:20:03.294015+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_indirect_utility_roys_identity",
+          "message": "Direct closure attempt 8/11.",
+          "metadata": {
+            "attempt_index": 8,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "exact fixedPoint_isFixedPt",
+            "source": "fixed_point_theorem",
+            "target_name": "h_witness",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:20:08.079286+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_indirect_utility_roys_identity",
+          "message": "Direct closure attempt 9/11.",
+          "metadata": {
+            "attempt_index": 9,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "simpa using fixedPoint_isFixedPt",
+            "source": "fixed_point_theorem",
+            "target_name": "h_witness",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:20:12.834323+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_indirect_utility_roys_identity",
+          "message": "Direct closure attempt 10/11.",
+          "metadata": {
+            "attempt_index": 10,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "refine \u27e8ContractingWith.fixedPoint (f := f) hf, ?_\u27e9",
+            "source": "fixed_point_theorem",
+            "target_name": "h_witness",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:20:17.632479+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_indirect_utility_roys_identity",
+          "message": "Direct closure attempt 11/11.",
+          "metadata": {
+            "attempt_index": 11,
+            "attempt_limit": 11,
+            "candidate_count": 11,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "proof": "exact ContractingWith.fixedPoint_isFixedPt (f := f) hf",
+            "source": "fixed_point_theorem",
+            "target_name": "h_witness",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:20:22.355028+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_indirect_utility_roys_identity",
-          "message": "Starting target `theorem_body`.",
+          "message": "Provider produced action `tool`.",
           "metadata": {
-            "target_kind": "theorem_body",
-            "target_name": "theorem_body",
-            "turn": 2
+            "action_type": "tool",
+            "backend": "leanstral",
+            "target_name": "h_witness",
+            "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:26.747037+00:00"
+          "timestamp": "2026-04-24T03:20:38.134717+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_indirect_utility_roys_identity",
-          "message": "Direct closure attempt 1/11.",
+          "message": "Tool `lean_hover_info` executed.",
           "metadata": {
-            "attempt_index": 1,
-            "attempt_limit": 11,
-            "candidate_count": 11,
-            "compile_timeout_seconds": 25,
-            "proof": "exact nash_exists_of_witness",
-            "source": "nash_existence",
-            "target_name": "theorem_body",
-            "tool_name": "compile_check"
+            "error_code": null,
+            "success": true,
+            "target_name": "h_witness",
+            "tool_name": "lean_hover_info",
+            "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:26.747772+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_tool",
-          "job_id": "local_gate_t2_indirect_utility_roys_identity",
-          "message": "Closed via direct definable closure.",
-          "metadata": {
-            "proof": "exact nash_exists_of_witness",
-            "target_name": "theorem_body",
-            "tool_name": "compile_check"
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:31.486596+00:00"
+          "timestamp": "2026-04-24T03:20:43.533814+00:00"
         },
         {
           "claim_id": "t2_indirect_utility_roys_identity",
-          "event": "prover_verified",
+          "event": "prover_failed",
           "job_id": null,
-          "message": "Prover finished with status `verified`.",
+          "message": "Prover finished with status `failed`.",
           "metadata": {
-            "termination_reason": "verified"
+            "termination_reason": "no_progress_stall"
           },
           "review_state": null,
           "stage": "prover",
-          "status": "verified",
-          "timestamp": "2026-04-23T21:56:36.203283+00:00"
+          "status": "failed",
+          "timestamp": "2026-04-24T03:20:48.487384+00:00"
         }
       ],
       "raw_claim": "A witness profile satisfying the equilibrium predicate is enough to establish Nash equilibrium existence.",
-      "status": "verified",
+      "status": "failed",
       "target_timeouts": {
         "apollo_lemma": 120,
         "subgoal": 120,
         "theorem_body": 120
       },
-      "termination_reason": "verified",
-      "theorem_name": "formalizer_witness_profile_satisfying_equilibrium_predicate_is_nash_exis",
+      "termination_reason": "no_progress_stall",
+      "theorem_name": "formalizer_witness_profile_satisfying_equilibrium_predicate_establishes_",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 8555.806000018492,
-        "planner_ms": 3554.5914999675006,
-        "prover_ms": 14180.419,
-        "total_ms": 26290.816
+        "formalizer_ms": 7269.536332925782,
+        "planner_ms": 4596.564874984324,
+        "prover_ms": 73837.552,
+        "total_ms": 85703.653
       },
-      "tool_calls": 0,
+      "tool_calls": 1,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 3013,
-          "latency_ms": 8555.806,
+          "input_tokens": 3053,
+          "latency_ms": 7269.536,
           "model": "labs-leanstral-2603",
-          "output_tokens": 212,
+          "output_tokens": 220,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -3474,13 +3911,25 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.0005535,
+          "estimated_cost_usd": 0.0006255,
           "input_tokens": 489,
-          "latency_ms": 3554.591,
+          "latency_ms": 4596.565,
           "model": "mistral-large-2512",
-          "output_tokens": 206,
+          "output_tokens": 254,
           "provider": "mistral",
           "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 1179,
+          "latency_ms": 1214.858,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 81,
+          "provider": "mistral",
+          "stage": "prover",
           "success": true,
           "usage_source": "provider"
         }
@@ -3506,7 +3955,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-23T21:56:36.204316+00:00"
+          "timestamp": "2026-04-24T03:20:48.489467+00:00"
         },
         {
           "claim_id": "t2_geometric_series_discount",
@@ -3519,7 +3968,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-23T21:56:41.282568+00:00"
+          "timestamp": "2026-04-24T03:20:52.061967+00:00"
         },
         {
           "claim_id": "t2_geometric_series_discount",
@@ -3532,7 +3981,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-23T21:56:41.283671+00:00"
+          "timestamp": "2026-04-24T03:20:52.063035+00:00"
         },
         {
           "claim_id": "t2_geometric_series_discount",
@@ -3545,7 +3994,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-23T21:56:49.734452+00:00"
+          "timestamp": "2026-04-24T03:21:00.705175+00:00"
         },
         {
           "claim_id": "t2_geometric_series_discount",
@@ -3558,22 +4007,22 @@
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-23T21:56:49.735856+00:00"
+          "timestamp": "2026-04-24T03:21:00.706814+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_geometric_series_discount",
-          "message": "Starting target `h_reflexivity`.",
+          "message": "Starting target `h_policy_improves_refl`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_reflexivity",
+            "target_name": "h_policy_improves_refl",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:49.736273+00:00"
+          "timestamp": "2026-04-24T03:21:00.707401+00:00"
         },
         {
           "claim_id": null,
@@ -3584,16 +4033,20 @@
             "attempt_index": 1,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact policyImproves_refl",
             "source": "policy_iteration",
-            "target_name": "h_reflexivity",
+            "target_name": "h_policy_improves_refl",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:49.737154+00:00"
+          "timestamp": "2026-04-24T03:21:00.708042+00:00"
         },
         {
           "claim_id": null,
@@ -3602,13 +4055,13 @@
           "message": "Closed via direct definable closure.",
           "metadata": {
             "proof": "exact policyImproves_refl",
-            "target_name": "h_reflexivity",
+            "target_name": "h_policy_improves_refl",
             "tool_name": "compile_check"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:53.477606+00:00"
+          "timestamp": "2026-04-24T03:21:04.430464+00:00"
         },
         {
           "claim_id": null,
@@ -3623,7 +4076,24 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:53.479158+00:00"
+          "timestamp": "2026-04-24T03:21:04.432067+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_geometric_series_discount",
+          "message": "Claim-type-aware direct-close policy is active.",
+          "metadata": {
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
+            "target_name": "theorem_body"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-24T03:21:04.432229+00:00"
         },
         {
           "claim_id": null,
@@ -3634,7 +4104,11 @@
             "attempt_index": 1,
             "attempt_limit": 13,
             "candidate_count": 13,
+            "claim_type": "preamble_definable",
+            "claim_type_policy": "preamble_definable_default",
             "compile_timeout_seconds": 25,
+            "direct_close_attempt_cap": 24,
+            "preamble_shortcuts_enabled": true,
             "proof": "exact policyImproves_refl",
             "source": "policy_iteration",
             "target_name": "theorem_body",
@@ -3643,7 +4117,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:53.479881+00:00"
+          "timestamp": "2026-04-24T03:21:04.432748+00:00"
         },
         {
           "claim_id": null,
@@ -3658,7 +4132,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-23T21:56:57.225552+00:00"
+          "timestamp": "2026-04-24T03:21:08.208214+00:00"
         },
         {
           "claim_id": "t2_geometric_series_discount",
@@ -3671,7 +4145,7 @@
           "review_state": null,
           "stage": "prover",
           "status": "verified",
-          "timestamp": "2026-04-23T21:57:01.006673+00:00"
+          "timestamp": "2026-04-24T03:21:11.930203+00:00"
         }
       ],
       "raw_claim": "Policy improvement is reflexive for any evaluation criterion, providing a base case for policy-iteration arguments.",
@@ -3682,23 +4156,23 @@
         "theorem_body": 120
       },
       "termination_reason": "verified",
-      "theorem_name": "formalizer_policy_improvement_is_reflexive",
+      "theorem_name": "formalizer_policy_improvement_is_reflexive_for_any_evaluation_criterion",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 8450.071792118251,
-        "planner_ms": 5077.849125023931,
-        "prover_ms": 11269.269,
-        "total_ms": 24797.19
+        "formalizer_ms": 8641.519875032827,
+        "planner_ms": 3572.1128748264164,
+        "prover_ms": 11222.093,
+        "total_ms": 23435.726
       },
       "tool_calls": 0,
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6493,
-          "latency_ms": 8450.072,
+          "input_tokens": 6489,
+          "latency_ms": 8641.52,
           "model": "labs-leanstral-2603",
-          "output_tokens": 434,
+          "output_tokens": 445,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -3706,11 +4180,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.0005115,
+          "estimated_cost_usd": 0.0005085,
           "input_tokens": 453,
-          "latency_ms": 5077.849,
+          "latency_ms": 3572.113,
           "model": "mistral-large-2512",
-          "output_tokens": 190,
+          "output_tokens": 188,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -3741,16 +4215,16 @@
   },
   "tokens_by_stage": {
     "formalizer": {
-      "input_tokens": 55463,
-      "output_tokens": 4721
+      "input_tokens": 55149,
+      "output_tokens": 4768
     },
     "planner": {
       "input_tokens": 4748,
-      "output_tokens": 2533
+      "output_tokens": 2415
     },
     "prover": {
-      "input_tokens": 9748,
-      "output_tokens": 858
+      "input_tokens": 5912,
+      "output_tokens": 477
     }
   }
 }

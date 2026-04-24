@@ -122,6 +122,7 @@ class FakeProver:
                 "target_timeouts": target_timeouts.model_dump(mode="json") if target_timeouts is not None else None,
                 "allow_decomposition": allow_decomposition,
                 "benchmark_mode": benchmark_mode,
+                "claim_type": packet.claim_type,
             }
         )
         if on_progress is not None:
@@ -212,8 +213,29 @@ def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
     assert fake_prover.calls[0]["benchmark_mode"] is True
     assert fake_prover.calls[0]["timeout"] == 120
     assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 120, "subgoal": 120, "apollo_lemma": 120}
+    assert fake_prover.calls[0]["claim_type"] is None
     assert summary["claim_set_manifest"]["claim_set"] == "tier0_smoke"
     assert summary["results"][0]["progress_events"]
+
+
+def test_local_gate_attaches_claim_type_for_supported_benchmark_buckets(monkeypatch) -> None:
+    import evals.local_gate as local_gate_module
+
+    monkeypatch.setattr(local_gate_module, "_try_claim_trivial_shortcut", lambda _stub: None)
+
+    fake_prover = FakeProver()
+    summary = run_claim_set(
+        "tier2_frontier_mathlib_native",
+        planner_service=_planner_service(),
+        formalizer_service=FakeFormalizerService(),
+        prover_instance=fake_prover,
+        enforce_readiness=False,
+        benchmark_mode=True,
+    )
+
+    assert summary["claims_total"] == len(fake_prover.calls)
+    assert fake_prover.calls
+    assert all(call["claim_type"] == "mathlib_native" for call in fake_prover.calls)
 
 
 def test_local_gate_persists_raw_planner_response_for_schema_invalid(monkeypatch) -> None:
@@ -357,10 +379,13 @@ def test_local_gate_main_emits_readable_terminal_summary(monkeypatch, tmp_path, 
     import evals.local_gate as local_gate_module
 
     def fake_summary(claim_set: str, *, passed: int, total: int, failures: dict[str, int]) -> dict[str, object]:
+        bucket = "mathlib_native" if "mathlib_native" in claim_set else "preamble_definable"
         failed = total - passed
         return {
             "claim_set": claim_set,
             "benchmark_mode": True,
+            "mode": "benchmark_pipeline",
+            "generated_at": "2026-04-23T23:00:00+00:00",
             "claims_total": total,
             "claims_passed": passed,
             "claims_failed": failed,
@@ -371,18 +396,36 @@ def test_local_gate_main_emits_readable_terminal_summary(monkeypatch, tmp_path, 
             "cost_by_stage": {"planner": 0.01 if passed else 0.0},
             "cost_by_model": {},
             "failure_counts": failures,
+            "claim_set_manifest": {
+                "bucket_counts": {
+                    "mathlib_native": total if bucket == "mathlib_native" else 0,
+                    "planner_formalizer": 0,
+                    "preamble_definable": total if bucket == "preamble_definable" else 0,
+                    "prover_search": 0,
+                    "regression": 0,
+                }
+            },
             "results": [
                 {
                     "id": f"{claim_set}_{index}",
+                    "benchmark_bucket": bucket,
                     "status": "verified" if index < passed else "failed",
                     "failure_code": None if index < passed else "max_turns_exhausted",
+                    "termination_reason": "verified" if index < passed else "no_progress_stall",
                     "verified_via": "full_pipeline",
+                    "tool_calls": 1 if index < passed else 2,
+                    "decomposition_depth": 0 if index < passed else 1,
                     "timing_breakdown": {
                         "planner_ms": 1000.0,
                         "formalizer_ms": 2000.0,
                         "prover_ms": 3000.0,
                         "total_ms": 6000.0,
                     },
+                    "progress_events": (
+                        [{"message": "Closed via direct definable closure.", "metadata": {}}]
+                        if index == 0 and index < passed
+                        else []
+                    ),
                 }
                 for index in range(total)
             ],
@@ -405,15 +448,16 @@ def test_local_gate_main_emits_readable_terminal_summary(monkeypatch, tmp_path, 
     exit_code = local_gate_module.main(
         [
             "--benchmark-mode",
-            "--claim-set",
-            "tier0_smoke",
-            "--claim-set",
-            "tier1_core_preamble_definable",
+            "--claim-sets",
+            "tier0_smoke,tier1_core_preamble_definable",
+            "--save-history",
             "--output-dir",
             str(tmp_path),
         ]
     )
     output = capsys.readouterr().out
+    history_path = tmp_path / "benchmark_history.jsonl"
+    history_rows = [json.loads(line) for line in history_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     assert exit_code == 1
     assert "[tier0_smoke] summary" in output
@@ -422,3 +466,7 @@ def test_local_gate_main_emits_readable_terminal_summary(monkeypatch, tmp_path, 
     assert "| Stage" in output
     assert "| Failure code" in output
     assert "[local_gate] combined" in output
+    assert "History updated: run_000001" in output
+    assert len(history_rows) == 1
+    assert history_rows[0]["row_id"] == "run_000001"
+    assert "tier1_core_preamble_definable" in history_rows[0]["bucket_breakdown"]

@@ -21,6 +21,7 @@ def _packet(
     lean_code: str,
     subgoals: list[dict[str, str]] | None = None,
     selected_preamble: list[str] | None = None,
+    claim_type: str | None = None,
 ) -> FormalizationPacket:
     return FormalizationPacket.model_validate(
         {
@@ -28,6 +29,7 @@ def _packet(
             "lean_code": lean_code,
             "theorem_with_sorry": lean_code,
             "theorem_name": theorem_name,
+            "claim_type": claim_type,
             "imports": ["Mathlib"],
             "selected_imports": ["Mathlib"],
             "open_statements": [],
@@ -288,8 +290,36 @@ async def test_prover_fails_fast_after_direct_closure_exhaustion_stalls(tmp_path
     monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
     monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
     monkeypatch.setattr(prover_module.Prover, "_has_direct_candidates", lambda self, **_: True)
-    monkeypatch.setattr(prover_module.Prover, "_try_direct_definable_closure", lambda self, **_: None)
-    monkeypatch.setattr(prover_module.Prover, "_try_repl_compile_recovery", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_try_direct_definable_closure",
+        lambda self, **_: (
+            None,
+            prover_module.DirectCloseAttemptSummary(
+                candidate_count=4,
+                attempt_limit=2,
+                attempts_used=2,
+                claim_type=None,
+                claim_type_policy="default",
+                preamble_shortcuts_enabled=True,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_try_repl_compile_recovery",
+        lambda self, **_: (
+            None,
+            prover_module.DirectCloseAttemptSummary(
+                candidate_count=4,
+                attempt_limit=2,
+                attempts_used=2,
+                claim_type=None,
+                claim_type_policy="default",
+                preamble_shortcuts_enabled=True,
+            ),
+        ),
+    )
     monkeypatch.setattr(
         prover_module,
         "lean_run_code",
@@ -340,7 +370,80 @@ async def test_prover_fails_fast_after_direct_closure_exhaustion_stalls(tmp_path
     assert result.status == "failed"
     assert result.failure is not None
     assert result.failure.reason == "no_progress_stall"
+    assert "Direct-close candidates were exhausted" in result.failure.message
     assert driver.call_count == 1
+
+
+@pytest.mark.anyio
+async def test_mathlib_native_claim_caps_direct_close_attempts_and_logs_awareness(tmp_path, monkeypatch) -> None:
+    import src.prover.prover as prover_module
+
+    attempt_counter = {"count": 0}
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module.Prover, "_selected_preamble_entries", lambda self, packet: [])
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    original_candidates = prover_module.Prover._direct_candidate_proofs
+    original_try_direct = prover_module.Prover._try_direct_definable_closure
+
+    def fake_candidates(self, *, packet, current_code, include_fallback_tactics=False):
+        candidates = [(f"exact candidate_{index}", "mock", f"candidate {index}") for index in range(10)]
+        if include_fallback_tactics:
+            return [*candidates, *original_candidates(self, packet=packet, current_code=current_code, include_fallback_tactics=True)]
+        return candidates
+
+    def counting_try_direct(self, **kwargs):
+        result, summary = original_try_direct(self, **kwargs)
+        attempt_counter["count"] += summary.attempts_used
+        return result, summary
+
+    monkeypatch.setattr(prover_module.Prover, "_direct_candidate_proofs", fake_candidates)
+    monkeypatch.setattr(prover_module.Prover, "_try_direct_definable_closure", counting_try_direct)
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Attempt a tactic after direct-close budget is exhausted.",
+                        "tool": {"name": "write_current_code", "arguments": {"code": "import Mathlib\n\ntheorem mathlib_native_budget : True := by\n  sorry\n"}},
+                    }
+                ]
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="mathlib_native_budget",
+            claim="A mathlib-native claim should avoid spending many direct-close attempts.",
+            lean_code="import Mathlib\n\ntheorem mathlib_native_budget : True := by\n  sorry\n",
+            selected_preamble=["value_function"],
+            claim_type="mathlib_native",
+        ),
+        "job_mathlib_native_budget",
+        max_turns=3,
+    )
+
+    awareness_steps = [step for step in result.trace if step.action_type == "claim_type_awareness"]
+    assert awareness_steps
+    assert awareness_steps[0].tool_arguments["claim_type"] == "mathlib_native"
+    assert awareness_steps[0].tool_arguments["direct_close_attempt_cap"] == 2
+    assert awareness_steps[0].tool_arguments["preamble_shortcuts_enabled"] is False
+    assert attempt_counter["count"] <= 2
+    assert result.status in {"verified", "failed"}
 
 
 @pytest.mark.anyio

@@ -41,6 +41,7 @@ from src.config import (
     PLANNER_PROVIDER,
     PROVER_PROVIDER,
 )
+from src.evals.metrics_aggregator import CANONICAL_HISTORY_PATH, load_history_rows
 from src.formalizer import DEFAULT_FORMALIZER
 from src.lean import lean_workspace_probe
 from src.memory import trace_store
@@ -372,6 +373,14 @@ async def metrics_prometheus() -> PlainTextResponse:
         "backend_status": _backend_status(),
     }
     return PlainTextResponse(_prometheus_lines(snapshot), media_type="text/plain; version=0.0.4")
+
+
+@app.get("/metrics/history")
+async def metrics_history() -> dict[str, Any]:
+    return {
+        "path": str(CANONICAL_HISTORY_PATH),
+        "rows": load_history_rows(CANONICAL_HISTORY_PATH),
+    }
 
 
 @app.post("/plan", response_model=JobStatusResponse)

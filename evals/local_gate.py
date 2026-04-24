@@ -27,6 +27,7 @@ from evals.common import (
 )
 from src.backend_capabilities import get_backend_capability
 from src.config import BENCHMARK_BASELINE_DIR, BENCHMARK_REQUIRE_PRICING, PROVER_PROVIDER
+from src.evals.metrics_aggregator import append_history_row, benchmark_history_path
 from src.formalizer import DEFAULT_FORMALIZER, FormalizerService
 from src.lean import compile_check
 from src.observability import StageExecutionError, build_progress_event, classify_exception, lookup_pricing
@@ -260,6 +261,9 @@ class _TerminalReporter:
         )
         self._emit(_render_table(["Claim set", "Pass@1"], rows))
         self._emit(f"Output: {output_path}")
+
+    def history_updated(self, row_id: str, history_path: Path) -> None:
+        self._emit(f"History updated: {row_id} ({history_path})")
 
 
 class _ClaimHeartbeatMonitor:
@@ -775,8 +779,15 @@ async def _run_claim_set_async(
                     metadata={"benchmark_mode": benchmark_mode},
                 )
             )
+            prover_packet = formalize_result.payload.model_copy(
+                update={
+                    "claim_type": claim_bucket
+                    if claim_bucket in {"preamble_definable", "mathlib_native"}
+                    else None
+                }
+            )
             prove_result = await prover_instance.prove(
-                formalize_result.payload,
+                prover_packet,
                 f"local_gate_{_sanitize_job_id(claim_id)}",
                 max_turns=8,
                 timeout=120 if benchmark_mode else 300,
@@ -1022,15 +1033,18 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--claim-set", action="append")
+    parser.add_argument("--claim-sets", type=str, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--allow-unready", action="store_true")
     parser.add_argument("--benchmark-mode", action="store_true")
+    parser.add_argument("--save-history", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--stratified", action="store_true")
     parser.add_argument("--sample-seed", type=int, default=DEFAULT_SAMPLE_SEED)
     args = parser.parse_args(argv)
 
-    selected = tuple(args.claim_set or CLAIM_SETS)
+    selected_from_csv = tuple(item.strip() for item in (args.claim_sets or "").split(",") if item.strip())
+    selected = tuple(args.claim_set or selected_from_csv or CLAIM_SETS)
     output_dir = args.output_dir or (
         BENCHMARK_BASELINE_DIR / ("benchmark_mode" if args.benchmark_mode else "live_pipeline")
     )
@@ -1066,6 +1080,10 @@ def main(argv: list[str] | None = None) -> int:
     ]
     write_progress_log("local_gate", combined_progress_events, output_dir)
     reporter.combined_completed(combined, combined_path)
+    if args.save_history:
+        history_path = benchmark_history_path(output_dir)
+        row = append_history_row(combined, history_path=history_path)
+        reporter.history_updated(str(row["row_id"]), history_path)
     if not combined["readiness"]["ready"]:
         return 1
     return 0 if combined["claims_failed"] == 0 else 1
