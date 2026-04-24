@@ -1,0 +1,706 @@
+{
+  "average_decomposition_depth": 0.0,
+  "average_decomposition_steps": 0.0,
+  "average_tool_calls": 0.333,
+  "benchmark_mode": true,
+  "claim_set": "tier0_smoke",
+  "claim_set_manifest": {
+    "bucket_counts": {
+      "mathlib_native": 0,
+      "planner_formalizer": 0,
+      "preamble_definable": 0,
+      "prover_search": 0,
+      "regression": 3
+    },
+    "claim_records": [
+      {
+        "bucket": "regression",
+        "expected_category": "ALGEBRAIC",
+        "id": "t0_one_plus_one",
+        "preamble_pinned": false,
+        "theorem_stub_present": true
+      },
+      {
+        "bucket": "regression",
+        "expected_category": "ALGEBRAIC",
+        "id": "t0_budget_constraint",
+        "preamble_pinned": false,
+        "theorem_stub_present": true
+      },
+      {
+        "bucket": "regression",
+        "expected_category": "DEFINABLE",
+        "id": "t0_budget_set_membership",
+        "preamble_pinned": true,
+        "theorem_stub_present": true
+      }
+    ],
+    "claim_set": "tier0_smoke",
+    "claims_total": 3,
+    "expected_category_counts": {
+      "ALGEBRAIC": 2,
+      "DEFINABLE": 1
+    },
+    "integrity_status": "focused",
+    "pinned_preamble_count": 1,
+    "theorem_stub_count": 3
+  },
+  "claims_failed": 0,
+  "claims_passed": 3,
+  "claims_total": 3,
+  "cost_by_model": {
+    "mistral:labs-leanstral-2603": {
+      "estimated_cost_usd": 0.0,
+      "model": "labs-leanstral-2603",
+      "provider": "mistral"
+    },
+    "mistral:mistral-large-2512": {
+      "estimated_cost_usd": 0.001619,
+      "model": "mistral-large-2512",
+      "provider": "mistral"
+    }
+  },
+  "cost_by_stage": {
+    "formalizer": 0.0,
+    "planner": 0.001619,
+    "prover": 0.0
+  },
+  "executed": true,
+  "failure_counts": {},
+  "generated_at": "2026-04-23T16:26:20.680969+00:00",
+  "mode": "benchmark_pipeline",
+  "pass_at_1": 1.0,
+  "progress_log_path": "/Users/bonorinoa/Desktop/Github_Repositories/leanecon_v3/benchmark_baselines/v3_alpha/benchmark_mode/tier0_smoke.progress.jsonl",
+  "readiness": {
+    "blockers": [],
+    "capabilities": {
+      "formalizer": {
+        "backend": "leanstral",
+        "benchmark_supported": true,
+        "experimental": false,
+        "notes": "Primary formalizer path in the current repo.",
+        "production_supported": true,
+        "provider": "mistral",
+        "stage": "formalizer",
+        "structured_output": true,
+        "transport": "HTTP /chat/completions"
+      },
+      "planner": {
+        "backend": "mistral-structured",
+        "benchmark_supported": true,
+        "experimental": false,
+        "notes": "Primary hosted planner path via Mistral structured chat completions.",
+        "production_supported": true,
+        "provider": "mistral",
+        "stage": "planner",
+        "structured_output": true,
+        "transport": "HTTP /chat/completions"
+      },
+      "prover": {
+        "backend": "leanstral",
+        "benchmark_supported": true,
+        "experimental": false,
+        "notes": "Fallback prover path.",
+        "production_supported": true,
+        "provider": "mistral",
+        "stage": "prover",
+        "structured_output": true,
+        "transport": "HTTP /chat/completions"
+      }
+    },
+    "checks": {
+      "formalizer_price_known": true,
+      "planner_endpoint_reachable": true,
+      "planner_price_known": true,
+      "planner_provider_configured": true,
+      "prover_price_known": true,
+      "prover_provider_configured": true
+    },
+    "details": {},
+    "ready": true
+  },
+  "results": [
+    {
+      "benchmark_bucket": "regression",
+      "benchmark_mode": true,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": null,
+      "id": "t0_one_plus_one",
+      "progress_events": [
+        {
+          "claim_id": "t0_one_plus_one",
+          "event": "planner_started",
+          "job_id": null,
+          "message": "Planner started.",
+          "metadata": {
+            "benchmark_mode": true
+          },
+          "review_state": null,
+          "stage": "planner",
+          "status": "running",
+          "timestamp": "2026-04-23T16:22:21.926744+00:00"
+        },
+        {
+          "claim_id": "t0_one_plus_one",
+          "event": "planner_completed",
+          "job_id": null,
+          "message": "Planner completed.",
+          "metadata": {
+            "schema_invalid_repaired": false
+          },
+          "review_state": null,
+          "stage": "planner",
+          "status": "completed",
+          "timestamp": "2026-04-23T16:22:31.089466+00:00"
+        },
+        {
+          "claim_id": "t0_one_plus_one",
+          "event": "formalizer_started",
+          "job_id": null,
+          "message": "Formalizer started.",
+          "metadata": {
+            "benchmark_mode": true
+          },
+          "review_state": null,
+          "stage": "formalizer",
+          "status": "running",
+          "timestamp": "2026-04-23T16:22:31.090112+00:00"
+        },
+        {
+          "claim_id": "t0_one_plus_one",
+          "event": "formalizer_completed",
+          "job_id": null,
+          "message": "Formalizer completed.",
+          "metadata": {
+            "review_state": "approved"
+          },
+          "review_state": null,
+          "stage": "formalizer",
+          "status": "completed",
+          "timestamp": "2026-04-23T16:23:12.507858+00:00"
+        },
+        {
+          "claim_id": "t0_one_plus_one",
+          "event": "prover_started",
+          "job_id": null,
+          "message": "Prover started.",
+          "metadata": {
+            "benchmark_mode": true
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running",
+          "timestamp": "2026-04-23T16:23:12.508351+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t0_one_plus_one",
+          "message": "Starting target `theorem_body`.",
+          "metadata": {
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "turn": 1
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-23T16:23:12.509085+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t0_one_plus_one",
+          "message": "Provider produced action `tool`.",
+          "metadata": {
+            "action_type": "tool",
+            "backend": "leanstral",
+            "target_name": "theorem_body",
+            "turn": 1
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-23T16:24:01.203608+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t0_one_plus_one",
+          "message": "Tool `apply_tactic` executed.",
+          "metadata": {
+            "error_code": null,
+            "success": true,
+            "target_name": "theorem_body",
+            "tool_name": "apply_tactic",
+            "turn": 1
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-23T16:24:01.229827+00:00"
+        },
+        {
+          "claim_id": "t0_one_plus_one",
+          "event": "prover_verified",
+          "job_id": null,
+          "message": "Prover finished with status `verified`.",
+          "metadata": {
+            "termination_reason": "verified"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "verified",
+          "timestamp": "2026-04-23T16:24:33.622127+00:00"
+        }
+      ],
+      "raw_claim": "1 + 1 = 2",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "verified",
+      "theorem_name": "benchmark_one_plus_one",
+      "theorem_stub_reference": "import Mathlib\n\ntheorem benchmark_one_plus_one : 1 + 1 = 2 := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 41417.152750073,
+        "planner_ms": 9162.242749938741,
+        "prover_ms": 81112.158,
+        "total_ms": 131691.554
+      },
+      "tool_calls": 1,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 41417.153,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0005405,
+          "input_tokens": 559,
+          "latency_ms": 9162.243,
+          "model": "mistral-large-2512",
+          "output_tokens": 174,
+          "provider": "mistral",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        },
+        "prover": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": 829,
+          "latency_ms": 1283.791,
+          "model": "labs-leanstral-2603",
+          "output_tokens": 92,
+          "provider": "mistral",
+          "stage": "prover",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_bucket": "regression",
+      "benchmark_mode": true,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": null,
+      "id": "t0_budget_constraint",
+      "progress_events": [
+        {
+          "claim_id": "t0_budget_constraint",
+          "event": "planner_started",
+          "job_id": null,
+          "message": "Planner started.",
+          "metadata": {
+            "benchmark_mode": true
+          },
+          "review_state": null,
+          "stage": "planner",
+          "status": "running",
+          "timestamp": "2026-04-23T16:24:33.623577+00:00"
+        },
+        {
+          "claim_id": "t0_budget_constraint",
+          "event": "planner_completed",
+          "job_id": null,
+          "message": "Planner completed.",
+          "metadata": {
+            "schema_invalid_repaired": false
+          },
+          "review_state": null,
+          "stage": "planner",
+          "status": "completed",
+          "timestamp": "2026-04-23T16:24:36.939901+00:00"
+        },
+        {
+          "claim_id": "t0_budget_constraint",
+          "event": "formalizer_started",
+          "job_id": null,
+          "message": "Formalizer started.",
+          "metadata": {
+            "benchmark_mode": true
+          },
+          "review_state": null,
+          "stage": "formalizer",
+          "status": "running",
+          "timestamp": "2026-04-23T16:24:36.940700+00:00"
+        },
+        {
+          "claim_id": "t0_budget_constraint",
+          "event": "formalizer_completed",
+          "job_id": null,
+          "message": "Formalizer completed.",
+          "metadata": {
+            "review_state": "approved"
+          },
+          "review_state": null,
+          "stage": "formalizer",
+          "status": "completed",
+          "timestamp": "2026-04-23T16:24:53.477922+00:00"
+        },
+        {
+          "claim_id": "t0_budget_constraint",
+          "event": "prover_started",
+          "job_id": null,
+          "message": "Prover started.",
+          "metadata": {
+            "benchmark_mode": true
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running",
+          "timestamp": "2026-04-23T16:24:53.478868+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t0_budget_constraint",
+          "message": "Starting target `theorem_body`.",
+          "metadata": {
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "turn": 1
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-23T16:24:53.479622+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t0_budget_constraint",
+          "message": "Direct closure attempt 1/2.",
+          "metadata": {
+            "attempt_index": 1,
+            "attempt_limit": 2,
+            "candidate_count": 2,
+            "compile_timeout_seconds": 25,
+            "proof": "exact hspend",
+            "source": "direct_hypothesis",
+            "target_name": "theorem_body",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-23T16:24:53.479983+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t0_budget_constraint",
+          "message": "Closed via direct definable closure.",
+          "metadata": {
+            "proof": "exact hspend",
+            "target_name": "theorem_body",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-23T16:25:10.099746+00:00"
+        },
+        {
+          "claim_id": "t0_budget_constraint",
+          "event": "prover_verified",
+          "job_id": null,
+          "message": "Prover finished with status `verified`.",
+          "metadata": {
+            "termination_reason": "verified"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "verified",
+          "timestamp": "2026-04-23T16:25:26.873970+00:00"
+        }
+      ],
+      "raw_claim": "For a consumer with income m and prices p1, p2 spending all income, the budget equality p1 * x1 + p2 * x2 = m holds.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "verified",
+      "theorem_name": "benchmark_budget_constraint",
+      "theorem_stub_reference": "import Mathlib\nopen Real\n\ntheorem benchmark_budget_constraint\n    (m p1 p2 x1 x2 : \u211d)\n    (hm : m > 0) (hp1 : p1 > 0) (hp2 : p2 > 0)\n    (hspend : p1 * x1 + p2 * x2 = m) :\n    p1 * x1 + p2 * x2 = m := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16536.57791693695,
+        "planner_ms": 3315.925082890317,
+        "prover_ms": 33392.864,
+        "total_ms": 53245.367
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16536.578,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0005865,
+          "input_tokens": 618,
+          "latency_ms": 3315.925,
+          "model": "mistral-large-2512",
+          "output_tokens": 185,
+          "provider": "mistral",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    },
+    {
+      "benchmark_bucket": "regression",
+      "benchmark_mode": true,
+      "decomposition_depth": 0,
+      "decomposition_steps": 0,
+      "failure_code": null,
+      "id": "t0_budget_set_membership",
+      "progress_events": [
+        {
+          "claim_id": "t0_budget_set_membership",
+          "event": "planner_started",
+          "job_id": null,
+          "message": "Planner started.",
+          "metadata": {
+            "benchmark_mode": true
+          },
+          "review_state": null,
+          "stage": "planner",
+          "status": "running",
+          "timestamp": "2026-04-23T16:25:26.875476+00:00"
+        },
+        {
+          "claim_id": "t0_budget_set_membership",
+          "event": "planner_completed",
+          "job_id": null,
+          "message": "Planner completed.",
+          "metadata": {
+            "schema_invalid_repaired": false
+          },
+          "review_state": null,
+          "stage": "planner",
+          "status": "completed",
+          "timestamp": "2026-04-23T16:25:29.759954+00:00"
+        },
+        {
+          "claim_id": "t0_budget_set_membership",
+          "event": "formalizer_started",
+          "job_id": null,
+          "message": "Formalizer started.",
+          "metadata": {
+            "benchmark_mode": true
+          },
+          "review_state": null,
+          "stage": "formalizer",
+          "status": "running",
+          "timestamp": "2026-04-23T16:25:29.760842+00:00"
+        },
+        {
+          "claim_id": "t0_budget_set_membership",
+          "event": "formalizer_completed",
+          "job_id": null,
+          "message": "Formalizer completed.",
+          "metadata": {
+            "review_state": "approved"
+          },
+          "review_state": null,
+          "stage": "formalizer",
+          "status": "completed",
+          "timestamp": "2026-04-23T16:25:46.707890+00:00"
+        },
+        {
+          "claim_id": "t0_budget_set_membership",
+          "event": "prover_started",
+          "job_id": null,
+          "message": "Prover started.",
+          "metadata": {
+            "benchmark_mode": true
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running",
+          "timestamp": "2026-04-23T16:25:46.708625+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t0_budget_set_membership",
+          "message": "Starting target `theorem_body`.",
+          "metadata": {
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "turn": 1
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-23T16:25:46.709276+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t0_budget_set_membership",
+          "message": "Direct closure attempt 1/7.",
+          "metadata": {
+            "attempt_index": 1,
+            "attempt_limit": 7,
+            "candidate_count": 7,
+            "compile_timeout_seconds": 25,
+            "proof": "exact economicMeasure_empty \u03bc",
+            "source": "measure",
+            "target_name": "theorem_body",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-23T16:25:46.709909+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t0_budget_set_membership",
+          "message": "Closed via direct definable closure.",
+          "metadata": {
+            "proof": "exact economicMeasure_empty \u03bc",
+            "target_name": "theorem_body",
+            "tool_name": "compile_check"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-23T16:26:03.696614+00:00"
+        },
+        {
+          "claim_id": "t0_budget_set_membership",
+          "event": "prover_verified",
+          "job_id": null,
+          "message": "Prover finished with status `verified`.",
+          "metadata": {
+            "termination_reason": "verified"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "verified",
+          "timestamp": "2026-04-23T16:26:20.679947+00:00"
+        }
+      ],
+      "raw_claim": "Under an economic measure, the impossible event has zero mass.",
+      "status": "verified",
+      "target_timeouts": {
+        "apollo_lemma": 120,
+        "subgoal": 120,
+        "theorem_body": 120
+      },
+      "termination_reason": "verified",
+      "theorem_name": "benchmark_measure_empty",
+      "theorem_stub_reference": "import Mathlib\nimport LeanEcon.Preamble.Foundations.Primitives.Measure\n\ntheorem benchmark_measure_empty\n    {\u03b1 : Type*} [MeasurableSpace \u03b1] (\u03bc : EconomicMeasure \u03b1) :\n    \u03bc \u2205 = 0 := by\n  sorry\n",
+      "timing_breakdown": {
+        "formalizer_ms": 16946.317000081763,
+        "planner_ms": 2884.132625069469,
+        "prover_ms": 33969.333,
+        "total_ms": 53799.783
+      },
+      "tool_calls": 0,
+      "usage_by_stage": {
+        "formalizer": {
+          "error_code": null,
+          "estimated_cost_usd": 0.0,
+          "input_tokens": null,
+          "latency_ms": 16946.317,
+          "model": "labs-leanstral-2603",
+          "output_tokens": null,
+          "provider": "mistral",
+          "stage": "formalizer",
+          "success": true,
+          "usage_source": "estimated_chars"
+        },
+        "planner": {
+          "error_code": null,
+          "estimated_cost_usd": 0.000492,
+          "input_tokens": 561,
+          "latency_ms": 2884.133,
+          "model": "mistral-large-2512",
+          "output_tokens": 141,
+          "provider": "mistral",
+          "stage": "planner",
+          "success": true,
+          "usage_source": "provider"
+        }
+      },
+      "verified_via": "full_pipeline"
+    }
+  ],
+  "sample_seed": null,
+  "sampling_mode": "full",
+  "selected_ids": [
+    "t0_one_plus_one",
+    "t0_budget_constraint",
+    "t0_budget_set_membership"
+  ],
+  "target_timeouts": {
+    "apollo_lemma": 120,
+    "subgoal": 120,
+    "theorem_body": 120
+  },
+  "tokens_by_stage": {
+    "formalizer": {
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "planner": {
+      "input_tokens": 1738,
+      "output_tokens": 500
+    },
+    "prover": {
+      "input_tokens": 829,
+      "output_tokens": 92
+    }
+  }
+}
