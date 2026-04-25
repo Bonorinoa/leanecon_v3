@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import json
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,44 @@ def _total_cost(summary: dict[str, Any]) -> float:
     return round(sum(float(value or 0.0) for value in summary.get("cost_by_stage", {}).values()), 8)
 
 
+def _compute_retrieval_metrics(progress_jsonl: Path) -> dict[str, float]:
+    """Parse a progress JSONL and return hybrid retrieval metrics."""
+    local_hits = local_total = ls_hits = ls_total = 0
+    ls_latencies: list[float] = []
+    if not progress_jsonl.exists():
+        return {}
+    with open(progress_jsonl) as fh:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            re_payload = (event.get("metadata") or {}).get("RetrievalEvent") or {}
+            if not re_payload:
+                continue
+            source = re_payload.get("source", "mathlib_rag")
+            hit = bool(re_payload.get("hit"))
+            latency = float(re_payload.get("latency_ms") or 0.0)
+            if source == "lean_leansearch":
+                ls_total += 1
+                ls_latencies.append(latency)
+                if hit:
+                    ls_hits += 1
+            else:
+                local_total += 1
+                if hit:
+                    local_hits += 1
+    return {
+        "local_rag_hit_rate": round(local_hits / local_total, 4) if local_total else 0.0,
+        "leansearch_hit_rate_at_5": round(ls_hits / ls_total, 4) if ls_total else 0.0,
+        "hybrid_retrieval_latency_ms": round(sum(ls_latencies) / len(ls_latencies), 1) if ls_latencies else 0.0,
+        "leansearch_call_count": float(ls_total),
+    }
+
+
 def load_benchmark_summaries(
     *,
     output_dir: Path | None = None,
@@ -66,6 +105,7 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
     overview_rows: list[list[str]] = []
     tooling_rows: list[list[str]] = []
     latency_rows: list[list[str]] = []
+    retrieval_rows: list[list[str]] = []
     failure_counts: Counter[str] = Counter()
     failure_by_tier: dict[str, Counter[str]] = {}
 
@@ -103,6 +143,17 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
                 str(summary.get("average_lsp_tool_calls", "0.0")),
                 str(summary.get("average_native_search_attempts", "0.0")),
                 str(summary.get("mathlib_native_mode_usage", "0")),
+            ]
+        )
+        progress_jsonl = path.with_suffix(".progress.jsonl")
+        rm = _compute_retrieval_metrics(progress_jsonl)
+        retrieval_rows.append(
+            [
+                claim_set,
+                _format_percent(rm.get("local_rag_hit_rate", 0.0)),
+                _format_percent(rm.get("leansearch_hit_rate_at_5", 0.0)),
+                _format_duration_ms(rm.get("hybrid_retrieval_latency_ms", 0.0)),
+                str(int(rm.get("leansearch_call_count", 0))),
             ]
         )
 
@@ -178,6 +229,13 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
         _render_markdown_table(
             ["Claim Set", "Avg Tool Calls", "Avg LSP Tool Calls", "Avg Native Search Attempts", "Mathlib Native Mode Uses"],
             tooling_rows,
+        ),
+        "",
+        "## Hybrid Retrieval Metrics",
+        "",
+        _render_markdown_table(
+            ["Claim Set", "Local RAG Hit Rate", "LeanSearch Hit Rate@5", "LeanSearch Avg Latency", "LeanSearch Calls"],
+            retrieval_rows,
         ),
         "",
         "## Failure Breakdown",
