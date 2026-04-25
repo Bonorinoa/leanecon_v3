@@ -119,6 +119,8 @@ The mathlib-native route currently performs a bounded LSP pass:
 
 Every trace step is enriched with `claim_type`, `claim_type_policy`, `target_kind`, `mathlib_native_mode`, `lsp_tool_call`, and `native_search_attempt` so subgoals and theorem bodies are equally auditable.
 
+**Sprint 22 addition.** `_try_mathlib_native_harness_loop()` now calls `lean_leansearch` as a first-class harness retrieval primitive (not just a shortcut candidate generator). Results are merged with local `MathlibRAG` results via `_merge_retrieval_premises()` (dedup by name, sort by score descending) before the LLM prompt is built. Every LeanSearch call emits a `RetrievalEvent(source="lean_leansearch", query=...)` with latency and hit flag alongside the local RAG event, so both sources are visible in benchmark JSONL traces.
+
 ---
 
 ## 4B. Harness RAG & Model-Agnostic Mathlib Interaction
@@ -132,7 +134,9 @@ Sprint 21 moves Mathlib retrieval into the harness so the prover stays model-agn
 
 **Fault tolerance.** `MistralProverDriver.next_action` now retries on `429`, `502`, `503`, `504`, and timeouts with the same `(0.5s, 1.0s)` backoff schedule the planner uses. Auth failures and other 4xx responses surface immediately. This closes the 503/429 trace loss observed during the Sprint 21 dry runs and brings prover behaviour in line with the planner's existing tolerance.
 
-**Honest limits (Sprint 21 baseline).** On the focused 12-claim sample the seed-based retrieval helped on only 1 of 4 mathlib-native turns (`retrieval_hit_rate@5 = 0.25`); the verified mathlib-native claim closed via `lean_leansearch`, not the harness RAG. The retrieval *primitive* is correct and the *trace* is complete — the gap is seed coverage. Sprint 22 should treat seed expansion (or a real Mathlib index built from `lake env lean --print-paths`) as the highest-leverage next step.
+**Honest limits (Sprint 21 baseline).** On the focused 12-claim sample the seed-based retrieval helped on only 1 of 4 mathlib-native turns (`retrieval_hit_rate@5 = 0.25`); the verified mathlib-native claim closed via `lean_leansearch`, not the harness RAG. The retrieval *primitive* is correct and the *trace* is complete — the gap is seed coverage.
+
+**Sprint 22 addition.** `_default_rag()` now delegates embedder selection to `get_default_embedder()` (tries `SentenceTransformerEmbedder` — `sentence-transformers/all-MiniLM-L6-v2` by default — and falls back to `HashingTextEmbedder` on any failure). Set `LEANECON_LOCAL_FILES_ONLY=true` to prevent model downloads in CI; set `LEANECON_EMBEDDING_MODEL` to override the model name. The Sprint 21 honest baseline (0.25 hit rate) reflects the lexical-only seed; Sprint 22 target is ≥ 0.60 after merging LeanSearch results and semantic scoring.
 
 ---
 
