@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 from typing import Protocol
@@ -62,7 +63,8 @@ class SentenceTransformerEmbedder:
         from sentence_transformers import SentenceTransformer
 
         self.model_name = model_name
-        self._model = SentenceTransformer(model_name, local_files_only=True)
+        _local_only = os.getenv("LEANECON_LOCAL_FILES_ONLY", "false").lower() == "true"
+        self._model = SentenceTransformer(model_name, local_files_only=_local_only)
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         matrix = self._model.encode(texts, normalize_embeddings=True)

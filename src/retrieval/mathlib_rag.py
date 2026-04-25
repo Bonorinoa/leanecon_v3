@@ -16,7 +16,6 @@ from threading import Lock
 from typing import Any
 
 from src.planner.retrieval import (
-    HashingTextEmbedder,
     TextEmbedder,
     cosine_similarity,
     get_default_embedder,
@@ -265,8 +264,8 @@ def _default_rag() -> MathlibRAG:
     if _DEFAULT_RAG is None:
         with _DEFAULT_RAG_LOCK:
             if _DEFAULT_RAG is None:
-                # Hashing embedder is robust in CI (no network, no weights).
-                _DEFAULT_RAG = MathlibRAG(embedder=HashingTextEmbedder())
+                from src.planner.retrieval import get_default_embedder
+                _DEFAULT_RAG = MathlibRAG(embedder=get_default_embedder())
     return _DEFAULT_RAG
 
 
