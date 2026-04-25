@@ -91,3 +91,28 @@ def test_empty_seed_returns_no_results(tmp_path: Path) -> None:
     empty_seed.write_text("")
     rag = MathlibRAG(seed_path=empty_seed, index_path=tmp_path / "cache.jsonl")
     assert rag.retrieve_premises("anything", k=5) == []
+
+
+def test_retrieval_event_has_query_field() -> None:
+    from src.observability.models import RetrievalEvent
+
+    evt = RetrievalEvent(source="lean_leansearch", query="continuous add")
+    d = evt.to_dict()
+    assert d["query"] == "continuous add"
+    assert d["source"] == "lean_leansearch"
+    evt2 = RetrievalEvent()
+    assert evt2.to_dict()["query"] is None
+
+
+def test_default_rag_uses_get_default_embedder() -> None:
+    import src.retrieval.mathlib_rag as rag_mod
+
+    rag_mod._DEFAULT_RAG = None
+    rag = rag_mod._default_rag()
+    from src.planner.retrieval import HashingTextEmbedder, SentenceTransformerEmbedder, get_default_embedder
+
+    expected_type = type(get_default_embedder())
+    assert isinstance(rag._embedder, expected_type), (
+        f"Expected {expected_type.__name__}, got {type(rag._embedder).__name__}"
+    )
+    rag_mod._DEFAULT_RAG = None

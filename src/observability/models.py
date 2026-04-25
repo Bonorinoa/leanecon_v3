@@ -72,12 +72,14 @@ class RetrievalEvent:
     k: int = 5
     source: str = "mathlib_rag"
     goal_digest: str | None = None
+    query: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "event_type": "RetrievalEvent",
             "source": self.source,
             "goal_digest": self.goal_digest,
+            "query": self.query,
             "retrieved_premises": [dict(premise) for premise in self.retrieved_premises],
             "scores": [round(float(score), 6) for score in self.scores],
             "latency_ms": round(float(self.latency_ms), 3),
