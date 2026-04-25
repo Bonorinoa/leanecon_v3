@@ -2306,7 +2306,46 @@ class Prover:
                 metadata={"turn": turn, "target_name": target.name, **retrieval_payload},
             )
         )
-        if not retrieval_event.retrieved_premises:
+        # ── LeanSearch (hybrid second pass) ───────────────────────────────────
+        ls_query = self._mathlib_native_search_query(
+            packet=packet,
+            goals=before_state.get("goals") or goals,
+            current_code=session.read_code(),
+        )
+        ls_event = self._retrieve_lean_search_premises(ls_query, k=5)
+        ls_payload = ls_event.to_dict()
+        self._retrieval_events.append(ls_payload)
+        self._emit_progress(
+            on_progress,
+            "retrieval_event",
+            job_id=job_id,
+            stage="prover",
+            status="running_prover",
+            message="LeanSearch retrieval for harness context.",
+            metadata={
+                "turn": turn,
+                "target_name": target.name,
+                "claim_type": "mathlib_native",
+                "mathlib_native_mode": True,
+                "RetrievalEvent": ls_payload,
+            },
+        )
+        audit_events.append(
+            AuditEvent(
+                stage="prover",
+                event_type="RetrievalEvent",
+                provider=backend.provider,
+                model=backend.model,
+                success=True,
+                metadata={"turn": turn, "target_name": target.name, **ls_payload},
+            )
+        )
+        merged_premises = self._merge_retrieval_premises(
+            retrieval_event.retrieved_premises,
+            ls_event.retrieved_premises,
+            k=8,
+        )
+        if not merged_premises:
             if _contains_lsp_unavailable(
                 before_state.get("diagnostics")
             ) or _contains_lsp_unavailable(before_state.get("code_actions")):
@@ -2340,9 +2379,9 @@ class Prover:
                     target_name=target.name,
                     action_type="mathlib_native_harness_retrieval",
                     success=False,
-                    rationale="Harness retrieval returned no premises; falling back to bounded LSP search.",
+                    rationale="Hybrid retrieval (local RAG + LeanSearch) returned no premises; falling back to bounded LSP search.",
                     tool_name="retrieve_premises",
-                    tool_arguments={"RetrievalEvent": retrieval_payload},
+                    tool_arguments={"RetrievalEvent": retrieval_payload, "LeanSearchRetrievalEvent": ls_payload},
                     tool_result="No retrieved premises.",
                     lean_feedback=lean_feedback,
                     goals=goals,
@@ -2358,7 +2397,7 @@ class Prover:
             packet=packet,
             target=target,
             state=before_state,
-            retrieved_premises=retrieval_event.retrieved_premises,
+            retrieved_premises=merged_premises,
             diagnostics=diagnostics,
             code_actions=code_actions,
             prior_trace=trace,

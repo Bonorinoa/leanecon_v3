@@ -1453,7 +1453,9 @@ async def test_mathlib_native_lsp_search_closes_with_compile_validated_code_acti
     assert result.status == "verified"
     assert result.verified_code is not None
     assert "trivial" in result.verified_code
-    assert driver.call_count == 0
+    # Harness loop now calls lean_leansearch first and may attempt the LLM once
+    # (failing gracefully with no scripted action); LSP search still closes the proof.
+    assert driver.call_count <= 1
     search_steps = [
         step for step in result.trace if step.action_type == "mathlib_native_lsp_search"
     ]
@@ -2581,6 +2583,8 @@ async def test_mathlib_native_harness_loop_uses_retrieved_premises_in_prompt(
     assert payload["ToolUsageTrace"]["state_hash_before"]
     assert payload["ToolUsageTrace"]["state_hash_after"]
     assert payload["ProgressDelta"]["goals_reduced"] is True
+    ls_events = [e for e in result.retrieval_events if e.get("source") == "lean_leansearch"]
+    assert ls_events, "Expected lean_leansearch RetrievalEvent emitted from harness path"
 
 
 @pytest.mark.anyio
