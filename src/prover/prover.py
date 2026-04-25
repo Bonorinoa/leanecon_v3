@@ -2646,6 +2646,61 @@ class Prover:
             k=k,
         )
 
+    def _retrieve_lean_search_premises(self, query: str, *, k: int) -> RetrievalEvent:
+        started_at = time.perf_counter()
+        if not self.budget_tracker.can_search():
+            return RetrievalEvent(source="lean_leansearch", query=query, latency_ms=0.0, k=k)
+        premises: list[dict[str, Any]] = []
+        try:
+            self.budget_tracker.record("lean_leansearch")
+            payload = self.lsp_client.lean_leansearch(query, num_results=k)
+            items = (payload or {}).get("items") or []
+            for item in items[:k]:
+                name = str(item.get("name") or item.get("theorem_name") or "")
+                if not name:
+                    continue
+                premises.append(
+                    {
+                        "name": name,
+                        "score": 0.80,
+                        "statement": item.get("type") or item.get("statement"),
+                        "docstring": item.get("docstring"),
+                        "file_path": item.get("module"),
+                        "tags": [],
+                        "dependencies": [],
+                        "source": "lean_leansearch",
+                    }
+                )
+        except Exception:
+            pass
+        scores = [float(p.get("score", 0.0)) for p in premises]
+        return RetrievalEvent(
+            retrieved_premises=premises,
+            scores=scores,
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            k=k,
+            source="lean_leansearch",
+            query=query,
+        )
+
+    @staticmethod
+    def _merge_retrieval_premises(
+        local: list[dict[str, Any]],
+        remote: list[dict[str, Any]],
+        k: int,
+    ) -> list[dict[str, Any]]:
+        by_name: dict[str, dict[str, Any]] = {}
+        for p in local:
+            name = p.get("name", "")
+            if name and (name not in by_name or p.get("score", 0.0) > by_name[name].get("score", 0.0)):
+                by_name[name] = p
+        for p in remote:
+            name = p.get("name", "")
+            if name and (name not in by_name or p.get("score", 0.0) > by_name[name].get("score", 0.0)):
+                by_name[name] = p
+        merged = sorted(by_name.values(), key=lambda p: float(p.get("score", 0.0)), reverse=True)
+        return merged[:k]
+
     def _build_mathlib_harness_prompt(
         self,
         *,
