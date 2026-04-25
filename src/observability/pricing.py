@@ -37,7 +37,7 @@ _BUILTIN_PRICING: dict[str, dict[str, dict[str, float]]] = {
         "labs-leanstral-2603": {
             "input_per_million": 0.0,
             "output_per_million": 0.0,
-        }
+        },
     },
     # Ollama Cloud publishes subscription / usage-tier pricing rather than
     # stable per-token public rates. We track these as zero-cost sentinels so
@@ -50,8 +50,8 @@ _BUILTIN_PRICING: dict[str, dict[str, dict[str, float]]] = {
         "gemma4:31b-cloud": {
             "input_per_million": 0.0,
             "output_per_million": 0.0,
-        }
-    }
+        },
+    },
 }
 
 
@@ -118,10 +118,9 @@ def estimate_cost_usd(
     pricing = lookup_pricing(provider, model)
     if pricing is None:
         return None
-    return (
-        ((input_tokens or 0) / 1_000_000.0) * pricing["input_per_million"]
-        + ((output_tokens or 0) / 1_000_000.0) * pricing["output_per_million"]
-    )
+    return ((input_tokens or 0) / 1_000_000.0) * pricing["input_per_million"] + (
+        (output_tokens or 0) / 1_000_000.0
+    ) * pricing["output_per_million"]
 
 
 def complete_usage(
@@ -136,10 +135,22 @@ def complete_usage(
     prompt_text: str | None = None,
     response_text: str | None = None,
 ) -> TokenUsage:
-    resolved_prompt = metadata.prompt_text if metadata and metadata.prompt_text is not None else prompt_text
-    resolved_response = metadata.response_text if metadata and metadata.response_text is not None else response_text
-    input_tokens = metadata.input_tokens if metadata and metadata.input_tokens is not None else estimate_tokens_from_text(resolved_prompt)
-    output_tokens = metadata.output_tokens if metadata and metadata.output_tokens is not None else estimate_tokens_from_text(resolved_response)
+    resolved_prompt = (
+        metadata.prompt_text if metadata and metadata.prompt_text is not None else prompt_text
+    )
+    resolved_response = (
+        metadata.response_text if metadata and metadata.response_text is not None else response_text
+    )
+    input_tokens = (
+        metadata.input_tokens
+        if metadata and metadata.input_tokens is not None
+        else estimate_tokens_from_text(resolved_prompt)
+    )
+    output_tokens = (
+        metadata.output_tokens
+        if metadata and metadata.output_tokens is not None
+        else estimate_tokens_from_text(resolved_response)
+    )
     usage_source = metadata.usage_source if metadata is not None else "estimated_chars"
     if metadata is None:
         usage_source = "estimated_chars"

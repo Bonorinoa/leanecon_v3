@@ -22,6 +22,15 @@ def classify_exception(exc: BaseException) -> str:
         return "auth"
     if "auto-router" in message or "non-hugging face api key" in message:
         return "auth"
+    if "rate limit" in message or "rate_limited" in message or 'raw_status_code":429' in message:
+        return "rate_limit"
+    if (
+        "service unavailable" in message
+        or 'raw_status_code":503' in message
+        or 'raw_status_code":502' in message
+        or 'raw_status_code":504' in message
+    ):
+        return "provider_unavailable"
     if "timeout" in message or "timed out" in message:
         return "timeout"
     if "schema" in message or "json" in message:

@@ -65,6 +65,98 @@ class AuditEvent:
 
 
 @dataclass(frozen=True)
+class RetrievalEvent:
+    retrieved_premises: list[dict[str, Any]] = field(default_factory=list)
+    scores: list[float] = field(default_factory=list)
+    latency_ms: float = 0.0
+    k: int = 5
+    source: str = "mathlib_rag"
+    goal_digest: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": "RetrievalEvent",
+            "source": self.source,
+            "goal_digest": self.goal_digest,
+            "retrieved_premises": [dict(premise) for premise in self.retrieved_premises],
+            "scores": [round(float(score), 6) for score in self.scores],
+            "latency_ms": round(float(self.latency_ms), 3),
+            "k": int(self.k),
+            "retrieved_count": len(self.retrieved_premises),
+            "hit": bool(self.retrieved_premises),
+        }
+
+
+@dataclass(frozen=True)
+class ProgressDelta:
+    goals_reduced: bool = False
+    complexity_reduced: bool = False
+    stall_detected: bool = False
+    goal_count_before: int = 0
+    goal_count_after: int = 0
+    complexity_before: int = 0
+    complexity_after: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": "ProgressDelta",
+            "goals_reduced": self.goals_reduced,
+            "complexity_reduced": self.complexity_reduced,
+            "stall_detected": self.stall_detected,
+            "goal_count_before": int(self.goal_count_before),
+            "goal_count_after": int(self.goal_count_after),
+            "complexity_before": int(self.complexity_before),
+            "complexity_after": int(self.complexity_after),
+        }
+
+
+@dataclass(frozen=True)
+class StateTransition:
+    goal_count_before: int
+    goal_count_after: int
+    progress_delta: ProgressDelta
+    state_hash_before: str | None = None
+    state_hash_after: str | None = None
+    turn_index: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": "StateTransition",
+            "turn_index": self.turn_index,
+            "goal_count_before": int(self.goal_count_before),
+            "goal_count_after": int(self.goal_count_after),
+            "state_hash_before": self.state_hash_before,
+            "state_hash_after": self.state_hash_after,
+            "progress_delta": self.progress_delta.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class ToolUsageTrace:
+    tool_name: str
+    args: dict[str, Any] = field(default_factory=dict)
+    result: str = ""
+    state_hash_before: str | None = None
+    state_hash_after: str | None = None
+    latency_ms: float | None = None
+    success: bool | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": "ToolUsageTrace",
+            "tool_name": self.tool_name,
+            "args": dict(self.args),
+            "result": self.result,
+            "state_hash_before": self.state_hash_before,
+            "state_hash_after": self.state_hash_after,
+            "latency_ms": (
+                round(float(self.latency_ms), 3) if self.latency_ms is not None else None
+            ),
+            "success": self.success,
+        }
+
+
+@dataclass(frozen=True)
 class ProviderCallMetadata:
     input_tokens: int | None = None
     output_tokens: int | None = None

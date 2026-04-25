@@ -121,13 +121,28 @@ Every trace step is enriched with `claim_type`, `claim_type_policy`, `target_kin
 
 ---
 
+## 4B. Harness RAG & Model-Agnostic Mathlib Interaction
+Sprint 21 moves Mathlib retrieval into the harness so the prover stays model-agnostic and every search step is auditable. The LLM no longer decides what to retrieve — it receives a state-conditioned premise list and is asked to propose the next tactic. This trades a small amount of model-specific cleverness for determinism, debuggability, and the ability to swap in any compatible LLM.
+
+**Primitive.** `retrieve_premises(goal_state: str, k: int = 8) -> list[Premise]` lives in [src/retrieval/mathlib_rag.py](../src/retrieval/mathlib_rag.py). `MathlibRAG` loads a JSONL seed (default: [data/mathlib_rag_seed.jsonl](../data/mathlib_rag_seed.jsonl), 62 premises covering continuity, compactness, monotonicity, fixed-point, and bridge-module declarations) and persists a normalized cache at `lean_workspace/.cache/mathlib_rag.jsonl`. Scoring is a hybrid: name-token Jaccard (weight 0.75), tag bonus (capped at 0.15), and a deterministic hashing-based cosine over the goal text (weight 0.10). The output `Premise` carries `name`, `score`, `statement`, `docstring`, `file_path`, `tags`, and `dependencies`.
+
+**Where it plugs in.** Only the `mathlib_native` claim-type path calls retrieval. The `_try_mathlib_native_harness_loop` in [src/prover/prover.py](../src/prover/prover.py) calls `_retrieve_mathlib_premises(...)` once per turn against the active goal text, builds a prompt that includes the top-k premises plus diagnostics and active goals, asks the provider for a single `apply_tactic` action, and lets the REPL apply it. After every turn the harness computes a `ProgressDelta` and stops cleanly if neither the goal set nor the structural complexity changed (the new stall test replaces the old shallow-loop heuristic).
+
+**Observability.** Each turn emits, in order: `RetrievalEvent` (top-k, scores, latency, hit/miss against the seed), `ToolUsageTrace` (tool name, args, state hash before/after, success), `StateTransition` (goal counts, hash digests), and `ProgressDelta` (`goals_reduced`, `complexity_reduced`, `stall_detected`). All four are emitted into the benchmark JSONL and summarized at run-end via `retrieval_hit_rate@5` and `avg_tool_calls_mathlib`.
+
+**Fault tolerance.** `MistralProverDriver.next_action` now retries on `429`, `502`, `503`, `504`, and timeouts with the same `(0.5s, 1.0s)` backoff schedule the planner uses. Auth failures and other 4xx responses surface immediately. This closes the 503/429 trace loss observed during the Sprint 21 dry runs and brings prover behaviour in line with the planner's existing tolerance.
+
+**Honest limits (Sprint 21 baseline).** On the focused 12-claim sample the seed-based retrieval helped on only 1 of 4 mathlib-native turns (`retrieval_hit_rate@5 = 0.25`); the verified mathlib-native claim closed via `lean_leansearch`, not the harness RAG. The retrieval *primitive* is correct and the *trace* is complete — the gap is seed coverage. Sprint 22 should treat seed expansion (or a real Mathlib index built from `lake env lean --print-paths`) as the highest-leverage next step.
+
+---
+
 ## 5. Key Invariants (Never Violate)
 1. Lean kernel is the **only** authority. `lake env lean` exit code + no warnings = success.
 2. Every formalization must pass **semantic faithfulness gate** (new frame-based scorer) before Prover sees it.
 3. Planner never produces vacuous or identity theorems.
 4. All model-facing tool calls go through `ToolSpec` registry with budget enforcement.
 5. Human review gates are **not optional** in alpha — enforced in API state machine.
-6. Every benchmark run must preserve claim-type observability: claim-type policy, LSP tool calls, native search attempts, and mathlib-native mode usage must be visible in summaries/history.
+6. Every benchmark run must preserve claim-type observability: claim-type policy, LSP tool calls, native search attempts, mathlib-native mode usage, and — for mathlib-native turns — `RetrievalEvent`, `ToolUsageTrace`, `StateTransition`, and `ProgressDelta` payloads must be visible in summaries/history.
 7. Every PR updates `benchmark_baselines/` and must not regress local-gate.
 
 ---

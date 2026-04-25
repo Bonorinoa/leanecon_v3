@@ -17,7 +17,9 @@ class LeanLSPUnavailableError(RuntimeError):
 
 
 class LeanLSPClient:
-    def __init__(self, *, lean_project_path: Path = LEAN_WORKSPACE, read_timeout_seconds: float = 15.0) -> None:
+    def __init__(
+        self, *, lean_project_path: Path = LEAN_WORKSPACE, read_timeout_seconds: float = 15.0
+    ) -> None:
         self.lean_project_path = lean_project_path
         self.read_timeout_seconds = read_timeout_seconds
         self._process: subprocess.Popen[bytes] | None = None
@@ -37,7 +39,10 @@ class LeanLSPClient:
         self._terminate_process(process)
 
     def lean_goal(self, file_path: Path, *, line: int, column: int | None = None) -> Any:
-        arguments: dict[str, Any] = {"file_path": self._normalize_file_path(file_path), "line": int(line)}
+        arguments: dict[str, Any] = {
+            "file_path": self._normalize_file_path(file_path),
+            "line": int(line),
+        }
         if column is not None:
             arguments["column"] = int(column)
         return self._call_tool("lean_goal", arguments)
@@ -80,6 +85,18 @@ class LeanLSPClient:
             "lean_leansearch",
             {"query": query, "num_results": int(num_results)},
         )
+
+    def lean_local_search(self, query: str, *, limit: int = 8) -> Any:
+        return self._call_tool(
+            "lean_local_search",
+            {"query": query, "limit": int(limit), "project_root": str(self.lean_project_path)},
+        )
+
+    def lean_file_outline(self, file_path: Path, *, max_declarations: int | None = None) -> Any:
+        arguments: dict[str, Any] = {"file_path": self._normalize_file_path(file_path)}
+        if max_declarations is not None:
+            arguments["max_declarations"] = int(max_declarations)
+        return self._call_tool("lean_file_outline", arguments)
 
     def lean_loogle(self, query: str, *, num_results: int = 8) -> Any:
         return self._call_tool(
@@ -136,11 +153,7 @@ class LeanLSPClient:
         env.setdefault("XDG_CACHE_HOME", str(CACHE_DIR))
         env.setdefault("XDG_DATA_HOME", str(uv_data_dir))
         local_binary = PROJECT_ROOT / ".venv" / "bin" / "lean-lsp-mcp"
-        command = (
-            [str(local_binary)]
-            if local_binary.exists()
-            else ["uvx", "lean-lsp-mcp"]
-        )
+        command = [str(local_binary)] if local_binary.exists() else ["uvx", "lean-lsp-mcp"]
         process = subprocess.Popen(
             [*command, "--transport", "stdio", "--lean-project-path", str(self.lean_project_path)],
             stdin=subprocess.PIPE,

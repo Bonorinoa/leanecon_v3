@@ -3,7 +3,14 @@ from __future__ import annotations
 import pytest
 
 from src.api.jobs import JobStore
-from src.observability.models import AuditEvent, StageTiming
+from src.observability.models import (
+    AuditEvent,
+    ProgressDelta,
+    RetrievalEvent,
+    StageTiming,
+    StateTransition,
+    ToolUsageTrace,
+)
 from src.observability.pricing import complete_usage, lookup_pricing
 
 
@@ -76,7 +83,10 @@ def test_job_store_persists_usage_metrics_and_audits(tmp_path) -> None:
     assert hydrated.result["usage_by_stage"]["formalizer"]["stage"] == "formalizer"
     assert hydrated.result["timing_breakdown"]["formalizer_ms"] == 7.0
     assert hydrated.result["audit_summary"]["event_count"] == 1
-    assert hydrated.result["audit_summary"]["events"][0]["raw_planner_response"] == "raw planner response"
+    assert (
+        hydrated.result["audit_summary"]["events"][0]["raw_planner_response"]
+        == "raw planner response"
+    )
 
     snapshot = store.metrics_snapshot()
     assert snapshot["usage_totals"]["records"] == 1
@@ -110,7 +120,9 @@ async def test_job_store_subscription_emits_initial_snapshot_then_progress(tmp_p
 
 
 @pytest.mark.anyio
-async def test_job_store_subscription_replays_progress_history_for_late_subscribers(tmp_path) -> None:
+async def test_job_store_subscription_replays_progress_history_for_late_subscribers(
+    tmp_path,
+) -> None:
     store = JobStore(tmp_path / "jobs.db", ttl_seconds=3600)
     job = store.create(status="queued", review_state="queued", result={"claim": "demo"})
     store.publish_progress(
@@ -127,3 +139,74 @@ async def test_job_store_subscription_replays_progress_history_for_late_subscrib
 
     assert first["event"] == "planner_started"
     assert first["payload"]["message"] == "Planner started."
+
+
+def test_retrieval_event_to_dict_schema() -> None:
+    event = RetrievalEvent(
+        retrieved_premises=[{"name": "Continuous.add", "score": 0.91}],
+        scores=[0.91],
+        latency_ms=12.3456,
+        k=5,
+        goal_digest="abc123",
+    )
+    payload = event.to_dict()
+    assert payload["event_type"] == "RetrievalEvent"
+    assert payload["source"] == "mathlib_rag"
+    assert payload["goal_digest"] == "abc123"
+    assert payload["retrieved_premises"][0]["name"] == "Continuous.add"
+    assert payload["scores"] == [0.91]
+    assert payload["latency_ms"] == 12.346
+    assert payload["k"] == 5
+    assert payload["retrieved_count"] == 1
+    assert payload["hit"] is True
+
+
+def test_tool_usage_trace_to_dict_schema() -> None:
+    trace = ToolUsageTrace(
+        tool_name="apply_tactic",
+        args={"tactic": "exact Continuous.add hf hg"},
+        result="ok",
+        state_hash_before="h1",
+        state_hash_after="h2",
+        latency_ms=4.2,
+        success=True,
+    )
+    payload = trace.to_dict()
+    assert payload["event_type"] == "ToolUsageTrace"
+    assert payload["tool_name"] == "apply_tactic"
+    assert payload["args"]["tactic"].startswith("exact")
+    assert payload["state_hash_before"] == "h1"
+    assert payload["state_hash_after"] == "h2"
+    assert payload["latency_ms"] == 4.2
+    assert payload["success"] is True
+
+
+def test_state_transition_and_progress_delta_schema() -> None:
+    delta = ProgressDelta(
+        goals_reduced=True,
+        complexity_reduced=False,
+        stall_detected=False,
+        goal_count_before=3,
+        goal_count_after=2,
+        complexity_before=40,
+        complexity_after=36,
+    )
+    transition = StateTransition(
+        goal_count_before=3,
+        goal_count_after=2,
+        progress_delta=delta,
+        state_hash_before="h1",
+        state_hash_after="h2",
+        turn_index=2,
+    )
+    payload = transition.to_dict()
+    assert payload["event_type"] == "StateTransition"
+    assert payload["turn_index"] == 2
+    assert payload["goal_count_before"] == 3
+    assert payload["goal_count_after"] == 2
+    assert payload["state_hash_before"] == "h1"
+    assert payload["state_hash_after"] == "h2"
+    inner = payload["progress_delta"]
+    assert inner["event_type"] == "ProgressDelta"
+    assert inner["goals_reduced"] is True
+    assert inner["stall_detected"] is False

@@ -1,0 +1,56 @@
+
+[prover_easy_definable] starting
++-----------+-----------+
+| Field     | Value     |
++-----------+-----------+
+| Mode      | benchmark |
+| Claims    | 5         |
+| Sampling  | full      |
+| Readiness | ready     |
++-----------+-----------+
+[claim  1/5 ] prover_easy_definable pd_budget_constraint bucket=regression
+[heartbeat  1/5 ] prover_easy_definable pd_budget_constraint stage=formalizer elapsed=30.0s Formalizer started.
+[heartbeat  1/5 ] prover_easy_definable pd_budget_constraint stage=prover elapsed=60.0s Direct closure attempt 1/2.
+[##----------]  1/5  verified pd_budget_constraint             79.0s full_pipeline
+[claim  2/5 ] prover_easy_definable pd_measure_empty bucket=regression
+[heartbeat  2/5 ] prover_easy_definable pd_measure_empty stage=prover elapsed=30.0s Direct closure attempt 1/7.
+[#####-------]  2/5  verified pd_measure_empty                 54.0s full_pipeline
+[claim  3/5 ] prover_easy_definable pd_constant_continuous bucket=regression
+[heartbeat  3/5 ] prover_easy_definable pd_constant_continuous stage=prover elapsed=30.0s Direct closure attempt 1/8.
+[heartbeat  3/5 ] prover_easy_definable pd_constant_continuous stage=prover elapsed=60.0s Closed via direct definable closure.
+[#######-----]  3/5  verified pd_constant_continuous           62.5s full_pipeline
+[claim  4/5 ] prover_easy_definable pd_policy_refl bucket=regression
+[heartbeat  4/5 ] prover_easy_definable pd_policy_refl stage=prover elapsed=30.0s Direct closure attempt 1/11.
+[##########--]  4/5  verified pd_policy_refl                   52.6s full_pipeline
+[claim  5/5 ] prover_easy_definable pd_value_function_fixed bucket=regression
+[heartbeat  5/5 ] prover_easy_definable pd_value_function_fixed stage=prover elapsed=30.0s Direct closure attempt 1/8.
+[############]  5/5  verified pd_value_function_fixed          52.3s full_pipeline
+
+[prover_easy_definable] summary
++-------------------+---------------------------------------------------------------------------------------------------------------------------------+
+| Metric            | Value                                                                                                                           |
++-------------------+---------------------------------------------------------------------------------------------------------------------------------+
+| Pass@1            | 100.0% (5/5)                                                                                                                    |
+| Failures          | 0                                                                                                                               |
+| Avg total latency | 60.1s                                                                                                                           |
+| Total cost        | $0.0028                                                                                                                         |
+| Output            | /Users/bonorinoa/Desktop/Github_Repositories/leanecon_v3/benchmark_baselines/v3_alpha/benchmark_mode/prover_easy_definable.json |
++-------------------+---------------------------------------------------------------------------------------------------------------------------------+
++------------+-------------+
+| Stage      | Avg latency |
++------------+-------------+
+| planner    | 4.9s        |
+| formalizer | 21.9s       |
+| prover     | 33.3s       |
+| total      | 60.1s       |
++------------+-------------+
+Failures: none
+
+[local_gate] combined
++-----------------------+--------------+
+| Claim set             | Pass@1       |
++-----------------------+--------------+
+| prover_easy_definable | 100.0% (5/5) |
+| local_gate            | 100.0% (5/5) |
++-----------------------+--------------+
+Output: /Users/bonorinoa/Desktop/Github_Repositories/leanecon_v3/benchmark_baselines/v3_alpha/benchmark_mode/local_gate.json

@@ -86,6 +86,18 @@ def build_default_registry() -> ToolRegistry:
                 lean_specific=True,
             ),
             ToolSpec(
+                "lean_local_search",
+                "Search local Lean declarations by name or prefix.",
+                {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                lean_specific=True,
+            ),
+            ToolSpec(
+                "lean_file_outline",
+                "Read imports and declaration outlines for the current Lean file.",
+                {"max_declarations": {"type": "integer"}},
+                lean_specific=True,
+            ),
+            ToolSpec(
                 "lean_loogle",
                 "Search Mathlib by declaration name or type pattern.",
                 {"query": {"type": "string"}, "num_results": {"type": "integer"}},

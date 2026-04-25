@@ -78,7 +78,9 @@ class ProofFileController:
             return theorem_code
         stub_body = stub.find(_BODY_MARKER, stub_match.end())
         code_match = _theorem_match(theorem_code, stub_match.group(2))
-        code_body = theorem_code.find(_BODY_MARKER, code_match.end()) if code_match is not None else -1
+        code_body = (
+            theorem_code.find(_BODY_MARKER, code_match.end()) if code_match is not None else -1
+        )
         if stub_body == -1 or code_body == -1:
             return theorem_code
         context = stub

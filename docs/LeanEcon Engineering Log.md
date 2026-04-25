@@ -628,13 +628,13 @@ Centralize on Mistral (Leanstral) after Ollama instability.
 Defer Cheeky Formalizer and adaptive routing until we better understand the mathlib-native path.
 Write the Engineering Log entry only at the end of the sprint with full hindsight.
 
-What Was Built
+### What Was Built
 
 Benchmark-to-Track-Progress Flywheel: Added metrics_aggregator.py, benchmark_history.jsonl, --save-history flag, and structured event capture. We now have a living, queryable history of every run.
 Preamble Gap Detector: Created gap_detector.py + gap_report CLI. It successfully surfaces missing lemmas and bridge definitions from failed traces (especially useful on the 3 remaining tier2_preamble_definable failures).
 Prover Claim-Type Awareness + Efficiency: Implemented claim_type metadata passing, disabled direct-close on mathlib-native claims, and hardened no_progress_stall detection. This produced cleaner, more honest failures and measurable speedups on preamble_definable claims (70.4s avg vs previous ~85s).
 
-Results & Key Learnings (with Hindsight)
+### Results & Key Learnings (with Hindsight)
 
 tier2_frontier_preamble_definable: Held steady at 7/10 and became meaningfully faster. The efficiency work paid off exactly where we had strong preamble structure.
 tier2_frontier_mathlib_native: Regressed from 1/3 → 0/3. The claim-type throttling worked perfectly (0 direct-close attempts), but the prover had no replacement strategy, leading to shallow apply_tactic/get_goals loops.
@@ -647,35 +647,119 @@ Full test suite remained green (96+ passed).
 Benchmark harness now properly separates difficulty and type.
 All new observability (history, gaps, claim-type logging) is working and captured in artifacts.
 
-Session 19 Outcome
+### Session 19 Outcome
+
 We successfully stabilized and instrumented the system. The regression on mathlib-native claims was disappointing in the short term but extremely valuable — it gave us a clear diagnosis and pointed directly at Leanstral’s native strengths (lean-lsp-mcp optimization) as the highest-leverage next move.
 
-## Sprint 20 Summary — April 24, 2026
 
-Type: Mathlib-native prover activation + final documentation polish + deployment-readiness observability.
+## Session 20 — April 24, 2026
 
-Trigger: Session 19 showed that claim-type throttling made preamble-definable claims faster and cleaner, but left mathlib-native claims without an intelligent replacement strategy. The next highest-leverage move was to route those claims through Leanstral's `lean-lsp-mcp` strengths instead of asking the generic prover loop to guess.
+Type: LSP integration + mathlib-native search foundation + documentation closure
+Trigger: Sprint 19 left us with a clean but limited prover (strong on preamble-definable, broken on mathlib-native). We needed to activate Leanstral’s native strengths with lean-lsp-mcp while preserving the “less is more” discipline.
+Decisions
 
-What shipped
+Run three parallel sessions: A (core prover + LSP), B (preamble gaps + hygiene), C (documentation + observability).
+Focus on measurable improvement rather than chasing an arbitrary 2/3 gate.
+Update documentation properly at the end (first major docs refresh in several sessions).
 
-* Added `mathlib_native_mode` as a real prover path, not just a logging label. Mathlib-native claims now cap direct closure, skip Preamble-derived shortcut reuse, and run bounded LSP-assisted inspection/search.
-* Integrated `lean-lsp-mcp` into the mathlib-native route with diagnostics, active-goal inspection, code actions, hover/type context, LeanSearch, and compile-checked candidate tactics.
-* Expanded observability so subgoal and theorem-body traces carry claim type, claim-type policy, target kind, mathlib-native mode, LSP tool-call flags, and native-search attempt flags.
-* Added benchmark flywheel metrics for LSP tool calls, native search attempts, and mathlib-native mode usage.
-* Extended the Preamble with new dynamic-programming, optimization, and sequence entries, including Bellman contraction and additional bridge lemmas.
-* Updated architecture, charter, README, capability metadata, and Lean proving skill guidance to reflect the Sprint 20 architecture.
+What Was Built
+Session A – Prover + lean-lsp-mcp Integration
 
-Current capability boundary
+Added bounded LSP methods to lean_lsp_client.py.
+Implemented mathlib_native_mode with dedicated tool exposure (lean_diagnostic_messages, lean_leansearch, lean_loogle).
+Created LSP-assisted search path in the prover that activates only for mathlib-native claims.
+Added regression tests and proper counting of search tool calls.
 
-* Preamble-definable claims remain the reliable fast path: metadata-backed direct closure and deterministic repair do most of the work.
-* Mathlib-native claims now have the right search surface and trace instrumentation, but should still be treated as an active frontier until benchmark history shows sustained pass-rate improvement.
-* The deployment path is clear: Lean workspace build, Mistral/Leanstral credentials, SQLite job store, `/health`, `/metrics`, benchmark-mode local-gate, and runtime availability of `uvx lean-lsp-mcp`.
+Session B – Preamble Expansion + Hygiene
 
-Verification
+Added 5 high-quality new preamble entries:
+BellmanContractionCertificate bridge module
+contraction_fixedPoint_unique + contraction_has_unique_fixedPoint
+KuhnTuckerPoint.multiplier_eq_zero_of_slack
+exists_isConstrainedMaximum_of_isCompact_continuousOn
+monotone_boundedAbove_converges
 
-```{Bash}
-PYTHONPATH=. pytest -q -o addopts='' tests/test_metrics_aggregator.py tests/test_prover.py
-PYTHONPATH=. pytest -q -o addopts='' tests/test_local_gate.py
-```
+Improved preamble_library.py metadata and retrieval.
+Strengthened Gap Detector output.
 
-Founder finalization note: before public-facing release language, rerun benchmark-mode local-gate on the canonical split sets and promote the resulting `benchmark_history.jsonl` row only if the new LSP/native-search metrics are present.
+Session C – Documentation & Observability Closure
+
+Updated docs/ARCHITECTURE_v3.md, docs/CHARTER_v3.md, README.md, and skills/lean4_proving.md.
+Added first-class benchmark metrics: lsp_tool_calls, native_search_attempts, mathlib_native_mode_usage.
+Enriched all prover traces with claim type, policy, target kind, LSP flags, and native-search flags.
+Pushed clean commit to main.
+
+### Results (with Hindsight)
+
+tier2_frontier_mathlib_native: Improved from 0/3 → 1/3.
+t2_contraction_mapping_fixed_point now succeeds via mathlib_native_lsp_search using contraction_has_unique_fixedPoint.
+Remaining failures produce auditable, high-quality LSP traces instead of shallow loops.
+
+tier2_frontier_preamble_definable: Improved from 7/10 → 8/10.
+Full test suite green (113 passed). Lean build clean.
+System now has proper separation between preamble-definable (direct-close) and mathlib-native (LSP-assisted search) paths.
+Documentation and observability are finally up to date.
+
+### Key Learning
+
+We successfully moved from “removing bad behavior” (Sprint 19) to “activating Leanstral’s actual strengths” (Sprint 20). The 1/3 win on mathlib-native with real LSP integration is more valuable than a superficial 2/3 win would have been.
+
+### Session 20 Outcome
+
+Sprint 20 delivered a working, auditable foundation for mathlib-native claims while strengthening the preamble side and bringing documentation back in sync. The system is now in its cleanest and most observable state since the v3 reboot.
+
+
+## Session 21 — April 24–25, 2026
+
+Type: Harness-managed Mathlib RAG + full lean-lsp-mcp surface + prover fault-tolerance + honest baseline reset
+Trigger: Sprint 20 closed at 1/3 on mathlib-native with bounded LSP search but no harness-side retrieval. The next move was either to let the LLM drive search (model-specific, expensive) or to give the harness a deterministic premise primitive (model-agnostic, auditable). We chose the second per Krakauer discipline. A prior Bundle 2 attempt at a benchmark run was abandoned mid-flight on Mistral 503/429 errors, so we entered Bundle 3 without a clean reading of the new pipeline.
+
+### Decisions
+
+Three parallel bundles, with explicit ownership and non-overlapping surfaces:
+- Bundle 1 (Claude Code): retrieval primitive in `src/retrieval/mathlib_rag.py`, observability dataclasses (`RetrievalEvent`, `ToolUsageTrace`, `StateTransition`, `ProgressDelta`).
+- Bundle 2 (Codex): full lean-lsp-mcp surface in `ReplToolOrchestrator`, the `_try_mathlib_native_harness_loop`, `--focused-sample` (3 mathlib-native + 9 preamble-definable) in `evals/local_gate.py`.
+- Bundle 3 (Codex, this session): root-cause fix for the 503/429 abandonment, focused benchmark + regression run, hygiene, docs.
+
+Krakauer constraints held: no econ-specific hints, no hard-coded "if claim contains X then Y", no model-specific code paths. The retrieval primitive is one general function (`retrieve_premises(goal_state, k=8)`); the LLM only sees clean context.
+
+### What Was Built
+
+Bundle 3 focused work:
+- Root-cause fix for the prior-agent 503/429 trace loss: `MistralProverDriver.next_action` now wraps its HTTP call in `_post_with_retry` (3 attempts, `(0.5s, 1.0s)` backoff, retry on `{rate_limit, provider_http_error, provider_unavailable, timeout}`), mirroring the planner's existing pattern. Auth failures still surface immediately.
+- Three retry tests in `tests/test_prover.py` covering the 429-then-success path, 503 exhaustion, and the 401 no-retry path.
+- Removed dead `generate_proof_sketch` from `src/observability/telemetry.py` (9 F821s, no callers anywhere) so the Sprint 21 surface is ruff-clean.
+- Documented the architecture (new §4B in `docs/ARCHITECTURE_v3.md`) and refreshed `skills/lean4_proving.md` to reflect that retrieval is harness-owned.
+
+Inherited from Bundles 1 and 2 (validated this session, not authored):
+- `MathlibRAG` with hybrid lexical+cosine scoring and a 62-entry seed at `data/mathlib_rag_seed.jsonl`.
+- New observability dataclasses wired through the prover loop and into benchmark JSONL.
+- `_try_mathlib_native_harness_loop` driving retrieval-then-tactic turns with `ProgressDelta`-based stall detection (replaces the legacy shallow-loop heuristic on the mathlib-native path).
+- `--focused-sample` flag and `retrieval_hit_rate@5` / `avg_tool_calls_mathlib` summary metrics in `evals/local_gate.py`.
+
+### Results (with Hindsight)
+
+Run A — focused 12 (`tier2_frontier_mathlib_native` + `tier2_frontier_preamble_definable` with `--focused-sample --seed 21`):
+- mathlib-native: **1/3** (`t2_contraction_mapping_fixed_point` only). Same headline rate as Sprint 20. Target was ≥2/3 — missed.
+- preamble-definable focused 9: **6/9**. Three honest `no_progress_stall` failures (`t2_ces_crs`, `t2_bellman_contraction`, `t2_indirect_utility_roys_identity`). Sprint 20's 8/10 was a different sample, so this is not a clean apples-to-apples comparison.
+- `retrieval_hit_rate@5`: **0.25** on mathlib-native (target ≥0.75 — missed). Of 4 retrieval events across the bucket, only 1 returned any premises, and those were `IsCompact.*`/`IsClosed.*` lemmas — irrelevant to a contraction-mapping fixed-point goal. The verified claim closed via `lean_leansearch`, not the harness RAG.
+- `avg_tool_calls_mathlib`: **12.0** (target ≤4.0 — missed). The two failures each consumed their full LSP budget plus apply_tactic turns before stalling.
+- 0 `no_progress_stall` raw events on mathlib-native; instead failures terminate via `progress_stall` driven by `ProgressDelta.stall_detected`. The new stall semantic is firing correctly.
+
+Run B — `prover_easy_definable` regression guardrail (5 claims, full):
+- **5/5 verified, 0 tool calls per claim**. The acceptance criterion for regression-cleanliness is met.
+
+Bundle 3 hygiene + tests:
+- Full pytest: 132 passed, 0 failed.
+- `ruff check src/retrieval/ src/observability/ src/prover/ src/tools/ evals/local_gate.py tests/test_*.py` — clean after the dead-code removal.
+- All four new event types (`RetrievalEvent`, `ToolUsageTrace`, `StateTransition`, `ProgressDelta`) appear in the benchmark JSONL.
+
+### Key Learning
+
+The harness now does the *right shape* of work — deterministic retrieval, full LSP surface, honest progress tracking — but `retrieval_hit_rate@5 = 0.25` says the seed of 62 hand-curated premises is too narrow to cover the actual mathlib-native goals we throw at it. The verified claim succeeded via Loogle/LeanSearch despite the RAG, not because of it. This is the cleanest possible signal that the next sprint's highest-leverage move is real Mathlib indexing (or at minimum a much wider seed harvested from `lake env lean --print-paths`), not more prover-loop logic. The 503/429 retry fix means subsequent runs will produce complete traces under transient API stress, so future tier2 reruns can be trusted.
+
+We deliberately did not game the metric by hand-picking premises that match the failing claims. A 1/3 result with a complete, debuggable trace is more useful than a 2/3 result built on premise-injection.
+
+### Session 21 Outcome
+
+Sprint 21 delivered the right architecture (harness-owned retrieval, full LSP surface, prover-side retry) and the right observability (four new event types, two new summary metrics) but did not move the headline mathlib-native pass rate. The system is now ready for Sprint 22 to attack the actual bottleneck: seed coverage / index breadth. Regression on direct-close claims is clean and the API path no longer drops traces on transient 5xx errors.

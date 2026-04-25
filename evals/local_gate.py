@@ -6,6 +6,7 @@ import argparse
 import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime
+import json
 import os
 from pathlib import Path
 import random
@@ -30,10 +31,16 @@ from src.config import BENCHMARK_BASELINE_DIR, BENCHMARK_REQUIRE_PRICING, PROVER
 from src.evals.metrics_aggregator import append_history_row, benchmark_history_path
 from src.formalizer import DEFAULT_FORMALIZER, FormalizerService
 from src.lean import compile_check
-from src.observability import StageExecutionError, build_progress_event, classify_exception, lookup_pricing
+from src.observability import (
+    StageExecutionError,
+    build_progress_event,
+    classify_exception,
+    lookup_pricing,
+)
 from src.planner import PlannerService
 from src.providers import normalize_huggingface_provider
 from src.prover import DEFAULT_PROVER, Prover, ProverTargetTimeouts
+from src.prover.models import ProverResult
 from src.prover.prover import _replace_named_theorem_body
 from src.prover.tactics import direct_hypothesis_name
 
@@ -42,6 +49,24 @@ LIVE_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=300, subgoal=180, apoll
 BENCHMARK_TARGET_TIMEOUTS = ProverTargetTimeouts(theorem_body=120, subgoal=120, apollo_lemma=120)
 DEFAULT_SAMPLE_SEED = 17
 HEARTBEAT_SECONDS = max(5.0, float(os.getenv("LEANECON_LOCAL_GATE_HEARTBEAT_SECONDS", "30")))
+FOCUSED_SAMPLE_IDS_BY_SET: dict[str, tuple[str, ...]] = {
+    "tier2_frontier_mathlib_native": (
+        "t2_contraction_mapping_fixed_point",
+        "t2_extreme_value_repair",
+        "t2_monotone_sequence_converges",
+    ),
+    "tier2_frontier_preamble_definable": (
+        "t2_pareto_dominance_transitive",
+        "t2_utilitarian_swf_pareto_monotone",
+        "t2_bellman_monotone_value_function",
+        "t2_expected_payoff_convex_mixture",
+        "t2_ces_crs",
+        "t2_stone_geary_monotone_alpha",
+        "t2_bellman_contraction",
+        "t2_phillips_curve_stagflation",
+        "t2_indirect_utility_roys_identity",
+    ),
+}
 
 
 def _timestamp() -> str:
@@ -110,7 +135,11 @@ def _render_table(headers: list[str], rows: list[list[str]]) -> str:
         for index, value in enumerate(row):
             widths[index] = max(widths[index], len(value))
     border = "+-" + "-+-".join("-" * width for width in widths) + "-+"
-    header_row = "| " + " | ".join(header.ljust(widths[index]) for index, header in enumerate(headers)) + " |"
+    header_row = (
+        "| "
+        + " | ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+        + " |"
+    )
     body = [
         "| " + " | ".join(value.ljust(widths[index]) for index, value in enumerate(row)) + " |"
         for row in rows
@@ -123,7 +152,9 @@ def _summary_average_latency_ms(summary: dict[str, Any], stage: str) -> float:
     results = summary.get("results", [])
     if not executed or not results:
         return 0.0
-    total = sum(float((result.get("timing_breakdown") or {}).get(stage) or 0.0) for result in results)
+    total = sum(
+        float((result.get("timing_breakdown") or {}).get(stage) or 0.0) for result in results
+    )
     return round(total / len(results), 3)
 
 
@@ -190,9 +221,13 @@ class _TerminalReporter:
         detail = str(result.get("verified_via") or result.get("termination_reason") or "")
         if failure_code:
             detail = str(failure_code)
-        self._emit(f"{bar} {index:>2}/{total:<2} {status_label:<8} {claim_id:<30} {_format_duration_ms(total_ms):>7} {detail}")
+        self._emit(
+            f"{bar} {index:>2}/{total:<2} {status_label:<8} {claim_id:<30} {_format_duration_ms(total_ms):>7} {detail}"
+        )
 
-    def claim_started(self, claim_set: str, index: int, total: int, claim_id: str, bucket: str) -> None:
+    def claim_started(
+        self, claim_set: str, index: int, total: int, claim_id: str, bucket: str
+    ) -> None:
         bucket_label = bucket.replace("_", "-")
         self._emit(f"[claim {index:>2}/{total:<2}] {claim_set} {claim_id} bucket={bucket_label}")
 
@@ -221,9 +256,17 @@ class _TerminalReporter:
     def claim_set_completed(self, summary: dict[str, Any], output_path: Path) -> None:
         self.section(f"[{summary['claim_set']}] summary")
         rows = [
-            ["Pass@1", _format_ratio(int(summary.get("claims_passed") or 0), int(summary.get("claims_total") or 0))],
+            [
+                "Pass@1",
+                _format_ratio(
+                    int(summary.get("claims_passed") or 0), int(summary.get("claims_total") or 0)
+                ),
+            ],
             ["Failures", str(int(summary.get("claims_failed") or 0))],
-            ["Avg total latency", _format_duration_ms(_summary_average_latency_ms(summary, "total_ms"))],
+            [
+                "Avg total latency",
+                _format_duration_ms(_summary_average_latency_ms(summary, "total_ms")),
+            ],
             ["Total cost", _format_usd(_summary_total_cost(summary))],
             ["Output", str(output_path)],
         ]
@@ -231,7 +274,10 @@ class _TerminalReporter:
 
         latency_rows = [
             ["planner", _format_duration_ms(_summary_average_latency_ms(summary, "planner_ms"))],
-            ["formalizer", _format_duration_ms(_summary_average_latency_ms(summary, "formalizer_ms"))],
+            [
+                "formalizer",
+                _format_duration_ms(_summary_average_latency_ms(summary, "formalizer_ms")),
+            ],
             ["prover", _format_duration_ms(_summary_average_latency_ms(summary, "prover_ms"))],
             ["total", _format_duration_ms(_summary_average_latency_ms(summary, "total_ms"))],
         ]
@@ -241,7 +287,9 @@ class _TerminalReporter:
         if failure_counts:
             failure_rows = [
                 [str(code), str(count)]
-                for code, count in sorted(failure_counts.items(), key=lambda item: (-int(item[1]), str(item[0])))
+                for code, count in sorted(
+                    failure_counts.items(), key=lambda item: (-int(item[1]), str(item[0]))
+                )
             ]
             self._emit(_render_table(["Failure code", "Count"], failure_rows))
         else:
@@ -250,13 +298,20 @@ class _TerminalReporter:
     def combined_completed(self, summary: dict[str, Any], output_path: Path) -> None:
         self.section("[local_gate] combined")
         rows = [
-            [str(item["claim_set"]), _format_ratio(int(item.get("claims_passed") or 0), int(item.get("claims_total") or 0))]
+            [
+                str(item["claim_set"]),
+                _format_ratio(
+                    int(item.get("claims_passed") or 0), int(item.get("claims_total") or 0)
+                ),
+            ]
             for item in summary.get("claim_sets", [])
         ]
         rows.append(
             [
                 "local_gate",
-                _format_ratio(int(summary.get("claims_passed") or 0), int(summary.get("claims_total") or 0)),
+                _format_ratio(
+                    int(summary.get("claims_passed") or 0), int(summary.get("claims_total") or 0)
+                ),
             ]
         )
         self._emit(_render_table(["Claim set", "Pass@1"], rows))
@@ -397,7 +452,9 @@ def _accumulate_usage(
     stage_bucket = tokens_by_stage.setdefault(stage, {"input_tokens": 0, "output_tokens": 0})
     stage_bucket["input_tokens"] += int(usage.get("input_tokens") or 0)
     stage_bucket["output_tokens"] += int(usage.get("output_tokens") or 0)
-    cost_by_stage[stage] = round(cost_by_stage.get(stage, 0.0) + float(usage.get("estimated_cost_usd") or 0.0), 8)
+    cost_by_stage[stage] = round(
+        cost_by_stage.get(stage, 0.0) + float(usage.get("estimated_cost_usd") or 0.0), 8
+    )
     model_key = f"{provider}:{model}"
     model_bucket = cost_by_model.setdefault(
         model_key,
@@ -449,6 +506,106 @@ def _accumulate_failure(error_code: str | None, failure_counts: dict[str, int]) 
     failure_counts[error_code] = failure_counts.get(error_code, 0) + 1
 
 
+def _trace_events_from_result(prove_result: ProverResult) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for attr, event_type in (
+        ("retrieval_events", "RetrievalEvent"),
+        ("tool_usage_traces", "ToolUsageTrace"),
+        ("state_transitions", "StateTransition"),
+        ("progress_deltas", "ProgressDelta"),
+    ):
+        for payload in getattr(prove_result, attr, []) or []:
+            if isinstance(payload, dict):
+                events.append({"event_type": event_type, "payload": payload})
+    for step in prove_result.trace:
+        for key in ("RetrievalEvent", "ToolUsageTrace", "StateTransition", "ProgressDelta"):
+            payload = step.tool_arguments.get(key)
+            if isinstance(payload, dict):
+                events.append(
+                    {
+                        "event_type": key,
+                        "turn": step.turn,
+                        "target_name": step.target_name,
+                        "tool_name": step.tool_name,
+                        "payload": payload,
+                    }
+                )
+    for event in (prove_result.audit_summary or {}).get("events", []):
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("event_type") or "")
+        if event_type in {"RetrievalEvent", "ToolUsageTrace", "StateTransition", "ProgressDelta"}:
+            events.append(
+                {
+                    "event_type": event_type,
+                    "turn": (event.get("metadata") or {}).get("turn"),
+                    "target_name": (event.get("metadata") or {}).get("target_name"),
+                    "payload": event.get("metadata") or {},
+                }
+            )
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event in events:
+        key = json.dumps(event, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(event)
+    return deduped
+
+
+def _progress_delta_payloads(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for result in results:
+        for event in result.get("trace_events", []):
+            if event.get("event_type") == "ProgressDelta" and isinstance(
+                event.get("payload"), dict
+            ):
+                payloads.append(dict(event["payload"]))
+        for event in result.get("progress_events", []):
+            metadata = event.get("metadata") or {}
+            payload = metadata.get("ProgressDelta")
+            if isinstance(payload, dict):
+                payloads.append(dict(payload))
+    return payloads
+
+
+def _retrieval_hit_rate_at_5(results: list[dict[str, Any]]) -> float:
+    retrieval_events: list[dict[str, Any]] = []
+    for result in results:
+        for event in result.get("trace_events", []):
+            if event.get("event_type") == "RetrievalEvent" and isinstance(
+                event.get("payload"), dict
+            ):
+                retrieval_events.append(dict(event["payload"]))
+        for event in result.get("progress_events", []):
+            metadata = event.get("metadata") or {}
+            payload = metadata.get("RetrievalEvent")
+            if isinstance(payload, dict):
+                retrieval_events.append(dict(payload))
+    if not retrieval_events:
+        return 0.0
+    hits = sum(
+        1
+        for event in retrieval_events
+        if bool(event.get("hit")) or int(event.get("retrieved_count") or 0) > 0
+    )
+    return round(hits / len(retrieval_events), 6)
+
+
+def _avg_tool_calls_mathlib(results: list[dict[str, Any]]) -> float:
+    mathlib_results = [
+        result for result in results if result.get("benchmark_bucket") == "mathlib_native"
+    ]
+    if not mathlib_results:
+        return 0.0
+    return round(
+        sum(int(result.get("tool_calls") or 0) for result in mathlib_results)
+        / len(mathlib_results),
+        3,
+    )
+
+
 def _preflight(
     planner_service: PlannerService,
     formalizer_service: FormalizerService,
@@ -465,13 +622,16 @@ def _preflight(
         if planner_backend.name == "mistral-structured"
         else "huggingface"
     )
-    prover_provider = PROVER_PROVIDER if prover_backend.provider == "huggingface" else prover_backend.provider
+    prover_provider = (
+        PROVER_PROVIDER if prover_backend.provider == "huggingface" else prover_backend.provider
+    )
     planner_endpoint_reachable, planner_endpoint_message = planner_service.connectivity_check()
     checks = {
         "planner_provider_configured": (
             bool(planner_provider.strip())
             if planner_platform in {"ollama", "mistral"}
-            else normalize_huggingface_provider(planner_provider) in {"auto", planner_provider.strip()}
+            else normalize_huggingface_provider(planner_provider)
+            in {"auto", planner_provider.strip()}
         ),
         "planner_endpoint_reachable": planner_endpoint_reachable,
         "prover_provider_configured": prover_backend.provider != "huggingface"
@@ -481,15 +641,24 @@ def _preflight(
         "prover_price_known": True,
     }
     if BENCHMARK_REQUIRE_PRICING:
-        checks["planner_price_known"] = lookup_pricing(planner_platform, planner_backend.model) is not None
-        checks["formalizer_price_known"] = lookup_pricing(formalizer_backend.provider, formalizer_backend.model) is not None
-        checks["prover_price_known"] = lookup_pricing(
-            "huggingface" if prover_backend.provider == "huggingface" else prover_provider,
-            prover_backend.model,
-        ) is not None
+        checks["planner_price_known"] = (
+            lookup_pricing(planner_platform, planner_backend.model) is not None
+        )
+        checks["formalizer_price_known"] = (
+            lookup_pricing(formalizer_backend.provider, formalizer_backend.model) is not None
+        )
+        checks["prover_price_known"] = (
+            lookup_pricing(
+                "huggingface" if prover_backend.provider == "huggingface" else prover_provider,
+                prover_backend.model,
+            )
+            is not None
+        )
     ready = all(checks.values())
     blockers = [name for name, status in checks.items() if not status]
-    details = {"planner_endpoint_reachable": planner_endpoint_message} if planner_endpoint_message else {}
+    details = (
+        {"planner_endpoint_reachable": planner_endpoint_message} if planner_endpoint_message else {}
+    )
     return {
         "ready": ready,
         "checks": checks,
@@ -506,10 +675,21 @@ def _preflight(
 def _select_claims(
     claims: list[dict[str, Any]],
     *,
+    claim_set: str,
     limit: int | None,
     stratified: bool,
     sample_seed: int | None = None,
+    focused_sample: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if focused_sample:
+        focused_ids = FOCUSED_SAMPLE_IDS_BY_SET.get(claim_set, ())
+        by_id = {str(claim["id"]): claim for claim in claims}
+        selected = [by_id[claim_id] for claim_id in focused_ids if claim_id in by_id]
+        return selected, {
+            "sampling_mode": "focused_sample",
+            "sample_seed": sample_seed,
+            "selected_ids": [str(claim["id"]) for claim in selected],
+        }
     if limit is None or limit >= len(claims):
         return claims, {
             "sampling_mode": "full",
@@ -566,14 +746,17 @@ async def _run_claim_set_async(
     limit: int | None,
     stratified: bool,
     sample_seed: int | None,
+    focused_sample: bool,
     reporter: _TerminalReporter | None,
     progress_sink: Callable[[dict[str, Any]], None] | None,
 ) -> dict[str, Any]:
     claims, selection_info = _select_claims(
         load_claims(claim_set),
+        claim_set=claim_set,
         limit=limit,
         stratified=stratified,
         sample_seed=sample_seed,
+        focused_sample=focused_sample,
     )
     claim_set_manifest = build_claim_set_manifest(claim_set)
     readiness = _preflight(planner_service, formalizer_service, prover_instance)
@@ -588,7 +771,9 @@ async def _run_claim_set_async(
     target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
     if enforce_readiness and not readiness["ready"]:
         if reporter is not None:
-            reporter.skipped_claim_set(claim_set, [str(blocker) for blocker in readiness["blockers"]])
+            reporter.skipped_claim_set(
+                claim_set, [str(blocker) for blocker in readiness["blockers"]]
+            )
         return {
             "claim_set": claim_set,
             "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
@@ -641,7 +826,12 @@ async def _run_claim_set_async(
         mathlib_native_mode_usage = 0
         decomposition_steps = 0
         decomposition_depth = 0
+        trace_events: list[dict[str, Any]] = []
         progress_events: list[dict[str, Any]] = []
+        retrieval_events: list[dict[str, Any]] = []
+        tool_usage_traces: list[dict[str, Any]] = []
+        state_transitions: list[dict[str, Any]] = []
+        progress_deltas: list[dict[str, Any]] = []
         heartbeat = (
             _ClaimHeartbeatMonitor(
                 claim_set=claim_set,
@@ -706,6 +896,11 @@ async def _run_claim_set_async(
                         "mathlib_native_mode_usage": mathlib_native_mode_usage,
                         "usage_by_stage": {},
                         "progress_events": progress_events,
+                        "trace_events": trace_events,
+                        "retrieval_events": retrieval_events,
+                        "tool_usage_traces": tool_usage_traces,
+                        "state_transitions": state_transitions,
+                        "progress_deltas": progress_deltas,
                         "trivial_shortcut": {
                             "hypothesis": shortcut["hypothesis"],
                             "tactic": shortcut["tactic"],
@@ -785,7 +980,9 @@ async def _run_claim_set_async(
                     message="Prover started.",
                     metadata={
                         "benchmark_mode": benchmark_mode,
-                        "claim_type": claim_bucket if claim_bucket in {"preamble_definable", "mathlib_native"} else None,
+                        "claim_type": claim_bucket
+                        if claim_bucket in {"preamble_definable", "mathlib_native"}
+                        else None,
                         "mathlib_native_mode": claim_bucket == "mathlib_native",
                     },
                 )
@@ -810,9 +1007,13 @@ async def _run_claim_set_async(
             theorem_name = prove_result.theorem_name
             termination_reason = prove_result.termination_reason
             verified_via = prove_result.verified_via
-            stage_timings["prover_ms"] = float(prove_result.timing_breakdown.get("prover_ms") or 0.0)
+            stage_timings["prover_ms"] = float(
+                prove_result.timing_breakdown.get("prover_ms") or 0.0
+            )
             stage_timings["total_ms"] = (
-                stage_timings["planner_ms"] + stage_timings["formalizer_ms"] + stage_timings["prover_ms"]
+                stage_timings["planner_ms"]
+                + stage_timings["formalizer_ms"]
+                + stage_timings["prover_ms"]
             )
             prover_usage = _usage_dict(prove_result.usage_by_stage.get("prover"))
             if prove_result.failure is not None:
@@ -823,8 +1024,17 @@ async def _run_claim_set_async(
             lsp_tool_calls = int(tool_budget.get("lsp_tool_calls") or 0)
             native_search_attempts = int(tool_budget.get("native_search_attempts") or 0)
             mathlib_native_mode_usage = int(tool_budget.get("mathlib_native_mode_uses") or 0)
-            decomposition_steps = sum(1 for step in prove_result.trace if step.action_type == "decompose")
-            decomposition_depth = max((target.recursion_depth for target in prove_result.targets), default=0)
+            decomposition_steps = sum(
+                1 for step in prove_result.trace if step.action_type == "decompose"
+            )
+            decomposition_depth = max(
+                (target.recursion_depth for target in prove_result.targets), default=0
+            )
+            retrieval_events = list(prove_result.retrieval_events or [])
+            tool_usage_traces = list(prove_result.tool_usage_traces or [])
+            state_transitions = list(prove_result.state_transitions or [])
+            progress_deltas = list(prove_result.progress_deltas or [])
+            trace_events = _trace_events_from_result(prove_result) if benchmark_mode else []
             record_progress(
                 _progress_event(
                     "prover_verified" if prove_result.status == "verified" else "prover_failed",
@@ -881,17 +1091,29 @@ async def _run_claim_set_async(
                 heartbeat.stop()
 
         stage_timings["total_ms"] = round(
-            stage_timings["planner_ms"] + stage_timings["formalizer_ms"] + stage_timings["prover_ms"],
+            stage_timings["planner_ms"]
+            + stage_timings["formalizer_ms"]
+            + stage_timings["prover_ms"],
             3,
         )
-        _accumulate_usage(planner_usage, tokens_by_stage=tokens_by_stage, cost_by_stage=cost_by_stage, cost_by_model=cost_by_model)
+        _accumulate_usage(
+            planner_usage,
+            tokens_by_stage=tokens_by_stage,
+            cost_by_stage=cost_by_stage,
+            cost_by_model=cost_by_model,
+        )
         _accumulate_usage(
             formalizer_usage,
             tokens_by_stage=tokens_by_stage,
             cost_by_stage=cost_by_stage,
             cost_by_model=cost_by_model,
         )
-        _accumulate_usage(prover_usage, tokens_by_stage=tokens_by_stage, cost_by_stage=cost_by_stage, cost_by_model=cost_by_model)
+        _accumulate_usage(
+            prover_usage,
+            tokens_by_stage=tokens_by_stage,
+            cost_by_stage=cost_by_stage,
+            cost_by_model=cost_by_model,
+        )
         _accumulate_failure(failure_code, failure_counts)
         results.append(
             {
@@ -923,7 +1145,14 @@ async def _run_claim_set_async(
                     if value is not None
                 },
                 "progress_events": progress_events,
-                **({"raw_planner_response": raw_planner_response} if planner_schema_invalid else {}),
+                "trace_events": trace_events,
+                "retrieval_events": retrieval_events,
+                "tool_usage_traces": tool_usage_traces,
+                "state_transitions": state_transitions,
+                "progress_deltas": progress_deltas,
+                **(
+                    {"raw_planner_response": raw_planner_response} if planner_schema_invalid else {}
+                ),
             }
         )
         if reporter is not None:
@@ -931,26 +1160,43 @@ async def _run_claim_set_async(
 
     claims_passed = sum(1 for item in results if item["status"] == "verified")
     claims_total = len(results)
-    average_tool_calls = round(sum(int(item.get("tool_calls") or 0) for item in results) / claims_total, 3) if claims_total else 0.0
+    average_tool_calls = (
+        round(sum(int(item.get("tool_calls") or 0) for item in results) / claims_total, 3)
+        if claims_total
+        else 0.0
+    )
     average_lsp_tool_calls = (
         round(sum(int(item.get("lsp_tool_calls") or 0) for item in results) / claims_total, 3)
         if claims_total
         else 0.0
     )
     average_native_search_attempts = (
-        round(sum(int(item.get("native_search_attempts") or 0) for item in results) / claims_total, 3)
+        round(
+            sum(int(item.get("native_search_attempts") or 0) for item in results) / claims_total, 3
+        )
         if claims_total
         else 0.0
     )
-    mathlib_native_mode_usage = sum(int(item.get("mathlib_native_mode_usage") or 0) for item in results)
-    average_decomposition_steps = round(
-        sum(int(item.get("decomposition_steps") or 0) for item in results) / claims_total,
-        3,
-    ) if claims_total else 0.0
-    average_decomposition_depth = round(
-        sum(int(item.get("decomposition_depth") or 0) for item in results) / claims_total,
-        3,
-    ) if claims_total else 0.0
+    mathlib_native_mode_usage = sum(
+        int(item.get("mathlib_native_mode_usage") or 0) for item in results
+    )
+    average_decomposition_steps = (
+        round(
+            sum(int(item.get("decomposition_steps") or 0) for item in results) / claims_total,
+            3,
+        )
+        if claims_total
+        else 0.0
+    )
+    average_decomposition_depth = (
+        round(
+            sum(int(item.get("decomposition_depth") or 0) for item in results) / claims_total,
+            3,
+        )
+        if claims_total
+        else 0.0
+    )
+    progress_deltas = _progress_delta_payloads(results)
     return {
         "claim_set": claim_set,
         "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
@@ -969,6 +1215,9 @@ async def _run_claim_set_async(
         "mathlib_native_mode_usage": mathlib_native_mode_usage,
         "average_decomposition_steps": average_decomposition_steps,
         "average_decomposition_depth": average_decomposition_depth,
+        "retrieval_hit_rate@5": _retrieval_hit_rate_at_5(results),
+        "avg_tool_calls_mathlib": _avg_tool_calls_mathlib(results),
+        "progress_deltas": progress_deltas,
         "executed": True,
         "readiness": readiness,
         "tokens_by_stage": tokens_by_stage,
@@ -990,6 +1239,7 @@ def run_claim_set(
     limit: int | None = None,
     stratified: bool = False,
     sample_seed: int | None = None,
+    focused_sample: bool = False,
     reporter: _TerminalReporter | None = None,
     progress_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
@@ -1004,6 +1254,7 @@ def run_claim_set(
             limit=limit,
             stratified=stratified,
             sample_seed=sample_seed,
+            focused_sample=focused_sample,
             reporter=reporter,
             progress_sink=progress_sink,
         )
@@ -1033,7 +1284,8 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 },
             )
             bucket["estimated_cost_usd"] = round(
-                float(bucket["estimated_cost_usd"]) + float(payload.get("estimated_cost_usd") or 0.0),
+                float(bucket["estimated_cost_usd"])
+                + float(payload.get("estimated_cost_usd") or 0.0),
                 8,
             )
         for error_code, count in summary.get("failure_counts", {}).items():
@@ -1052,16 +1304,25 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         else 0.0
     )
     average_lsp_tool_calls = (
-        round(sum(int(item.get("lsp_tool_calls") or 0) for item in all_results) / len(all_results), 3)
+        round(
+            sum(int(item.get("lsp_tool_calls") or 0) for item in all_results) / len(all_results), 3
+        )
         if all_results
         else 0.0
     )
     average_native_search_attempts = (
-        round(sum(int(item.get("native_search_attempts") or 0) for item in all_results) / len(all_results), 3)
+        round(
+            sum(int(item.get("native_search_attempts") or 0) for item in all_results)
+            / len(all_results),
+            3,
+        )
         if all_results
         else 0.0
     )
-    mathlib_native_mode_usage = sum(int(item.get("mathlib_native_mode_usage") or 0) for item in all_results)
+    mathlib_native_mode_usage = sum(
+        int(item.get("mathlib_native_mode_usage") or 0) for item in all_results
+    )
+    progress_deltas = _progress_delta_payloads(all_results)
     return {
         "claim_set": "local_gate",
         "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
@@ -1076,9 +1337,14 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "average_lsp_tool_calls": average_lsp_tool_calls,
         "average_native_search_attempts": average_native_search_attempts,
         "mathlib_native_mode_usage": mathlib_native_mode_usage,
+        "retrieval_hit_rate@5": _retrieval_hit_rate_at_5(all_results),
+        "avg_tool_calls_mathlib": _avg_tool_calls_mathlib(all_results),
+        "progress_deltas": progress_deltas,
         "readiness": {
             "ready": all(bool(summary.get("readiness", {}).get("ready")) for summary in summaries),
-            "claim_sets": {summary["claim_set"]: summary.get("readiness", {}) for summary in summaries},
+            "claim_sets": {
+                summary["claim_set"]: summary.get("readiness", {}) for summary in summaries
+            },
         },
         "tokens_by_stage": tokens_by_stage,
         "cost_by_stage": cost_by_stage,
@@ -1099,10 +1365,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--save-history", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--stratified", action="store_true")
-    parser.add_argument("--sample-seed", type=int, default=DEFAULT_SAMPLE_SEED)
+    parser.add_argument(
+        "--sample-seed", "--seed", dest="sample_seed", type=int, default=DEFAULT_SAMPLE_SEED
+    )
+    parser.add_argument("--focused-sample", action="store_true")
     args = parser.parse_args(argv)
 
-    selected_from_csv = tuple(item.strip() for item in (args.claim_sets or "").split(",") if item.strip())
+    selected_from_csv = tuple(
+        item.strip() for item in (args.claim_sets or "").split(",") if item.strip()
+    )
     selected = tuple(args.claim_set or selected_from_csv or CLAIM_SETS)
     output_dir = args.output_dir or (
         BENCHMARK_BASELINE_DIR / ("benchmark_mode" if args.benchmark_mode else "live_pipeline")
@@ -1118,13 +1389,22 @@ def main(argv: list[str] | None = None) -> int:
                 benchmark_mode=args.benchmark_mode,
                 limit=args.limit,
                 stratified=args.stratified,
-                sample_seed=args.sample_seed if args.limit is not None else None,
+                sample_seed=args.sample_seed
+                if args.limit is not None or args.focused_sample
+                else None,
+                focused_sample=args.focused_sample,
                 reporter=reporter,
-                progress_sink=lambda event, claim_set=claim_set: append_progress_event(claim_set, event, output_dir),
+                progress_sink=lambda event, claim_set=claim_set: append_progress_event(
+                    claim_set, event, output_dir
+                ),
             )
         )
     for summary in summaries:
-        progress_events = [event for result in summary.get("results", []) for event in result.get("progress_events", [])]
+        progress_events = [
+            event
+            for result in summary.get("results", [])
+            for event in result.get("progress_events", [])
+        ]
         progress_path = write_progress_log(summary["claim_set"], progress_events, output_dir)
         summary["progress_log_path"] = str(progress_path)
         path = write_summary(summary["claim_set"], summary, output_dir)

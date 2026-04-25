@@ -1,7 +1,10 @@
 {
   "average_decomposition_depth": 0.0,
   "average_decomposition_steps": 0.0,
-  "average_tool_calls": 2.667,
+  "average_lsp_tool_calls": 6.667,
+  "average_native_search_attempts": 2.667,
+  "average_tool_calls": 12.0,
+  "avg_tool_calls_mathlib": 12.0,
   "benchmark_mode": true,
   "claim_set": "tier2_frontier_mathlib_native",
   "claim_set_manifest": {
@@ -44,8 +47,8 @@
     "pinned_preamble_count": 0,
     "theorem_stub_count": 0
   },
-  "claims_failed": 3,
-  "claims_passed": 0,
+  "claims_failed": 2,
+  "claims_passed": 1,
   "claims_total": 3,
   "cost_by_model": {
     "mistral:labs-leanstral-2603": {
@@ -54,25 +57,48 @@
       "provider": "mistral"
     },
     "mistral:mistral-large-2512": {
-      "estimated_cost_usd": 0.002303,
+      "estimated_cost_usd": 0.0017635,
       "model": "mistral-large-2512",
       "provider": "mistral"
     }
   },
   "cost_by_stage": {
     "formalizer": 0.0,
-    "planner": 0.002303,
+    "planner": 0.0017635,
     "prover": 0.0
   },
   "executed": true,
   "failure_counts": {
     "compile_failed": 1,
-    "unsolved_goals": 2
+    "unsolved_goals": 1
   },
-  "generated_at": "2026-04-24T03:57:22.343668+00:00",
+  "generated_at": "2026-04-25T15:28:21.990048+00:00",
+  "mathlib_native_mode_usage": 4,
   "mode": "benchmark_pipeline",
-  "pass_at_1": 0.0,
-  "progress_log_path": "benchmark_baselines/v3_alpha/benchmark_mode/tier2_frontier_mathlib_native.progress.jsonl",
+  "pass_at_1": 0.333333,
+  "progress_deltas": [
+    {
+      "complexity_after": 0,
+      "complexity_before": 0,
+      "complexity_reduced": false,
+      "event_type": "ProgressDelta",
+      "goal_count_after": 0,
+      "goal_count_before": 0,
+      "goals_reduced": false,
+      "stall_detected": true
+    },
+    {
+      "complexity_after": 0,
+      "complexity_before": 0,
+      "complexity_reduced": false,
+      "event_type": "ProgressDelta",
+      "goal_count_after": 0,
+      "goal_count_before": 0,
+      "goals_reduced": false,
+      "stall_detected": true
+    }
+  ],
+  "progress_log_path": "/Users/bonorinoa/Desktop/Github_Repositories/leanecon_v3/benchmark_baselines/v3_alpha/benchmark_mode/tier2_frontier_mathlib_native.progress.jsonl",
   "readiness": {
     "blockers": [],
     "capabilities": {
@@ -127,8 +153,12 @@
       "benchmark_mode": true,
       "decomposition_depth": 0,
       "decomposition_steps": 0,
-      "failure_code": "compile_failed",
+      "failure_code": null,
       "id": "t2_contraction_mapping_fixed_point",
+      "lsp_tool_calls": 10,
+      "mathlib_native_mode_usage": 2,
+      "native_search_attempts": 4,
+      "progress_deltas": [],
       "progress_events": [
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -141,7 +171,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-24T03:52:53.402148+00:00"
+          "timestamp": "2026-04-25T15:23:42.524182+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -154,7 +184,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-24T03:53:00.796771+00:00"
+          "timestamp": "2026-04-25T15:23:52.821186+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -167,7 +197,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-24T03:53:00.797531+00:00"
+          "timestamp": "2026-04-25T15:23:52.822010+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -180,7 +210,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-24T03:53:11.172578+00:00"
+          "timestamp": "2026-04-25T15:24:02.433454+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
@@ -188,27 +218,29 @@
           "job_id": null,
           "message": "Prover started.",
           "metadata": {
-            "benchmark_mode": true
+            "benchmark_mode": true,
+            "claim_type": "mathlib_native",
+            "mathlib_native_mode": true
           },
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-24T03:53:11.173203+00:00"
+          "timestamp": "2026-04-25T15:24:02.434058+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_contraction_mapping_fixed_point",
-          "message": "Starting target `h_contraction_fixed_point`.",
+          "message": "Starting target `h_contraction_unique_fixed_point`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_contraction_fixed_point",
+            "target_name": "h_contraction_unique_fixed_point",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:53:11.173976+00:00"
+          "timestamp": "2026-04-25T15:24:02.434835+00:00"
         },
         {
           "claim_id": null,
@@ -222,118 +254,1008 @@
             "mathlib_native_mode": true,
             "preamble_shortcuts_enabled": false,
             "target_kind": "subgoal",
-            "target_name": "h_contraction_fixed_point"
+            "target_name": "h_contraction_unique_fixed_point"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:53:11.174134+00:00"
+          "timestamp": "2026-04-25T15:24:02.435004+00:00"
         },
         {
           "claim_id": null,
-          "event": "prover_turn",
+          "event": "retrieval_event",
           "job_id": "local_gate_t2_contraction_mapping_fixed_point",
-          "message": "Provider produced action `tool`.",
+          "message": "Retrieved mathlib premises for the active goal.",
           "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_contraction_fixed_point",
-            "turn": 3
+            "RetrievalEvent": {
+              "event_type": "RetrievalEvent",
+              "goal_digest": null,
+              "hit": true,
+              "k": 5,
+              "latency_ms": 8.962,
+              "retrieved_count": 5,
+              "retrieved_premises": [
+                {
+                  "dependencies": [
+                    "IsCompact",
+                    "Continuous"
+                  ],
+                  "docstring": "The continuous image of a compact set is compact.",
+                  "file_path": "Mathlib/Topology/CompactOpen.lean",
+                  "name": "IsCompact.image",
+                  "score": 0.26778,
+                  "statement": "IsCompact s \u2192 Continuous f \u2192 IsCompact (f '' s)",
+                  "tags": [
+                    "compact",
+                    "image",
+                    "continuous",
+                    "topology"
+                  ]
+                },
+                {
+                  "dependencies": [
+                    "IsCompact",
+                    "IsClosed"
+                  ],
+                  "docstring": "The intersection of a compact set and a closed set is compact.",
+                  "file_path": "Mathlib/Topology/SubsetProperties.lean",
+                  "name": "IsCompact.inter",
+                  "score": 0.254981,
+                  "statement": "IsCompact s \u2192 IsClosed t \u2192 IsCompact (s \u2229 t)",
+                  "tags": [
+                    "compact",
+                    "inter",
+                    "intersection",
+                    "closed",
+                    "topology"
+                  ]
+                },
+                {
+                  "dependencies": [
+                    "IsCompact"
+                  ],
+                  "docstring": "The product of two compact sets is compact.",
+                  "file_path": "Mathlib/Topology/Constructions.lean",
+                  "name": "IsCompact.prod",
+                  "score": 0.25,
+                  "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u00d7\u02e2 t)",
+                  "tags": [
+                    "compact",
+                    "prod",
+                    "product",
+                    "topology"
+                  ]
+                },
+                {
+                  "dependencies": [
+                    "IsCompact"
+                  ],
+                  "docstring": "The union of two compact sets is compact.",
+                  "file_path": "Mathlib/Topology/SubsetProperties.lean",
+                  "name": "IsCompact.union",
+                  "score": 0.25,
+                  "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u222a t)",
+                  "tags": [
+                    "compact",
+                    "union",
+                    "topology"
+                  ]
+                },
+                {
+                  "dependencies": [
+                    "IsClosed"
+                  ],
+                  "docstring": "The union of two closed sets is closed.",
+                  "file_path": "Mathlib/Topology/Basic.lean",
+                  "name": "IsClosed.union",
+                  "score": 0.25,
+                  "statement": "IsClosed s \u2192 IsClosed t \u2192 IsClosed (s \u222a t)",
+                  "tags": [
+                    "closed",
+                    "union",
+                    "topology"
+                  ]
+                }
+              ],
+              "scores": [
+                0.26778,
+                0.254981,
+                0.25,
+                0.25,
+                0.25
+              ],
+              "source": "mathlib_rag"
+            },
+            "claim_type": "mathlib_native",
+            "mathlib_native_mode": true,
+            "target_name": "h_contraction_unique_fixed_point",
+            "turn": 2
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:53:50.109463+00:00"
+          "timestamp": "2026-04-25T15:24:44.291634+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_contraction_mapping_fixed_point",
-          "message": "Tool `apply_tactic` executed.",
+          "message": "LSP tool `lean_diagnostic_messages` executed.",
           "metadata": {
-            "error_code": "compile_failed",
-            "success": false,
-            "target_name": "h_contraction_fixed_point",
-            "tool_name": "apply_tactic",
-            "turn": 3
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_diagnostic_messages",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_contraction_unique_fixed_point",
+            "tool_name": "lean_diagnostic_messages"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:53:50.118659+00:00"
-        },
-        {
-          "claim_id": null,
-          "event": "prover_turn",
-          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
-          "message": "Provider produced action `tool`.",
-          "metadata": {
-            "action_type": "tool",
-            "backend": "leanstral",
-            "target_name": "h_contraction_fixed_point",
-            "turn": 4
-          },
-          "review_state": null,
-          "stage": "prover",
-          "status": "running_prover",
-          "timestamp": "2026-04-24T03:54:27.938191+00:00"
+          "timestamp": "2026-04-25T15:24:48.814489+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_contraction_mapping_fixed_point",
-          "message": "Tool `apply_tactic` executed.",
+          "message": "LSP tool `lean_goal` executed.",
           "metadata": {
-            "error_code": "compile_failed",
-            "success": false,
-            "target_name": "h_contraction_fixed_point",
-            "tool_name": "apply_tactic",
-            "turn": 4
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_goal",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_contraction_unique_fixed_point",
+            "tool_name": "lean_goal"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:54:27.943221+00:00"
+          "timestamp": "2026-04-25T15:24:48.824602+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "LSP tool `lean_code_actions` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_code_actions",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_contraction_unique_fixed_point",
+            "tool_name": "lean_code_actions"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:24:48.846976+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "LSP tool `lean_hover_info` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_hover_info",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_contraction_unique_fixed_point",
+            "tool_name": "lean_hover_info"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:24:48.853924+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "LSP tool `lean_leansearch` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_leansearch",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_contraction_unique_fixed_point",
+            "tool_name": "lean_leansearch"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:24:50.270283+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "Closed via mathlib-native LSP-assisted search.",
+          "metadata": {
+            "candidate_count": 18,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 1,
+            "lsp_tool_name": "lean_leansearch",
+            "mathlib_native_mode": true,
+            "search_query": "A contraction mapping on a complete metric space has a unique fixed point. \u2200 {\u03b1 : Type*} [MetricSpace \u03b1] [CompleteSpace \u03b1] [Nonempty \u03b1] {f : \u03b1 \u2192 \u03b1}, IsContraction f \u2192 \u2203! x, Function.IsFixedPt f x \u03b1\u271d : Type u_1\ninst\u271d\u00b2 : MetricSpace \u03b1\u271d\ninst\u271d\u00b9 : CompleteSpace \u03b1\u271d\ninst\u271d : Nonempty \u03b1\u271d\nf\u271d : \u03b1\u271d \u2192 \u03b1\u271d\na\u271d : IsContraction f\u271d\n\u22a2 \u2203! x, Function.IsFixedPt f\u271d x",
+            "selected_lemma": "contraction_has_unique_fixedPoint",
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_contraction_unique_fixed_point",
+            "tool_name": "mathlib_native_lsp_search"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:24:54.052659+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "Starting target `theorem_body`.",
+          "metadata": {
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "turn": 2
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:24:54.389525+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "claim_type = mathlib_native; mathlib_native_mode=True; skipping preamble-derived direct-close candidates.",
+          "metadata": {
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "direct_close_attempt_cap": 2,
+            "mathlib_native_mode": true,
+            "preamble_shortcuts_enabled": false,
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:24:54.389906+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "retrieval_event",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "Retrieved mathlib premises for the active goal.",
+          "metadata": {
+            "RetrievalEvent": {
+              "event_type": "RetrievalEvent",
+              "goal_digest": null,
+              "hit": false,
+              "k": 5,
+              "latency_ms": 2.285,
+              "retrieved_count": 0,
+              "retrieved_premises": [],
+              "scores": [],
+              "source": "mathlib_rag"
+            },
+            "claim_type": "mathlib_native",
+            "mathlib_native_mode": true,
+            "target_name": "theorem_body",
+            "turn": 1
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:24:58.801568+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "LSP tool `lean_diagnostic_messages` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_diagnostic_messages",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "tool_name": "lean_diagnostic_messages"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:25:03.714045+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "LSP tool `lean_goal` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_goal",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "tool_name": "lean_goal"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:25:03.724004+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "LSP tool `lean_code_actions` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_code_actions",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "tool_name": "lean_code_actions"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:25:03.754563+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "LSP tool `lean_hover_info` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_hover_info",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "tool_name": "lean_hover_info"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:25:03.760626+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "LSP tool `lean_leansearch` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_leansearch",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "tool_name": "lean_leansearch"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:25:04.507121+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_contraction_mapping_fixed_point",
+          "message": "Closed via mathlib-native LSP-assisted search.",
+          "metadata": {
+            "candidate_count": 18,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 1,
+            "lsp_tool_name": "lean_leansearch",
+            "mathlib_native_mode": true,
+            "search_query": "A contraction mapping on a complete metric space has a unique fixed point. \u2200 {\u03b1 : Type*} [MetricSpace \u03b1] [CompleteSpace \u03b1] [Nonempty \u03b1] {f : \u03b1 \u2192 \u03b1}, IsContraction f \u2192 \u2203! x, Function.IsFixedPt f x",
+            "selected_lemma": "contraction_has_unique_fixedPoint",
+            "success": true,
+            "target_kind": "theorem_body",
+            "target_name": "theorem_body",
+            "tool_name": "mathlib_native_lsp_search"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:25:09.396657+00:00"
         },
         {
           "claim_id": "t2_contraction_mapping_fixed_point",
-          "event": "prover_failed",
+          "event": "prover_verified",
           "job_id": null,
-          "message": "Prover finished with status `failed`.",
+          "message": "Prover finished with status `verified`.",
           "metadata": {
-            "termination_reason": "no_progress_stall"
+            "lsp_tool_calls": 10,
+            "mathlib_native_mode_usage": 2,
+            "native_search_attempts": 4,
+            "termination_reason": "verified",
+            "tool_calls": 13
           },
           "review_state": null,
           "stage": "prover",
-          "status": "failed",
-          "timestamp": "2026-04-24T03:54:33.672588+00:00"
+          "status": "verified",
+          "timestamp": "2026-04-25T15:25:14.340636+00:00"
         }
       ],
       "raw_claim": "A contraction mapping on a complete metric space has a unique fixed point.",
-      "status": "failed",
+      "retrieval_events": [
+        {
+          "event_type": "RetrievalEvent",
+          "goal_digest": null,
+          "hit": true,
+          "k": 5,
+          "latency_ms": 8.962,
+          "retrieved_count": 5,
+          "retrieved_premises": [
+            {
+              "dependencies": [
+                "IsCompact",
+                "Continuous"
+              ],
+              "docstring": "The continuous image of a compact set is compact.",
+              "file_path": "Mathlib/Topology/CompactOpen.lean",
+              "name": "IsCompact.image",
+              "score": 0.26778,
+              "statement": "IsCompact s \u2192 Continuous f \u2192 IsCompact (f '' s)",
+              "tags": [
+                "compact",
+                "image",
+                "continuous",
+                "topology"
+              ]
+            },
+            {
+              "dependencies": [
+                "IsCompact",
+                "IsClosed"
+              ],
+              "docstring": "The intersection of a compact set and a closed set is compact.",
+              "file_path": "Mathlib/Topology/SubsetProperties.lean",
+              "name": "IsCompact.inter",
+              "score": 0.254981,
+              "statement": "IsCompact s \u2192 IsClosed t \u2192 IsCompact (s \u2229 t)",
+              "tags": [
+                "compact",
+                "inter",
+                "intersection",
+                "closed",
+                "topology"
+              ]
+            },
+            {
+              "dependencies": [
+                "IsCompact"
+              ],
+              "docstring": "The product of two compact sets is compact.",
+              "file_path": "Mathlib/Topology/Constructions.lean",
+              "name": "IsCompact.prod",
+              "score": 0.25,
+              "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u00d7\u02e2 t)",
+              "tags": [
+                "compact",
+                "prod",
+                "product",
+                "topology"
+              ]
+            },
+            {
+              "dependencies": [
+                "IsCompact"
+              ],
+              "docstring": "The union of two compact sets is compact.",
+              "file_path": "Mathlib/Topology/SubsetProperties.lean",
+              "name": "IsCompact.union",
+              "score": 0.25,
+              "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u222a t)",
+              "tags": [
+                "compact",
+                "union",
+                "topology"
+              ]
+            },
+            {
+              "dependencies": [
+                "IsClosed"
+              ],
+              "docstring": "The union of two closed sets is closed.",
+              "file_path": "Mathlib/Topology/Basic.lean",
+              "name": "IsClosed.union",
+              "score": 0.25,
+              "statement": "IsClosed s \u2192 IsClosed t \u2192 IsClosed (s \u222a t)",
+              "tags": [
+                "closed",
+                "union",
+                "topology"
+              ]
+            }
+          ],
+          "scores": [
+            0.26778,
+            0.254981,
+            0.25,
+            0.25,
+            0.25
+          ],
+          "source": "mathlib_rag"
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "goal_digest": null,
+          "hit": false,
+          "k": 5,
+          "latency_ms": 2.285,
+          "retrieved_count": 0,
+          "retrieved_premises": [],
+          "scores": [],
+          "source": "mathlib_rag"
+        }
+      ],
+      "state_transitions": [],
+      "status": "verified",
       "target_timeouts": {
         "apollo_lemma": 120,
         "subgoal": 120,
         "theorem_body": 120
       },
-      "termination_reason": "no_progress_stall",
+      "termination_reason": "verified",
       "theorem_name": "formalizer_contraction_mapping_unique_fixed_point",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 10374.230375047773,
-        "planner_ms": 7394.0832919906825,
-        "prover_ms": 82497.586,
-        "total_ms": 100265.9
+        "formalizer_ms": 9610.794374952093,
+        "planner_ms": 10296.359207946807,
+        "prover_ms": 71905.134,
+        "total_ms": 91812.288
       },
-      "tool_calls": 4,
+      "tool_calls": 13,
+      "tool_usage_traces": [],
+      "trace_events": [
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": true,
+            "k": 5,
+            "latency_ms": 8.962,
+            "retrieved_count": 5,
+            "retrieved_premises": [
+              {
+                "dependencies": [
+                  "IsCompact",
+                  "Continuous"
+                ],
+                "docstring": "The continuous image of a compact set is compact.",
+                "file_path": "Mathlib/Topology/CompactOpen.lean",
+                "name": "IsCompact.image",
+                "score": 0.26778,
+                "statement": "IsCompact s \u2192 Continuous f \u2192 IsCompact (f '' s)",
+                "tags": [
+                  "compact",
+                  "image",
+                  "continuous",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsCompact",
+                  "IsClosed"
+                ],
+                "docstring": "The intersection of a compact set and a closed set is compact.",
+                "file_path": "Mathlib/Topology/SubsetProperties.lean",
+                "name": "IsCompact.inter",
+                "score": 0.254981,
+                "statement": "IsCompact s \u2192 IsClosed t \u2192 IsCompact (s \u2229 t)",
+                "tags": [
+                  "compact",
+                  "inter",
+                  "intersection",
+                  "closed",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsCompact"
+                ],
+                "docstring": "The product of two compact sets is compact.",
+                "file_path": "Mathlib/Topology/Constructions.lean",
+                "name": "IsCompact.prod",
+                "score": 0.25,
+                "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u00d7\u02e2 t)",
+                "tags": [
+                  "compact",
+                  "prod",
+                  "product",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsCompact"
+                ],
+                "docstring": "The union of two compact sets is compact.",
+                "file_path": "Mathlib/Topology/SubsetProperties.lean",
+                "name": "IsCompact.union",
+                "score": 0.25,
+                "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u222a t)",
+                "tags": [
+                  "compact",
+                  "union",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsClosed"
+                ],
+                "docstring": "The union of two closed sets is closed.",
+                "file_path": "Mathlib/Topology/Basic.lean",
+                "name": "IsClosed.union",
+                "score": 0.25,
+                "statement": "IsClosed s \u2192 IsClosed t \u2192 IsClosed (s \u222a t)",
+                "tags": [
+                  "closed",
+                  "union",
+                  "topology"
+                ]
+              }
+            ],
+            "scores": [
+              0.26778,
+              0.254981,
+              0.25,
+              0.25,
+              0.25
+            ],
+            "source": "mathlib_rag"
+          }
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": false,
+            "k": 5,
+            "latency_ms": 2.285,
+            "retrieved_count": 0,
+            "retrieved_premises": [],
+            "scores": [],
+            "source": "mathlib_rag"
+          }
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": true,
+            "k": 5,
+            "latency_ms": 8.962,
+            "retrieved_count": 5,
+            "retrieved_premises": [
+              {
+                "dependencies": [
+                  "IsCompact",
+                  "Continuous"
+                ],
+                "docstring": "The continuous image of a compact set is compact.",
+                "file_path": "Mathlib/Topology/CompactOpen.lean",
+                "name": "IsCompact.image",
+                "score": 0.26778,
+                "statement": "IsCompact s \u2192 Continuous f \u2192 IsCompact (f '' s)",
+                "tags": [
+                  "compact",
+                  "image",
+                  "continuous",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsCompact",
+                  "IsClosed"
+                ],
+                "docstring": "The intersection of a compact set and a closed set is compact.",
+                "file_path": "Mathlib/Topology/SubsetProperties.lean",
+                "name": "IsCompact.inter",
+                "score": 0.254981,
+                "statement": "IsCompact s \u2192 IsClosed t \u2192 IsCompact (s \u2229 t)",
+                "tags": [
+                  "compact",
+                  "inter",
+                  "intersection",
+                  "closed",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsCompact"
+                ],
+                "docstring": "The product of two compact sets is compact.",
+                "file_path": "Mathlib/Topology/Constructions.lean",
+                "name": "IsCompact.prod",
+                "score": 0.25,
+                "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u00d7\u02e2 t)",
+                "tags": [
+                  "compact",
+                  "prod",
+                  "product",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsCompact"
+                ],
+                "docstring": "The union of two compact sets is compact.",
+                "file_path": "Mathlib/Topology/SubsetProperties.lean",
+                "name": "IsCompact.union",
+                "score": 0.25,
+                "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u222a t)",
+                "tags": [
+                  "compact",
+                  "union",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsClosed"
+                ],
+                "docstring": "The union of two closed sets is closed.",
+                "file_path": "Mathlib/Topology/Basic.lean",
+                "name": "IsClosed.union",
+                "score": 0.25,
+                "statement": "IsClosed s \u2192 IsClosed t \u2192 IsClosed (s \u222a t)",
+                "tags": [
+                  "closed",
+                  "union",
+                  "topology"
+                ]
+              }
+            ],
+            "scores": [
+              0.26778,
+              0.254981,
+              0.25,
+              0.25,
+              0.25
+            ],
+            "source": "mathlib_rag"
+          },
+          "target_name": "h_contraction_unique_fixed_point",
+          "tool_name": "provider_turn",
+          "turn": 2
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": false,
+            "k": 5,
+            "latency_ms": 2.285,
+            "retrieved_count": 0,
+            "retrieved_premises": [],
+            "scores": [],
+            "source": "mathlib_rag"
+          },
+          "target_name": "theorem_body",
+          "tool_name": "retrieve_premises",
+          "turn": 1
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": true,
+            "k": 5,
+            "latency_ms": 8.962,
+            "retrieved_count": 5,
+            "retrieved_premises": [
+              {
+                "dependencies": [
+                  "IsCompact",
+                  "Continuous"
+                ],
+                "docstring": "The continuous image of a compact set is compact.",
+                "file_path": "Mathlib/Topology/CompactOpen.lean",
+                "name": "IsCompact.image",
+                "score": 0.26778,
+                "statement": "IsCompact s \u2192 Continuous f \u2192 IsCompact (f '' s)",
+                "tags": [
+                  "compact",
+                  "image",
+                  "continuous",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsCompact",
+                  "IsClosed"
+                ],
+                "docstring": "The intersection of a compact set and a closed set is compact.",
+                "file_path": "Mathlib/Topology/SubsetProperties.lean",
+                "name": "IsCompact.inter",
+                "score": 0.254981,
+                "statement": "IsCompact s \u2192 IsClosed t \u2192 IsCompact (s \u2229 t)",
+                "tags": [
+                  "compact",
+                  "inter",
+                  "intersection",
+                  "closed",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsCompact"
+                ],
+                "docstring": "The product of two compact sets is compact.",
+                "file_path": "Mathlib/Topology/Constructions.lean",
+                "name": "IsCompact.prod",
+                "score": 0.25,
+                "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u00d7\u02e2 t)",
+                "tags": [
+                  "compact",
+                  "prod",
+                  "product",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsCompact"
+                ],
+                "docstring": "The union of two compact sets is compact.",
+                "file_path": "Mathlib/Topology/SubsetProperties.lean",
+                "name": "IsCompact.union",
+                "score": 0.25,
+                "statement": "IsCompact s \u2192 IsCompact t \u2192 IsCompact (s \u222a t)",
+                "tags": [
+                  "compact",
+                  "union",
+                  "topology"
+                ]
+              },
+              {
+                "dependencies": [
+                  "IsClosed"
+                ],
+                "docstring": "The union of two closed sets is closed.",
+                "file_path": "Mathlib/Topology/Basic.lean",
+                "name": "IsClosed.union",
+                "score": 0.25,
+                "statement": "IsClosed s \u2192 IsClosed t \u2192 IsClosed (s \u222a t)",
+                "tags": [
+                  "closed",
+                  "union",
+                  "topology"
+                ]
+              }
+            ],
+            "scores": [
+              0.26778,
+              0.254981,
+              0.25,
+              0.25,
+              0.25
+            ],
+            "source": "mathlib_rag",
+            "target_name": "h_contraction_unique_fixed_point",
+            "turn": 2
+          },
+          "target_name": "h_contraction_unique_fixed_point",
+          "turn": 2
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": false,
+            "k": 5,
+            "latency_ms": 2.285,
+            "retrieved_count": 0,
+            "retrieved_premises": [],
+            "scores": [],
+            "source": "mathlib_rag",
+            "target_name": "theorem_body",
+            "turn": 1
+          },
+          "target_name": "theorem_body",
+          "turn": 1
+        }
+      ],
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6551,
-          "latency_ms": 10374.23,
+          "input_tokens": 7753,
+          "latency_ms": 9610.794,
           "model": "labs-leanstral-2603",
-          "output_tokens": 492,
+          "output_tokens": 502,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -341,27 +1263,27 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.0005345,
-          "input_tokens": 508,
-          "latency_ms": 7394.083,
+          "estimated_cost_usd": 0.000571,
+          "input_tokens": 485,
+          "latency_ms": 10296.359,
           "model": "mistral-large-2512",
-          "output_tokens": 187,
+          "output_tokens": 219,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
           "usage_source": "provider"
         },
         "prover": {
-          "error_code": null,
+          "error_code": "schema_invalid",
           "estimated_cost_usd": 0.0,
-          "input_tokens": 3452,
-          "latency_ms": 2750.483,
+          "input_tokens": 1531,
+          "latency_ms": 1264.311,
           "model": "labs-leanstral-2603",
-          "output_tokens": 213,
+          "output_tokens": 0,
           "provider": "mistral",
           "stage": "prover",
-          "success": true,
-          "usage_source": "provider"
+          "success": false,
+          "usage_source": "estimated_chars"
         }
       },
       "verified_via": "full_pipeline"
@@ -373,6 +1295,21 @@
       "decomposition_steps": 0,
       "failure_code": "unsolved_goals",
       "id": "t2_extreme_value_repair",
+      "lsp_tool_calls": 5,
+      "mathlib_native_mode_usage": 1,
+      "native_search_attempts": 2,
+      "progress_deltas": [
+        {
+          "complexity_after": 0,
+          "complexity_before": 0,
+          "complexity_reduced": false,
+          "event_type": "ProgressDelta",
+          "goal_count_after": 0,
+          "goal_count_before": 0,
+          "goals_reduced": false,
+          "stall_detected": true
+        }
+      ],
       "progress_events": [
         {
           "claim_id": "t2_extreme_value_repair",
@@ -385,7 +1322,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-24T03:54:33.674063+00:00"
+          "timestamp": "2026-04-25T15:25:14.342697+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -398,7 +1335,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-24T03:54:40.231448+00:00"
+          "timestamp": "2026-04-25T15:25:20.579242+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -411,7 +1348,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-24T03:54:40.232408+00:00"
+          "timestamp": "2026-04-25T15:25:20.580391+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -424,7 +1361,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-24T03:54:54.031680+00:00"
+          "timestamp": "2026-04-25T15:25:29.831322+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -432,27 +1369,29 @@
           "job_id": null,
           "message": "Prover started.",
           "metadata": {
-            "benchmark_mode": true
+            "benchmark_mode": true,
+            "claim_type": "mathlib_native",
+            "mathlib_native_mode": true
           },
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-24T03:54:54.032566+00:00"
+          "timestamp": "2026-04-25T15:25:29.832010+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_extreme_value_repair",
-          "message": "Starting target `h_evt`.",
+          "message": "Starting target `h_continuous_strictly_concave`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_evt",
+            "target_name": "h_continuous_strictly_concave",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:54:54.033405+00:00"
+          "timestamp": "2026-04-25T15:25:29.832757+00:00"
         },
         {
           "claim_id": null,
@@ -466,12 +1405,189 @@
             "mathlib_native_mode": true,
             "preamble_shortcuts_enabled": false,
             "target_kind": "subgoal",
-            "target_name": "h_evt"
+            "target_name": "h_continuous_strictly_concave"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:54:54.033559+00:00"
+          "timestamp": "2026-04-25T15:25:29.832909+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "retrieval_event",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "Retrieved mathlib premises for the active goal.",
+          "metadata": {
+            "RetrievalEvent": {
+              "event_type": "RetrievalEvent",
+              "goal_digest": null,
+              "hit": false,
+              "k": 5,
+              "latency_ms": 2.221,
+              "retrieved_count": 0,
+              "retrieved_premises": [],
+              "scores": [],
+              "source": "mathlib_rag"
+            },
+            "claim_type": "mathlib_native",
+            "mathlib_native_mode": true,
+            "target_name": "h_continuous_strictly_concave",
+            "turn": 1
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:25:50.628827+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "LSP tool `lean_diagnostic_messages` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_diagnostic_messages",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_continuous_strictly_concave",
+            "tool_name": "lean_diagnostic_messages"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:25:55.869059+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "LSP tool `lean_goal` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_goal",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_continuous_strictly_concave",
+            "tool_name": "lean_goal"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:25:55.876040+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "LSP tool `lean_code_actions` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_code_actions",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_continuous_strictly_concave",
+            "tool_name": "lean_code_actions"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:26:00.920199+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "LSP tool `lean_hover_info` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_hover_info",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_continuous_strictly_concave",
+            "tool_name": "lean_hover_info"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:26:00.931284+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "LSP tool `lean_leansearch` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_leansearch",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_continuous_strictly_concave",
+            "tool_name": "lean_leansearch"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:26:01.954884+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "Mathlib-native LSP-assisted search did not close the target.",
+          "metadata": {
+            "candidate_count": 16,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 6,
+            "error_code": "lsp_search_exhausted",
+            "lsp_tool_name": "lean_leansearch",
+            "mathlib_native_mode": true,
+            "search_query": "A strictly concave function attains a maximum on a compact set. \u2200 {\u03b1 : Type*} [NormedAddCommGroup \u03b1] [NormedSpace \u211d \u03b1] [FiniteDimensional \u211d \u03b1] {f : \u03b1 \u2192 \u211d} {S : Set \u03b1}, StrictConcaveOn \u211d f S \u2192 ContinuousOn f S",
+            "selected_lemma": null,
+            "success": false,
+            "target_kind": "subgoal",
+            "target_name": "h_continuous_strictly_concave",
+            "tool_name": "mathlib_native_lsp_search"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:26:31.152717+00:00"
         },
         {
           "claim_id": null,
@@ -481,13 +1597,13 @@
           "metadata": {
             "action_type": "tool",
             "backend": "leanstral",
-            "target_name": "h_evt",
-            "turn": 4
+            "target_name": "h_continuous_strictly_concave",
+            "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:55:56.171908+00:00"
+          "timestamp": "2026-04-25T15:26:33.743543+00:00"
         },
         {
           "claim_id": null,
@@ -497,14 +1613,47 @@
           "metadata": {
             "error_code": null,
             "success": true,
-            "target_name": "h_evt",
+            "target_name": "h_continuous_strictly_concave",
             "tool_name": "write_current_code",
-            "turn": 4
+            "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:56:01.230734+00:00"
+          "timestamp": "2026-04-25T15:26:39.201948+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_turn",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "Provider produced action `tool`.",
+          "metadata": {
+            "action_type": "tool",
+            "backend": "leanstral",
+            "target_name": "h_continuous_strictly_concave",
+            "turn": 2
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:26:46.800597+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_extreme_value_repair",
+          "message": "Tool `write_current_code` executed.",
+          "metadata": {
+            "error_code": null,
+            "success": false,
+            "target_name": "h_continuous_strictly_concave",
+            "tool_name": "write_current_code",
+            "turn": 2
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:26:46.801641+00:00"
         },
         {
           "claim_id": "t2_extreme_value_repair",
@@ -512,39 +1661,122 @@
           "job_id": null,
           "message": "Prover finished with status `failed`.",
           "metadata": {
-            "termination_reason": "no_progress_stall"
+            "lsp_tool_calls": 5,
+            "mathlib_native_mode_usage": 1,
+            "native_search_attempts": 2,
+            "termination_reason": "progress_stall",
+            "tool_calls": 13
           },
           "review_state": null,
           "stage": "prover",
           "status": "failed",
-          "timestamp": "2026-04-24T03:56:06.034000+00:00"
+          "timestamp": "2026-04-25T15:26:51.800096+00:00"
         }
       ],
       "raw_claim": "A strictly concave function attains a maximum on a compact set.",
+      "retrieval_events": [
+        {
+          "event_type": "RetrievalEvent",
+          "goal_digest": null,
+          "hit": false,
+          "k": 5,
+          "latency_ms": 2.221,
+          "retrieved_count": 0,
+          "retrieved_premises": [],
+          "scores": [],
+          "source": "mathlib_rag"
+        }
+      ],
+      "state_transitions": [],
       "status": "failed",
       "target_timeouts": {
         "apollo_lemma": 120,
         "subgoal": 120,
         "theorem_body": 120
       },
-      "termination_reason": "no_progress_stall",
+      "termination_reason": "progress_stall",
       "theorem_name": "formalizer_strictly_concave_function_attains_maximum_on_compact",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 13798.271291190758,
-        "planner_ms": 6556.905374862254,
-        "prover_ms": 71999.998,
-        "total_ms": 92355.175
+        "formalizer_ms": 9250.275583006442,
+        "planner_ms": 6236.08283419162,
+        "prover_ms": 81965.938,
+        "total_ms": 97452.296
       },
-      "tool_calls": 1,
+      "tool_calls": 13,
+      "tool_usage_traces": [],
+      "trace_events": [
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": false,
+            "k": 5,
+            "latency_ms": 2.221,
+            "retrieved_count": 0,
+            "retrieved_premises": [],
+            "scores": [],
+            "source": "mathlib_rag"
+          }
+        },
+        {
+          "event_type": "ProgressDelta",
+          "payload": {
+            "complexity_after": 0,
+            "complexity_before": 0,
+            "complexity_reduced": false,
+            "event_type": "ProgressDelta",
+            "goal_count_after": 0,
+            "goal_count_before": 0,
+            "goals_reduced": false,
+            "stall_detected": true
+          }
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": false,
+            "k": 5,
+            "latency_ms": 2.221,
+            "retrieved_count": 0,
+            "retrieved_premises": [],
+            "scores": [],
+            "source": "mathlib_rag"
+          },
+          "target_name": "h_continuous_strictly_concave",
+          "tool_name": "retrieve_premises",
+          "turn": 1
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": false,
+            "k": 5,
+            "latency_ms": 2.221,
+            "retrieved_count": 0,
+            "retrieved_premises": [],
+            "scores": [],
+            "source": "mathlib_rag",
+            "target_name": "h_continuous_strictly_concave",
+            "turn": 1
+          },
+          "target_name": "h_continuous_strictly_concave",
+          "turn": 1
+        }
+      ],
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6965,
-          "latency_ms": 13798.271,
+          "input_tokens": 3355,
+          "latency_ms": 9250.276,
           "model": "labs-leanstral-2603",
-          "output_tokens": 939,
+          "output_tokens": 433,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -552,26 +1784,26 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.000813,
-          "input_tokens": 480,
-          "latency_ms": 6556.905,
+          "estimated_cost_usd": 0.000713,
+          "input_tokens": 481,
+          "latency_ms": 6236.083,
           "model": "mistral-large-2512",
-          "output_tokens": 382,
+          "output_tokens": 315,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
           "usage_source": "provider"
         },
         "prover": {
-          "error_code": "schema_invalid",
+          "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6561,
-          "latency_ms": 8768.32,
+          "input_tokens": 4754,
+          "latency_ms": 5290.179,
           "model": "labs-leanstral-2603",
-          "output_tokens": 219,
+          "output_tokens": 498,
           "provider": "mistral",
           "stage": "prover",
-          "success": false,
+          "success": true,
           "usage_source": "provider"
         }
       },
@@ -582,8 +1814,23 @@
       "benchmark_mode": true,
       "decomposition_depth": 0,
       "decomposition_steps": 0,
-      "failure_code": "unsolved_goals",
+      "failure_code": "compile_failed",
       "id": "t2_monotone_sequence_converges",
+      "lsp_tool_calls": 5,
+      "mathlib_native_mode_usage": 1,
+      "native_search_attempts": 2,
+      "progress_deltas": [
+        {
+          "complexity_after": 0,
+          "complexity_before": 0,
+          "complexity_reduced": false,
+          "event_type": "ProgressDelta",
+          "goal_count_after": 0,
+          "goal_count_before": 0,
+          "goals_reduced": false,
+          "stall_detected": true
+        }
+      ],
       "progress_events": [
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -596,7 +1843,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "running",
-          "timestamp": "2026-04-24T03:56:06.035281+00:00"
+          "timestamp": "2026-04-25T15:26:51.802137+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -609,7 +1856,7 @@
           "review_state": null,
           "stage": "planner",
           "status": "completed",
-          "timestamp": "2026-04-24T03:56:14.448264+00:00"
+          "timestamp": "2026-04-25T15:26:55.094609+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -622,7 +1869,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "running",
-          "timestamp": "2026-04-24T03:56:14.449588+00:00"
+          "timestamp": "2026-04-25T15:26:55.095320+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -635,7 +1882,7 @@
           "review_state": null,
           "stage": "formalizer",
           "status": "completed",
-          "timestamp": "2026-04-24T03:56:24.669006+00:00"
+          "timestamp": "2026-04-25T15:27:05.057884+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -643,27 +1890,29 @@
           "job_id": null,
           "message": "Prover started.",
           "metadata": {
-            "benchmark_mode": true
+            "benchmark_mode": true,
+            "claim_type": "mathlib_native",
+            "mathlib_native_mode": true
           },
           "review_state": null,
           "stage": "prover",
           "status": "running",
-          "timestamp": "2026-04-24T03:56:24.669803+00:00"
+          "timestamp": "2026-04-25T15:27:05.059157+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_turn",
           "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Starting target `h_monotone_convergence`.",
+          "message": "Starting target `h_monotone_boundedAbove_converges`.",
           "metadata": {
             "target_kind": "subgoal",
-            "target_name": "h_monotone_convergence",
+            "target_name": "h_monotone_boundedAbove_converges",
             "turn": 1
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:56:24.670452+00:00"
+          "timestamp": "2026-04-25T15:27:05.059978+00:00"
         },
         {
           "claim_id": null,
@@ -677,12 +1926,189 @@
             "mathlib_native_mode": true,
             "preamble_shortcuts_enabled": false,
             "target_kind": "subgoal",
-            "target_name": "h_monotone_convergence"
+            "target_name": "h_monotone_boundedAbove_converges"
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:56:24.670596+00:00"
+          "timestamp": "2026-04-25T15:27:05.060137+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "retrieval_event",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "Retrieved mathlib premises for the active goal.",
+          "metadata": {
+            "RetrievalEvent": {
+              "event_type": "RetrievalEvent",
+              "goal_digest": null,
+              "hit": false,
+              "k": 5,
+              "latency_ms": 2.201,
+              "retrieved_count": 0,
+              "retrieved_premises": [],
+              "scores": [],
+              "source": "mathlib_rag"
+            },
+            "claim_type": "mathlib_native",
+            "mathlib_native_mode": true,
+            "target_name": "h_monotone_boundedAbove_converges",
+            "turn": 3
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:27:27.660235+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "LSP tool `lean_diagnostic_messages` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_diagnostic_messages",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_monotone_boundedAbove_converges",
+            "tool_name": "lean_diagnostic_messages"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:27:32.559668+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "LSP tool `lean_goal` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_goal",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_monotone_boundedAbove_converges",
+            "tool_name": "lean_goal"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:27:32.567449+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "LSP tool `lean_code_actions` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_code_actions",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_monotone_boundedAbove_converges",
+            "tool_name": "lean_code_actions"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:27:32.588607+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "LSP tool `lean_hover_info` executed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": null,
+            "lsp_tool_name": "lean_hover_info",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": true,
+            "target_kind": "subgoal",
+            "target_name": "h_monotone_boundedAbove_converges",
+            "tool_name": "lean_hover_info"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:27:32.594393+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "LSP tool `lean_leansearch` failed.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": "lsp_unavailable",
+            "lsp_tool_name": "lean_leansearch",
+            "mathlib_native_mode": true,
+            "search_query": null,
+            "selected_lemma": null,
+            "success": false,
+            "target_kind": "subgoal",
+            "target_name": "h_monotone_boundedAbove_converges",
+            "tool_name": "lean_leansearch"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:27:32.846740+00:00"
+        },
+        {
+          "claim_id": null,
+          "event": "prover_tool",
+          "job_id": "local_gate_t2_monotone_sequence_converges",
+          "message": "Mathlib-native LSP-assisted search did not close the target.",
+          "metadata": {
+            "candidate_count": 0,
+            "claim_type": "mathlib_native",
+            "claim_type_policy": "mathlib_native_cap_2_no_preamble_shortcuts",
+            "compiled_candidate_count": 0,
+            "error_code": "lsp_unavailable",
+            "lsp_tool_name": "lean_leansearch",
+            "mathlib_native_mode": true,
+            "search_query": "A monotone sequence bounded above converges. \u2200 {u : \u2115 \u2192 \u211d}, Monotone u \u2192 BddAbove (Set.range u) \u2192 \u2203 l, Filter.Tendsto u Filter.atTop (nhds l)",
+            "selected_lemma": null,
+            "success": false,
+            "target_kind": "subgoal",
+            "target_name": "h_monotone_boundedAbove_converges",
+            "tool_name": "mathlib_native_lsp_search"
+          },
+          "review_state": null,
+          "stage": "prover",
+          "status": "running_prover",
+          "timestamp": "2026-04-25T15:27:32.847181+00:00"
         },
         {
           "claim_id": null,
@@ -692,13 +2118,13 @@
           "metadata": {
             "action_type": "tool",
             "backend": "leanstral",
-            "target_name": "h_monotone_convergence",
-            "turn": 1
+            "target_name": "h_monotone_boundedAbove_converges",
+            "turn": 3
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:56:33.789218+00:00"
+          "timestamp": "2026-04-25T15:27:34.110637+00:00"
         },
         {
           "claim_id": null,
@@ -708,14 +2134,14 @@
           "metadata": {
             "error_code": null,
             "success": true,
-            "target_name": "h_monotone_convergence",
+            "target_name": "h_monotone_boundedAbove_converges",
             "tool_name": "get_goals",
-            "turn": 1
+            "turn": 3
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:56:33.790658+00:00"
+          "timestamp": "2026-04-25T15:27:34.111707+00:00"
         },
         {
           "claim_id": null,
@@ -725,30 +2151,30 @@
           "metadata": {
             "action_type": "tool",
             "backend": "leanstral",
-            "target_name": "h_monotone_convergence",
-            "turn": 2
+            "target_name": "h_monotone_boundedAbove_converges",
+            "turn": 4
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:56:38.810450+00:00"
+          "timestamp": "2026-04-25T15:27:41.274130+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Tool `get_goals` executed.",
+          "message": "Tool `apply_tactic` executed.",
           "metadata": {
             "error_code": null,
             "success": true,
-            "target_name": "h_monotone_convergence",
-            "tool_name": "get_goals",
-            "turn": 2
+            "target_name": "h_monotone_boundedAbove_converges",
+            "tool_name": "apply_tactic",
+            "turn": 4
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:56:38.812335+00:00"
+          "timestamp": "2026-04-25T15:27:41.278897+00:00"
         },
         {
           "claim_id": null,
@@ -758,30 +2184,30 @@
           "metadata": {
             "action_type": "tool",
             "backend": "leanstral",
-            "target_name": "h_monotone_convergence",
-            "turn": 4
+            "target_name": "h_monotone_boundedAbove_converges",
+            "turn": 6
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:57:15.272500+00:00"
+          "timestamp": "2026-04-25T15:28:16.716981+00:00"
         },
         {
           "claim_id": null,
           "event": "prover_tool",
           "job_id": "local_gate_t2_monotone_sequence_converges",
-          "message": "Tool `write_current_code` executed.",
+          "message": "Tool `apply_tactic` executed.",
           "metadata": {
-            "error_code": null,
-            "success": true,
-            "target_name": "h_monotone_convergence",
-            "tool_name": "write_current_code",
-            "turn": 4
+            "error_code": "compile_failed",
+            "success": false,
+            "target_name": "h_monotone_boundedAbove_converges",
+            "tool_name": "apply_tactic",
+            "turn": 6
           },
           "review_state": null,
           "stage": "prover",
           "status": "running_prover",
-          "timestamp": "2026-04-24T03:57:18.464177+00:00"
+          "timestamp": "2026-04-25T15:28:16.728837+00:00"
         },
         {
           "claim_id": "t2_monotone_sequence_converges",
@@ -789,39 +2215,122 @@
           "job_id": null,
           "message": "Prover finished with status `failed`.",
           "metadata": {
-            "termination_reason": "no_progress_stall"
+            "lsp_tool_calls": 5,
+            "mathlib_native_mode_usage": 1,
+            "native_search_attempts": 2,
+            "termination_reason": "progress_stall",
+            "tool_calls": 10
           },
           "review_state": null,
           "stage": "prover",
           "status": "failed",
-          "timestamp": "2026-04-24T03:57:22.343034+00:00"
+          "timestamp": "2026-04-25T15:28:21.989564+00:00"
         }
       ],
       "raw_claim": "A monotone sequence bounded above converges.",
+      "retrieval_events": [
+        {
+          "event_type": "RetrievalEvent",
+          "goal_digest": null,
+          "hit": false,
+          "k": 5,
+          "latency_ms": 2.201,
+          "retrieved_count": 0,
+          "retrieved_premises": [],
+          "scores": [],
+          "source": "mathlib_rag"
+        }
+      ],
+      "state_transitions": [],
       "status": "failed",
       "target_timeouts": {
         "apollo_lemma": 120,
         "subgoal": 120,
         "theorem_body": 120
       },
-      "termination_reason": "no_progress_stall",
+      "termination_reason": "progress_stall",
       "theorem_name": "formalizer_monotone_sequence_bounded_above_converges",
       "theorem_stub_reference": null,
       "timing_breakdown": {
-        "formalizer_ms": 10218.709333101287,
-        "planner_ms": 8412.581375101581,
-        "prover_ms": 57671.771,
-        "total_ms": 76303.062
+        "formalizer_ms": 9962.088375119492,
+        "planner_ms": 3292.19412477687,
+        "prover_ms": 76929.068,
+        "total_ms": 90183.35
       },
-      "tool_calls": 3,
+      "tool_calls": 10,
+      "tool_usage_traces": [],
+      "trace_events": [
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": false,
+            "k": 5,
+            "latency_ms": 2.201,
+            "retrieved_count": 0,
+            "retrieved_premises": [],
+            "scores": [],
+            "source": "mathlib_rag"
+          }
+        },
+        {
+          "event_type": "ProgressDelta",
+          "payload": {
+            "complexity_after": 0,
+            "complexity_before": 0,
+            "complexity_reduced": false,
+            "event_type": "ProgressDelta",
+            "goal_count_after": 0,
+            "goal_count_before": 0,
+            "goals_reduced": false,
+            "stall_detected": true
+          }
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": false,
+            "k": 5,
+            "latency_ms": 2.201,
+            "retrieved_count": 0,
+            "retrieved_premises": [],
+            "scores": [],
+            "source": "mathlib_rag"
+          },
+          "target_name": "h_monotone_boundedAbove_converges",
+          "tool_name": "retrieve_premises",
+          "turn": 3
+        },
+        {
+          "event_type": "RetrievalEvent",
+          "payload": {
+            "event_type": "RetrievalEvent",
+            "goal_digest": null,
+            "hit": false,
+            "k": 5,
+            "latency_ms": 2.201,
+            "retrieved_count": 0,
+            "retrieved_premises": [],
+            "scores": [],
+            "source": "mathlib_rag",
+            "target_name": "h_monotone_boundedAbove_converges",
+            "turn": 3
+          },
+          "target_name": "h_monotone_boundedAbove_converges",
+          "turn": 3
+        }
+      ],
       "usage_by_stage": {
         "formalizer": {
           "error_code": null,
           "estimated_cost_usd": 0.0,
-          "input_tokens": 6959,
-          "latency_ms": 10218.709,
+          "input_tokens": 6229,
+          "latency_ms": 9962.088,
           "model": "labs-leanstral-2603",
-          "output_tokens": 585,
+          "output_tokens": 461,
           "provider": "mistral",
           "stage": "formalizer",
           "success": true,
@@ -829,11 +2338,11 @@
         },
         "planner": {
           "error_code": null,
-          "estimated_cost_usd": 0.0009555,
-          "input_tokens": 453,
-          "latency_ms": 8412.581,
+          "estimated_cost_usd": 0.0004795,
+          "input_tokens": 434,
+          "latency_ms": 3292.194,
           "model": "mistral-large-2512",
-          "output_tokens": 486,
+          "output_tokens": 175,
           "provider": "mistral",
           "stage": "planner",
           "success": true,
@@ -842,10 +2351,10 @@
         "prover": {
           "error_code": "schema_invalid",
           "estimated_cost_usd": 0.0,
-          "input_tokens": 5937,
-          "latency_ms": 8197.612,
+          "input_tokens": 6538,
+          "latency_ms": 5800.094,
           "model": "labs-leanstral-2603",
-          "output_tokens": 470,
+          "output_tokens": 252,
           "provider": "mistral",
           "stage": "prover",
           "success": false,
@@ -855,8 +2364,9 @@
       "verified_via": "full_pipeline"
     }
   ],
-  "sample_seed": null,
-  "sampling_mode": "full",
+  "retrieval_hit_rate@5": 0.25,
+  "sample_seed": 21,
+  "sampling_mode": "focused_sample",
   "selected_ids": [
     "t2_contraction_mapping_fixed_point",
     "t2_extreme_value_repair",
@@ -869,16 +2379,16 @@
   },
   "tokens_by_stage": {
     "formalizer": {
-      "input_tokens": 20475,
-      "output_tokens": 2016
+      "input_tokens": 17337,
+      "output_tokens": 1396
     },
     "planner": {
-      "input_tokens": 1441,
-      "output_tokens": 1055
+      "input_tokens": 1400,
+      "output_tokens": 709
     },
     "prover": {
-      "input_tokens": 15950,
-      "output_tokens": 902
+      "input_tokens": 12823,
+      "output_tokens": 750
     }
   }
 }

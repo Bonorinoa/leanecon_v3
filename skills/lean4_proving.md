@@ -14,6 +14,7 @@
 - Normalize definitions before escalating to stronger tactics.
 - Keep helper lemmas small, local, and mathematically motivated.
 - For mathlib-native goals, use `lean-lsp-mcp` tools early: diagnostics, active goals, code actions, hover/type context, LeanSearch, and Loogle.
+- Trust the harness-supplied premises in context. The harness owns retrieval (`retrieve_premises(goal_state, k)`); the model should use the retrieved list as a search bias rather than re-querying or guessing names from memory.
 - Record enough context for later audit: claim type, target kind, LSP tool names, search query, candidate count, selected lemma, and whether compiled candidates closed the target.
 
 ## Anti-Patterns

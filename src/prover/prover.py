@@ -18,6 +18,7 @@ from src.config import (
     MISTRAL_API_KEY,
     MISTRAL_BASE_URL,
     PROVER_BACKEND,
+    PROVER_FALLBACK_BACKEND,
     PROVER_PROVIDER,
 )
 from src.formalizer.models import FormalizationPacket
@@ -28,9 +29,13 @@ from src.observability import (
     BudgetTracker,
     LeanLSPClient,
     LeanLSPUnavailableError,
+    ProgressDelta,
     ProviderCallMetadata,
+    RetrievalEvent,
     SpanRecorder,
+    StateTransition,
     TokenUsage,
+    ToolUsageTrace,
     build_progress_event,
     classify_exception,
     complete_usage,
@@ -75,6 +80,23 @@ MAX_DIRECT_CLOSURE_CANDIDATES = 24
 POST_DIRECT_CLOSURE_STALL_LIMIT = 2
 SHALLOW_LOOP_WINDOW = 4
 
+PROVER_RETRY_ATTEMPTS = 3
+PROVER_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (0.5, 1.0)
+PROVER_RETRYABLE_ERROR_CODES = frozenset(
+    {"rate_limit", "provider_http_error", "provider_unavailable", "timeout"}
+)
+
+
+def _classify_http_status(code: int) -> str:
+    if code in {401, 403}:
+        return "auth"
+    if code == 429:
+        return "rate_limit"
+    if code in {502, 503, 504}:
+        return "provider_unavailable"
+    return "provider_http_error"
+
+
 SHORTCUT_FALLBACK_TACTICS: tuple[tuple[str, str], ...] = (
     ("assumption", "Goal matches a local hypothesis; closing via `assumption`."),
     ("rfl", "Goal closes by definitional reflexivity."),
@@ -101,7 +123,13 @@ MATHLIB_NATIVE_DIRECT_CLOSE_LIMIT = 2
 MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT = 6
 MATHLIB_NATIVE_LSP_SEARCH_RESULTS = 8
 MATHLIB_NATIVE_PROMPT_ONLY_TOOLS = frozenset(
-    {"lean_diagnostic_messages", "lean_leansearch", "lean_loogle"}
+    {
+        "lean_diagnostic_messages",
+        "lean_leansearch",
+        "lean_loogle",
+        "lean_local_search",
+        "lean_file_outline",
+    }
 )
 
 
@@ -175,7 +203,7 @@ class DriverRegistry:
                 name="leanstral",
                 provider="mistral",
                 model="labs-leanstral-2603",
-                notes="Fallback proving backend when Goedel stalls or fails.",
+                notes="Mistral-hosted Leanstral backend.",
             ),
         }
 
@@ -183,6 +211,12 @@ class DriverRegistry:
         if name not in self._backends:
             raise KeyError(name)
         return self._backends[name]
+
+    def register(self, backend: ProverBackend) -> None:
+        self._backends[backend.name] = backend
+
+    def available(self) -> list[str]:
+        return list(self._backends.keys())
 
 
 def _extract_json_payload(raw_text: str) -> dict[str, object]:
@@ -198,6 +232,16 @@ def _extract_json_payload(raw_text: str) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ProverDriverError("Prover backend returned non-object JSON.")
     return payload
+
+
+def _contains_lsp_unavailable(value: Any) -> bool:
+    if isinstance(value, str):
+        return "lsp_unavailable" in value
+    if isinstance(value, dict):
+        return any(_contains_lsp_unavailable(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_contains_lsp_unavailable(child) for child in value)
+    return False
 
 
 class HuggingFaceProverDriver:
@@ -235,13 +279,19 @@ class HuggingFaceProverDriver:
         )
         content = raw.choices[0].message.content
         if isinstance(content, list):
-            content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+            content = "".join(
+                str(part.get("text", "")) for part in content if isinstance(part, dict)
+            )
         if not isinstance(content, str):
             raise ProverDriverError("Prover chat-completion response did not contain text content.")
         usage = getattr(raw, "usage", None)
         return ProverAction.model_validate(_extract_json_payload(content)), ProviderCallMetadata(
-            input_tokens=int(usage.prompt_tokens) if getattr(usage, "prompt_tokens", None) is not None else None,
-            output_tokens=int(usage.completion_tokens) if getattr(usage, "completion_tokens", None) is not None else None,
+            input_tokens=int(usage.prompt_tokens)
+            if getattr(usage, "prompt_tokens", None) is not None
+            else None,
+            output_tokens=int(usage.completion_tokens)
+            if getattr(usage, "completion_tokens", None) is not None
+            else None,
             usage_source="provider" if usage is not None else "estimated_chars",
             prompt_text=json.dumps(messages, ensure_ascii=True),
             response_text=content,
@@ -264,9 +314,15 @@ class HuggingFaceProverDriver:
         generated_text = getattr(raw_text, "generated_text", None)
         details = getattr(raw_text, "details", None)
         response_text = str(generated_text if generated_text is not None else raw_text)
-        return ProverAction.model_validate(_extract_json_payload(response_text)), ProviderCallMetadata(
-            input_tokens=len(getattr(details, "prefill", []) or []) if details is not None else None,
-            output_tokens=getattr(details, "generated_tokens", None) if details is not None else None,
+        return ProverAction.model_validate(
+            _extract_json_payload(response_text)
+        ), ProviderCallMetadata(
+            input_tokens=len(getattr(details, "prefill", []) or [])
+            if details is not None
+            else None,
+            output_tokens=getattr(details, "generated_tokens", None)
+            if details is not None
+            else None,
             usage_source="provider" if details is not None else "estimated_chars",
             prompt_text=prompt,
             response_text=response_text,
@@ -274,7 +330,10 @@ class HuggingFaceProverDriver:
 
     def _should_fallback_to_text_generation(self, error: Exception) -> bool:
         message = str(error).lower()
-        return "supported task: text-generation" in message or "supported task: text generation" in message
+        return (
+            "supported task: text-generation" in message
+            or "supported task: text generation" in message
+        )
 
     def next_action(
         self,
@@ -285,7 +344,9 @@ class HuggingFaceProverDriver:
         try:
             from huggingface_hub import InferenceClient
         except Exception as error:
-            raise ProverDriverError("huggingface_hub is required for Hugging Face prover backends.") from error
+            raise ProverDriverError(
+                "huggingface_hub is required for Hugging Face prover backends."
+            ) from error
 
         try:
             client = InferenceClient(
@@ -307,17 +368,22 @@ class HuggingFaceProverDriver:
 
 
 class MistralProverDriver:
-    """Mistral chat-completions driver for Leanstral proving fallback."""
+    """Mistral chat-completions driver (provider tag: ``mistral``).
+
+    Not coupled to a specific model — any Mistral-hosted chat-completions
+    model can be driven through this transport, including Leanstral.
+    """
 
     def __init__(
         self,
         *,
-        api_key: str = MISTRAL_API_KEY,
-        base_url: str = MISTRAL_BASE_URL,
+        api_key: str | None = None,
+        base_url: str | None = None,
         timeout: float = FORMALIZER_TIMEOUT,
     ) -> None:
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key if api_key is not None else MISTRAL_API_KEY
+        resolved_base = base_url if base_url is not None else MISTRAL_BASE_URL
+        self.base_url = resolved_base.rstrip("/")
         self.timeout = timeout
 
     def next_action(
@@ -327,35 +393,29 @@ class MistralProverDriver:
         prompt: str,
     ) -> ProverAction | tuple[ProverAction, ProviderCallMetadata]:
         if not self.api_key:
-            raise ProverDriverError("Mistral API key is required for the Leanstral prover backend.")
+            raise ProverDriverError(
+                f"MISTRAL_API_KEY is required for the `{backend.name}` prover backend (provider=mistral)."
+            )
         payload = json.dumps(
             {
                 "model": backend.model,
                 "temperature": 0.1,
                 "messages": [
-                    {"role": "system", "content": "You are a Lean theorem prover. Return only JSON."},
+                    {
+                        "role": "system",
+                        "content": "You are a Lean theorem prover. Return only JSON.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
             }
         ).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            body = error.read().decode("utf-8", errors="ignore")
-            raise ProverDriverError(f"Mistral prover request failed: {body or error.reason}") from error
-        except urllib.error.URLError as error:
-            raise ProverDriverError(f"Mistral prover request failed: {error.reason}") from error
+        request_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        url = f"{self.base_url}/chat/completions"
+        raw = self._post_with_retry(url=url, payload=payload, headers=request_headers)
 
         choices = raw.get("choices")
         if not isinstance(choices, list) or not choices:
@@ -363,17 +423,72 @@ class MistralProverDriver:
         message = choices[0].get("message", {})
         content = message.get("content")
         if isinstance(content, list):
-            content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+            content = "".join(
+                str(part.get("text", "")) for part in content if isinstance(part, dict)
+            )
         if not isinstance(content, str):
             raise ProverDriverError("Mistral prover response did not contain text content.")
         usage = raw.get("usage", {}) if isinstance(raw.get("usage"), dict) else {}
         return ProverAction.model_validate(_extract_json_payload(content)), ProviderCallMetadata(
-            input_tokens=int(usage.get("prompt_tokens")) if usage.get("prompt_tokens") is not None else None,
-            output_tokens=int(usage.get("completion_tokens")) if usage.get("completion_tokens") is not None else None,
+            input_tokens=int(usage.get("prompt_tokens"))
+            if usage.get("prompt_tokens") is not None
+            else None,
+            output_tokens=int(usage.get("completion_tokens"))
+            if usage.get("completion_tokens") is not None
+            else None,
             usage_source="provider" if usage else "estimated_chars",
             prompt_text=prompt,
             response_text=content,
         )
+
+    def _post_with_retry(
+        self,
+        *,
+        url: str,
+        payload: bytes,
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for attempt in range(PROVER_RETRY_ATTEMPTS):
+            request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            error_code = "unknown"
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as error:
+                body = error.read().decode("utf-8", errors="ignore")
+                wrapped = ProverDriverError(
+                    f"Mistral prover request failed: {body or error.reason}"
+                )
+                wrapped.__cause__ = error
+                error_code = _classify_http_status(error.code)
+                last_error = wrapped
+            except urllib.error.URLError as error:
+                wrapped = ProverDriverError(f"Mistral prover request failed: {error.reason}")
+                wrapped.__cause__ = error
+                error_code = (
+                    "timeout"
+                    if "timed out" in str(error.reason).lower()
+                    else "provider_unavailable"
+                )
+                last_error = wrapped
+            except TimeoutError as error:
+                wrapped = ProverDriverError(f"Mistral prover request timed out: {error}")
+                wrapped.__cause__ = error
+                error_code = "timeout"
+                last_error = wrapped
+
+            if error_code not in PROVER_RETRYABLE_ERROR_CODES:
+                raise last_error
+            if attempt + 1 >= PROVER_RETRY_ATTEMPTS:
+                break
+            backoff = PROVER_RETRY_BACKOFF_SECONDS[
+                min(attempt, len(PROVER_RETRY_BACKOFF_SECONDS) - 1)
+            ]
+            time.sleep(backoff)
+
+        assert last_error is not None
+        raise last_error
 
 
 def _unwrap_action_response(
@@ -420,7 +535,7 @@ def _proof_body_fingerprint(code: str, theorem_name: str) -> str:
     marker = "__FINGERPRINT__"
     if marker not in body_code:
         return code[-_PROGRESS_CODE_WINDOW:]
-    return body_code.split(marker, 1)[1][: _PROGRESS_CODE_WINDOW]
+    return body_code.split(marker, 1)[1][:_PROGRESS_CODE_WINDOW]
 
 
 def _extract_theorem_block(code: str) -> str:
@@ -479,7 +594,9 @@ def _build_prompt(
     examples: list[dict[str, Any]],
     turn_hints: list[str] | None = None,
 ) -> str:
-    preferred_tactics = list(dict.fromkeys([*(turn_hints or []), *suggest_fast_path_tactics(current_code)]))
+    preferred_tactics = list(
+        dict.fromkeys([*(turn_hints or []), *suggest_fast_path_tactics(current_code)])
+    )
     recent_steps = [
         {
             "turn": step.turn,
@@ -571,13 +688,15 @@ class _ActiveProofSession:
             return False, str(response)
         if hasattr(response, "has_errors") and response.has_errors():
             errors = [
-                message.data
-                for message in response.get_errors()
-                if getattr(message, "data", "")
+                message.data for message in response.get_errors() if getattr(message, "data", "")
             ]
             return False, "\n".join(errors) if errors else f"Tactic failed: {tactic}"
         materialized = self.repl.materialize_proof()
-        self.code = self.materialize_code(materialized) if self.materialize_code is not None else materialized
+        self.code = (
+            self.materialize_code(materialized)
+            if self.materialize_code is not None
+            else materialized
+        )
         if self.proof_path is not None:
             self.proof_path.write_text(self.code, encoding="utf-8")
         self.goals = list(getattr(response, "goals", []) or [])
@@ -628,7 +747,10 @@ class Prover:
         self.registry = registry or build_default_registry()
         self.driver_registry = DriverRegistry()
         self.primary_backend = self.driver_registry.get(backend)
-        self.fallback_backend = self.driver_registry.get("leanstral")
+        fallback_name = PROVER_FALLBACK_BACKEND
+        if fallback_name not in self.driver_registry.available():
+            fallback_name = "leanstral"
+        self.fallback_backend = self.driver_registry.get(fallback_name)
         self._drivers: dict[str, ProverDriver] = {
             "huggingface": huggingface_driver or HuggingFaceProverDriver(),
             "mistral": mistral_driver or MistralProverDriver(),
@@ -639,6 +761,10 @@ class Prover:
         self.memory_writer = ProverMemoryWriter(self.trace_store)
         self.lsp_client = lsp_client or default_lean_lsp_client
         self._extracted_lemmas = 0
+        self._retrieval_events: list[dict[str, Any]] = []
+        self._tool_usage_traces: list[dict[str, Any]] = []
+        self._state_transitions: list[dict[str, Any]] = []
+        self._progress_deltas: list[dict[str, Any]] = []
 
     def _selected_preamble_entries(self, packet: FormalizationPacket) -> list[Any]:
         from src.preamble_library import PREAMBLE_LIBRARY
@@ -702,11 +828,17 @@ class Prover:
         targets = self._build_targets(packet)
         attempted_backends: list[str] = []
         working_code = packet.lean_code
-        resolved_target_timeouts = self._resolve_target_timeouts(timeout=timeout, target_timeouts=target_timeouts)
+        resolved_target_timeouts = self._resolve_target_timeouts(
+            timeout=timeout, target_timeouts=target_timeouts
+        )
         final_compile_timeout = self._final_compile_timeout(resolved_target_timeouts)
         max_recursion_depth = BENCHMARK_MAX_RECURSION_DEPTH if benchmark_mode else 3
         self._extracted_lemmas = 0
         self._reset_budget_tracker()
+        self._retrieval_events = []
+        self._tool_usage_traces = []
+        self._state_transitions = []
+        self._progress_deltas = []
         self.file_controller.initialize(job_id, working_code)
 
         try:
@@ -780,7 +912,11 @@ class Prover:
                     stage="prover",
                     status="running_prover",
                     message=f"Starting target `{target.name}`.",
-                    metadata={"turn": index, "target_name": target.name, "target_kind": target.kind},
+                    metadata={
+                        "turn": index,
+                        "target_name": target.name,
+                        "target_kind": target.kind,
+                    },
                 )
                 target_timeout = self._timeout_for_target(target, resolved_target_timeouts)
                 if target.kind == "subgoal":
@@ -810,7 +946,9 @@ class Prover:
                         break
                     theorem_block = _extract_theorem_block(produced_code)
                     working_code = _inject_theorem_before_main(working_code, theorem_block)
-                    working_code = _replace_subgoal_with_helper(working_code, target.name, helper_name)
+                    working_code = _replace_subgoal_with_helper(
+                        working_code, target.name, helper_name
+                    )
                     self.file_controller.write_current_code(job_id, working_code)
                     target.status = "proved"
                     continue
@@ -860,8 +998,12 @@ class Prover:
                     AuditEvent(
                         stage="prover",
                         event_type="stage_completed",
-                        provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
-                        model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
+                        provider=stage_usage.provider
+                        if stage_usage is not None
+                        else self.primary_backend.provider,
+                        model=stage_usage.model
+                        if stage_usage is not None
+                        else self.primary_backend.model,
                         success=True,
                         metadata={
                             "termination_reason": "verified",
@@ -885,24 +1027,38 @@ class Prover:
                     termination_reason="verified",
                     repair_count=sum(1 for step in trace if not step.success),
                     preamble_names=list(packet.selected_preamble),
-                    backend_used=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
+                    backend_used=attempted_backends[-1]
+                    if attempted_backends
+                    else self.primary_backend.name,
                     attempted_backends=attempted_backends,
                     tool_budget=self.budget_tracker.snapshot(),
                     telemetry=telemetry.snapshot(),
-                    usage_by_stage={"prover": stage_usage.to_dict()} if stage_usage is not None else {},
+                    usage_by_stage={"prover": stage_usage.to_dict()}
+                    if stage_usage is not None
+                    else {},
                     timing_breakdown=timing_breakdown,
                     target_timeouts=resolved_target_timeouts,
                     audit_summary=self._audit_summary(audit_events),
+                    retrieval_events=list(self._retrieval_events),
+                    tool_usage_traces=list(self._tool_usage_traces),
+                    state_transitions=list(self._state_transitions),
+                    progress_deltas=list(self._progress_deltas),
                 )
                 log_event(
                     "prover.stage_completed",
                     stage="prover",
-                    provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
-                    model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
+                    provider=stage_usage.provider
+                    if stage_usage is not None
+                    else self.primary_backend.provider,
+                    model=stage_usage.model
+                    if stage_usage is not None
+                    else self.primary_backend.model,
                     latency_ms=timing_breakdown["prover_ms"],
                     input_tokens=stage_usage.input_tokens if stage_usage is not None else None,
                     output_tokens=stage_usage.output_tokens if stage_usage is not None else None,
-                    estimated_cost_usd=stage_usage.estimated_cost_usd if stage_usage is not None else None,
+                    estimated_cost_usd=stage_usage.estimated_cost_usd
+                    if stage_usage is not None
+                    else None,
                 )
                 if not benchmark_mode:
                     self.memory_writer.record(packet, result)
@@ -914,15 +1070,23 @@ class Prover:
                     error_code="compile_failed",
                     message="Proof search ended, but the final code did not compile cleanly.",
                     target_name="theorem_body",
-                    backend=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
+                    backend=attempted_backends[-1]
+                    if attempted_backends
+                    else self.primary_backend.name,
                     lean_feedback=failure_feedback_messages(final_compile),
                 )
+            if self._normalized_claim_type(packet) == "mathlib_native":
+                failure = self._normalize_mathlib_progress_failure(failure)
             audit_events.append(
                 AuditEvent(
                     stage="prover",
                     event_type="stage_failed",
-                    provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
-                    model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
+                    provider=stage_usage.provider
+                    if stage_usage is not None
+                    else self.primary_backend.provider,
+                    model=stage_usage.model
+                    if stage_usage is not None
+                    else self.primary_backend.model,
                     success=False,
                     error_code=failure.error_code or failure.reason,
                     error_message=failure.message,
@@ -949,7 +1113,9 @@ class Prover:
                 termination_reason=failure.reason,
                 repair_count=sum(1 for step in trace if not step.success),
                 preamble_names=list(packet.selected_preamble),
-                backend_used=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
+                backend_used=attempted_backends[-1]
+                if attempted_backends
+                else self.primary_backend.name,
                 attempted_backends=attempted_backends,
                 tool_budget=self.budget_tracker.snapshot(),
                 telemetry=telemetry.snapshot(),
@@ -957,17 +1123,25 @@ class Prover:
                 timing_breakdown=timing_breakdown,
                 target_timeouts=resolved_target_timeouts,
                 audit_summary=self._audit_summary(audit_events),
+                retrieval_events=list(self._retrieval_events),
+                tool_usage_traces=list(self._tool_usage_traces),
+                state_transitions=list(self._state_transitions),
+                progress_deltas=list(self._progress_deltas),
             )
             log_event(
                 "prover.stage_failed",
                 stage="prover",
-                provider=stage_usage.provider if stage_usage is not None else self.primary_backend.provider,
+                provider=stage_usage.provider
+                if stage_usage is not None
+                else self.primary_backend.provider,
                 model=stage_usage.model if stage_usage is not None else self.primary_backend.model,
                 latency_ms=timing_breakdown["prover_ms"],
                 error_code=failure.error_code or failure.reason,
                 input_tokens=stage_usage.input_tokens if stage_usage is not None else None,
                 output_tokens=stage_usage.output_tokens if stage_usage is not None else None,
-                estimated_cost_usd=stage_usage.estimated_cost_usd if stage_usage is not None else None,
+                estimated_cost_usd=stage_usage.estimated_cost_usd
+                if stage_usage is not None
+                else None,
             )
             if not benchmark_mode:
                 self.memory_writer.record(packet, result)
@@ -1003,9 +1177,7 @@ class Prover:
         if mathlib_native_mode:
             self.budget_tracker.record_mathlib_native_mode_use()
         direct_close_budget = (
-            {"remaining": direct_close_policy.attempt_cap}
-            if mathlib_native_mode
-            else None
+            {"remaining": direct_close_policy.attempt_cap} if mathlib_native_mode else None
         )
         if direct_close_policy.claim_type is not None:
             self._record_claim_type_awareness(
@@ -1036,7 +1208,11 @@ class Prover:
                 stage="prover",
                 status="running_prover",
                 message="Closed via direct definable closure.",
-                metadata={"target_name": target.name, "tool_name": "compile_check", "proof": direct_close["proof"]},
+                metadata={
+                    "target_name": target.name,
+                    "tool_name": "compile_check",
+                    "proof": direct_close["proof"],
+                },
             )
             self._record_direct_definable_closure(
                 trace=trace,
@@ -1070,24 +1246,36 @@ class Prover:
         force_deterministic_recovery = False
         seen_failures: dict[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str], int] = {}
         scaffold_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]] = set()
-        branch_tactic_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]] = set()
+        branch_tactic_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]] = (
+            set()
+        )
         exhausted_direct_closure_states: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
-        pending_direct_close_exhaustion = direct_close_summary if direct_close_summary.exhausted else None
-        last_failure_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = None
+        pending_direct_close_exhaustion = (
+            direct_close_summary if direct_close_summary.exhausted else None
+        )
+        last_failure_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = (
+            None
+        )
         repeated_failure_streak = 0
-        last_schema_invalid_signature: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None = None
+        last_schema_invalid_signature: (
+            tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str] | None
+        ) = None
         schema_invalid_repeats = 0
         lsp_search_attempted_states: set[tuple[str, tuple[str, ...]]] = set()
 
         try:
             for turn in range(1, max_turns + 1):
                 if not self.budget_tracker.can_continue():
-                    return False, session.read_code(), ProverFailure(
-                        reason="tool_budget_exhausted",
-                        message="Tool budget exhausted before the proof converged.",
-                        target_name=target.name,
-                        turn=turn,
-                        backend=active_backend.name,
+                    return (
+                        False,
+                        session.read_code(),
+                        ProverFailure(
+                            reason="tool_budget_exhausted",
+                            message="Tool budget exhausted before the proof converged.",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                        ),
                     )
 
                 current_code = session.read_code()
@@ -1117,7 +1305,9 @@ class Prover:
                             recovered, recovery_summary = self._try_repl_compile_recovery(
                                 packet=packet,
                                 target=target,
-                                current_code=self.file_controller.build_final_code(job_id, session.read_code()),
+                                current_code=self.file_controller.build_final_code(
+                                    job_id, session.read_code()
+                                ),
                                 timeout=timeout,
                                 include_fallback_tactics=force_deterministic_recovery,
                                 attempt_budget=direct_close_budget,
@@ -1139,7 +1329,9 @@ class Prover:
                                 )
                                 return True, session.read_code(), None
                             if recovery_summary.exhausted:
-                                exhausted_direct_closure_states[structural_state] = recovery_summary.metadata()
+                                exhausted_direct_closure_states[structural_state] = (
+                                    recovery_summary.metadata()
+                                )
                             disagreement_fail = self._detect_repl_compile_disagreement(
                                 trace=trace,
                                 target=target,
@@ -1157,7 +1349,9 @@ class Prover:
                                     self._target_theorem_name(packet, target),
                                     repeated_solved,
                                 )
-                            repaired_code = self.file_controller.build_final_code(job_id, repaired_code)
+                            repaired_code = self.file_controller.build_final_code(
+                                job_id, repaired_code
+                            )
                             session.write_code(repaired_code)
                             soft_repair_used = True
                             trace.append(
@@ -1197,7 +1391,9 @@ class Prover:
                     turn=turn,
                     timeout=timeout,
                     lean_feedback=lean_feedback,
-                    include_fallback_tactics=force_deterministic_recovery or failed_turns > 0 or no_progress_streak > 0,
+                    include_fallback_tactics=force_deterministic_recovery
+                    or failed_turns > 0
+                    or no_progress_streak > 0,
                     scaffold_attempts=scaffold_attempts,
                     branch_tactic_attempts=branch_tactic_attempts,
                     exhausted_direct_closure_states=exhausted_direct_closure_states,
@@ -1208,16 +1404,22 @@ class Prover:
                     return False, session.read_code(), repaired_failure
                 if recovery_forced and repaired_code is None:
                     repeated_error_code = "unsolved_goals"
-                    if last_failure_signature is not None and last_failure_signature[1].startswith("schema_invalid:"):
+                    if last_failure_signature is not None and last_failure_signature[1].startswith(
+                        "schema_invalid:"
+                    ):
                         repeated_error_code = "schema_invalid"
-                    return False, session.read_code(), ProverFailure(
-                        reason="no_progress_stall",
-                        message="Deterministic recovery could not change the repeated failing proof state.",
-                        error_code=repeated_error_code,
-                        target_name=target.name,
-                        turn=turn,
-                        backend=active_backend.name,
-                        lean_feedback=lean_feedback,
+                    return (
+                        False,
+                        session.read_code(),
+                        ProverFailure(
+                            reason="no_progress_stall",
+                            message="Deterministic recovery could not change the repeated failing proof state.",
+                            error_code=repeated_error_code,
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=lean_feedback,
+                        ),
                     )
                 if repaired_code is not None:
                     if repaired:
@@ -1254,6 +1456,30 @@ class Prover:
 
                 if mathlib_native_mode and structural_state not in lsp_search_attempted_states:
                     lsp_search_attempted_states.add(structural_state)
+                    harness_closed, harness_failure = self._try_mathlib_native_harness_loop(
+                        packet=packet,
+                        target=target,
+                        session=session,
+                        trace=trace,
+                        audit_events=audit_events,
+                        backend=active_backend,
+                        attempted_backends=attempted_backends,
+                        turn=turn,
+                        timeout=timeout,
+                        telemetry=telemetry,
+                        provider_usage=provider_usage,
+                        lean_feedback=lean_feedback,
+                        goals=goals,
+                        job_id=job_id,
+                        on_progress=on_progress,
+                    )
+                    if harness_failure is not None:
+                        return False, session.read_code(), harness_failure
+                    if harness_closed is not None:
+                        if active_backend.name not in attempted_backends:
+                            attempted_backends.append(active_backend.name)
+                        session.write_code(harness_closed)
+                        return True, session.read_code(), None
                     lsp_closed = self._try_mathlib_native_lsp_search(
                         packet=packet,
                         target=target,
@@ -1311,11 +1537,15 @@ class Prover:
                             provider=active_backend.provider,
                             model=active_backend.model,
                             success=True,
-                        prompt_hash=stable_hash_text(metadata.prompt_text if metadata is not None else prompt),
-                        response_hash=stable_hash_text(metadata.response_text if metadata is not None else None),
-                        metadata={
-                            "turn": turn,
-                            "target_name": target.name,
+                            prompt_hash=stable_hash_text(
+                                metadata.prompt_text if metadata is not None else prompt
+                            ),
+                            response_hash=stable_hash_text(
+                                metadata.response_text if metadata is not None else None
+                            ),
+                            metadata={
+                                "turn": turn,
+                                "target_name": target.name,
                                 "backend": active_backend.name,
                                 "usage_source": usage.usage_source,
                             },
@@ -1368,7 +1598,10 @@ class Prover:
                     invalid_output_count += 1
                     if active_backend.name not in attempted_backends:
                         attempted_backends.append(active_backend.name)
-                    if invalid_output_count >= 2 and active_backend.name != self.fallback_backend.name:
+                    if (
+                        invalid_output_count >= 2
+                        and active_backend.name != self.fallback_backend.name
+                    ):
                         active_backend = self.fallback_backend
                         invalid_output_count = 0
                     trace.append(
@@ -1417,14 +1650,18 @@ class Prover:
                     )
                     last_progress_fingerprint = fingerprint
                     if failure_repeats >= 3:
-                        return False, session.read_code(), ProverFailure(
-                            reason="no_progress_stall",
-                            message="Provider failures repeated on the same proof state.",
-                            error_code=error_code or "unsolved_goals",
-                            target_name=target.name,
-                            turn=turn,
-                            backend=active_backend.name,
-                            lean_feedback=lean_feedback,
+                        return (
+                            False,
+                            session.read_code(),
+                            ProverFailure(
+                                reason="no_progress_stall",
+                                message="Provider failures repeated on the same proof state.",
+                                error_code=error_code or "unsolved_goals",
+                                target_name=target.name,
+                                turn=turn,
+                                backend=active_backend.name,
+                                lean_feedback=lean_feedback,
+                            ),
                         )
                     if failure_repeats == 2:
                         force_deterministic_recovery = True
@@ -1464,11 +1701,18 @@ class Prover:
                             success=False,
                             error_code="schema_invalid",
                             error_message=validation_error,
-                            metadata={"turn": turn, "target_name": target.name, "backend": active_backend.name},
+                            metadata={
+                                "turn": turn,
+                                "target_name": target.name,
+                                "backend": active_backend.name,
+                            },
                         )
                     )
                     failed_turns += 1
-                    if invalid_output_count >= 2 and active_backend.name != self.fallback_backend.name:
+                    if (
+                        invalid_output_count >= 2
+                        and active_backend.name != self.fallback_backend.name
+                    ):
                         active_backend = self.fallback_backend
                         invalid_output_count = 0
                     failure_signature = self._failure_signature_key(
@@ -1506,14 +1750,18 @@ class Prover:
                     )
                     last_progress_fingerprint = fingerprint
                     if failure_repeats >= 3 or schema_invalid_repeats >= 3:
-                        return False, session.read_code(), ProverFailure(
-                            reason="no_progress_stall",
-                            message="Provider repeated schema-invalid actions on the same proof state.",
-                            error_code="schema_invalid",
-                            target_name=target.name,
-                            turn=turn,
-                            backend=active_backend.name,
-                            lean_feedback=lean_feedback,
+                        return (
+                            False,
+                            session.read_code(),
+                            ProverFailure(
+                                reason="no_progress_stall",
+                                message="Provider repeated schema-invalid actions on the same proof state.",
+                                error_code="schema_invalid",
+                                target_name=target.name,
+                                turn=turn,
+                                backend=active_backend.name,
+                                lean_feedback=lean_feedback,
+                            ),
                         )
                     if failure_repeats == 2:
                         force_deterministic_recovery = True
@@ -1522,15 +1770,19 @@ class Prover:
                 schema_invalid_repeats = 0
 
                 if repeated_noop_action(trace, action):
-                    return False, current_code, ProverFailure(
-                        reason="no_progress_stall",
-                        message="The prover repeated a failed action without changing code or goals.",
-                        error_code="unsolved_goals",
-                        target_name=target.name,
-                        turn=turn,
-                        backend=active_backend.name,
-                        lean_feedback=lean_feedback,
-                        repeated_action=True,
+                    return (
+                        False,
+                        current_code,
+                        ProverFailure(
+                            reason="no_progress_stall",
+                            message="The prover repeated a failed action without changing code or goals.",
+                            error_code="unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=lean_feedback,
+                            repeated_action=True,
+                        ),
                     )
 
                 if should_decompose(
@@ -1563,25 +1815,34 @@ class Prover:
                     if decomposed:
                         target.status = "proved"
                         return True, new_code, None
-                    return False, session.read_code(), ProverFailure(
-                        reason="decomposition_limit_reached",
-                        message="Decomposition did not produce a verified proof.",
-                        error_code="unsolved_goals",
-                        target_name=target.name,
-                        turn=turn,
-                        backend=active_backend.name,
-                        lean_feedback=lean_feedback,
+                    return (
+                        False,
+                        session.read_code(),
+                        ProverFailure(
+                            reason="decomposition_limit_reached",
+                            message="Decomposition did not produce a verified proof.",
+                            error_code="unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=lean_feedback,
+                        ),
                     )
 
                 if action.action_type == "finish":
-                    return False, current_code, ProverFailure(
-                        reason="provider_finished_without_proof",
-                        message=action.finish_reason or "Provider stopped before the proof compiled.",
-                        error_code="unsolved_goals",
-                        target_name=target.name,
-                        turn=turn,
-                        backend=active_backend.name,
-                        lean_feedback=lean_feedback,
+                    return (
+                        False,
+                        current_code,
+                        ProverFailure(
+                            reason="provider_finished_without_proof",
+                            message=action.finish_reason
+                            or "Provider stopped before the proof compiled.",
+                            error_code="unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=lean_feedback,
+                        ),
                     )
 
                 assert action.tool is not None
@@ -1605,7 +1866,9 @@ class Prover:
                     lean_feedback=lean_feedback,
                     goals=session.get_goals(),
                     code_snapshot=session.read_code(),
-                    error_code=self._tool_error_code(action.tool.name, tool_result.content) if tool_result.is_error else None,
+                    error_code=self._tool_error_code(action.tool.name, tool_result.content)
+                    if tool_result.is_error
+                    else None,
                     repl_local_solved=(
                         action.tool.name == "apply_tactic"
                         and not tool_result.is_error
@@ -1648,29 +1911,37 @@ class Prover:
                 shallow_loop_pattern = self._detect_shallow_loop_pattern(trace=trace, target=target)
                 if shallow_loop_pattern is not None:
                     if pre_tool_structural_state in exhausted_direct_closure_states:
-                        return False, session.read_code(), self._direct_close_stall_failure(
-                            target=target,
-                            turn=turn,
-                            backend=active_backend,
-                            lean_feedback=session.get_goals(),
-                            exhaustion=exhausted_direct_closure_states[pre_tool_structural_state],
-                            error_code=step.error_code or "unsolved_goals",
-                            loop_pattern=shallow_loop_pattern,
+                        return (
+                            False,
+                            session.read_code(),
+                            self._direct_close_stall_failure(
+                                target=target,
+                                turn=turn,
+                                backend=active_backend,
+                                lean_feedback=session.get_goals(),
+                                exhaustion=exhausted_direct_closure_states[
+                                    pre_tool_structural_state
+                                ],
+                                error_code=step.error_code or "unsolved_goals",
+                                loop_pattern=shallow_loop_pattern,
+                            ),
                         )
-                    return False, session.read_code(), ProverFailure(
-                        reason="no_progress_stall",
-                        message=f"Shallow tool loop detected: {shallow_loop_pattern}.",
-                        error_code=step.error_code or "unsolved_goals",
-                        target_name=target.name,
-                        turn=turn,
-                        backend=active_backend.name,
-                        lean_feedback=session.get_goals(),
+                    return (
+                        False,
+                        session.read_code(),
+                        ProverFailure(
+                            reason="no_progress_stall",
+                            message=f"Shallow tool loop detected: {shallow_loop_pattern}.",
+                            error_code=step.error_code or "unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=active_backend.name,
+                            lean_feedback=session.get_goals(),
+                        ),
                     )
                 if tool_result.is_error:
                     failed_turns += 1
-                    failure_action_key = (
-                        f"{action.tool.name}:{action.tool.arguments}:{step.error_code or tool_result.content}"
-                    )
+                    failure_action_key = f"{action.tool.name}:{action.tool.arguments}:{step.error_code or tool_result.content}"
                     failure_signature = self._failure_signature_key(
                         session=session,
                         theorem_name=self._target_theorem_name(packet, target),
@@ -1711,44 +1982,62 @@ class Prover:
                     last_structural_state = structural_state
                     if "no_progress_stall:" in tool_result.content:
                         if pre_tool_structural_state in exhausted_direct_closure_states:
-                            return False, session.read_code(), self._direct_close_stall_failure(
-                                target=target,
-                                turn=turn,
-                                backend=active_backend,
-                                lean_feedback=session.get_goals(),
-                                exhaustion=exhausted_direct_closure_states[pre_tool_structural_state],
-                                error_code=step.error_code or "unsolved_goals",
+                            return (
+                                False,
+                                session.read_code(),
+                                self._direct_close_stall_failure(
+                                    target=target,
+                                    turn=turn,
+                                    backend=active_backend,
+                                    lean_feedback=session.get_goals(),
+                                    exhaustion=exhausted_direct_closure_states[
+                                        pre_tool_structural_state
+                                    ],
+                                    error_code=step.error_code or "unsolved_goals",
+                                ),
                             )
-                        return False, session.read_code(), ProverFailure(
-                            reason="no_progress_stall",
-                            message="REPL tactics stopped making progress on the active goal.",
-                            error_code="unsolved_goals",
-                            target_name=target.name,
-                            turn=turn,
-                            backend=active_backend.name,
-                            lean_feedback=session.get_goals(),
+                        return (
+                            False,
+                            session.read_code(),
+                            ProverFailure(
+                                reason="no_progress_stall",
+                                message="REPL tactics stopped making progress on the active goal.",
+                                error_code="unsolved_goals",
+                                target_name=target.name,
+                                turn=turn,
+                                backend=active_backend.name,
+                                lean_feedback=session.get_goals(),
+                            ),
                         )
                     if (
                         structural_state in exhausted_direct_closure_states
                         and structural_stall_streak >= POST_DIRECT_CLOSURE_STALL_LIMIT
                     ):
-                        return False, session.read_code(), self._direct_close_stall_failure(
-                            target=target,
-                            turn=turn,
-                            backend=active_backend,
-                            lean_feedback=session.get_goals(),
-                            exhaustion=exhausted_direct_closure_states[structural_state],
-                            error_code=step.error_code or "unsolved_goals",
+                        return (
+                            False,
+                            session.read_code(),
+                            self._direct_close_stall_failure(
+                                target=target,
+                                turn=turn,
+                                backend=active_backend,
+                                lean_feedback=session.get_goals(),
+                                exhaustion=exhausted_direct_closure_states[structural_state],
+                                error_code=step.error_code or "unsolved_goals",
+                            ),
                         )
                     if failure_repeats >= 3:
-                        return False, session.read_code(), ProverFailure(
-                            reason="no_progress_stall",
-                            message="The same failed tactic repeated on the same proof state.",
-                            error_code=step.error_code or "unsolved_goals",
-                            target_name=target.name,
-                            turn=turn,
-                            backend=active_backend.name,
-                            lean_feedback=session.get_goals(),
+                        return (
+                            False,
+                            session.read_code(),
+                            ProverFailure(
+                                reason="no_progress_stall",
+                                message="The same failed tactic repeated on the same proof state.",
+                                error_code=step.error_code or "unsolved_goals",
+                                target_name=target.name,
+                                turn=turn,
+                                backend=active_backend.name,
+                                lean_feedback=session.get_goals(),
+                            ),
                         )
                     if failure_repeats == 2:
                         force_deterministic_recovery = True
@@ -1779,33 +2068,47 @@ class Prover:
                     pre_tool_structural_state in exhausted_direct_closure_states
                     and structural_state == pre_tool_structural_state
                 ):
-                    return False, session.read_code(), self._direct_close_stall_failure(
-                        target=target,
-                        turn=turn,
-                        backend=active_backend,
-                        lean_feedback=session.get_goals(),
-                        exhaustion=exhausted_direct_closure_states[pre_tool_structural_state],
+                    return (
+                        False,
+                        session.read_code(),
+                        self._direct_close_stall_failure(
+                            target=target,
+                            turn=turn,
+                            backend=active_backend,
+                            lean_feedback=session.get_goals(),
+                            exhaustion=exhausted_direct_closure_states[pre_tool_structural_state],
+                        ),
                     )
                 if (
                     structural_state in exhausted_direct_closure_states
                     and structural_stall_streak >= POST_DIRECT_CLOSURE_STALL_LIMIT
                 ):
-                    return False, session.read_code(), self._direct_close_stall_failure(
-                        target=target,
-                        turn=turn,
-                        backend=active_backend,
-                        lean_feedback=session.get_goals(),
-                        exhaustion=exhausted_direct_closure_states[structural_state],
+                    return (
+                        False,
+                        session.read_code(),
+                        self._direct_close_stall_failure(
+                            target=target,
+                            turn=turn,
+                            backend=active_backend,
+                            lean_feedback=session.get_goals(),
+                            exhaustion=exhausted_direct_closure_states[structural_state],
+                        ),
                     )
 
-            return False, session.read_code(), ProverFailure(
-                reason="max_turns_exhausted",
-                message="Prover hit the configured maximum number of turns.",
-                error_code="max_turns_exhausted",
-                target_name=target.name,
-                turn=max_turns,
-                backend=attempted_backends[-1] if attempted_backends else self.primary_backend.name,
-                lean_feedback=session.get_goals(),
+            return (
+                False,
+                session.read_code(),
+                ProverFailure(
+                    reason="max_turns_exhausted",
+                    message="Prover hit the configured maximum number of turns.",
+                    error_code="max_turns_exhausted",
+                    target_name=target.name,
+                    turn=max_turns,
+                    backend=attempted_backends[-1]
+                    if attempted_backends
+                    else self.primary_backend.name,
+                    lean_feedback=session.get_goals(),
+                ),
             )
         finally:
             session.close()
@@ -1832,7 +2135,10 @@ class Prover:
         if self._extracted_lemmas >= 3 or target.recursion_depth >= max_recursion_depth:
             return False, session.read_code()
 
-        lemma_name = action.decomposition_name or f"apollo_{packet.theorem_name}_{self._extracted_lemmas + 1}"
+        lemma_name = (
+            action.decomposition_name
+            or f"apollo_{packet.theorem_name}_{self._extracted_lemmas + 1}"
+        )
         lemma_statement = action.decomposition_statement or target.statement
         self._extracted_lemmas += 1
         lemma_target = ProverTarget(
@@ -1867,8 +2173,14 @@ class Prover:
         theorem_block = _extract_theorem_block(produced_code)
         target_code = session.read_code()
         rewritten = _inject_theorem_before_main(target_code, theorem_block)
-        target_theorem_name = packet.theorem_name if target.kind == "theorem_body" else target.helper_theorem_name or target.name
-        rewritten = _replace_named_theorem_body(rewritten, target_theorem_name, f"exact {lemma_name}")
+        target_theorem_name = (
+            packet.theorem_name
+            if target.kind == "theorem_body"
+            else target.helper_theorem_name or target.name
+        )
+        rewritten = _replace_named_theorem_body(
+            rewritten, target_theorem_name, f"exact {lemma_name}"
+        )
         session.write_code(rewritten)
         trace.append(
             ProverTraceStep(
@@ -1946,6 +2258,474 @@ class Prover:
             )
         return specs
 
+    def _try_mathlib_native_harness_loop(
+        self,
+        *,
+        packet: FormalizationPacket,
+        target: ProverTarget,
+        session: _ActiveProofSession,
+        trace: list[ProverTraceStep],
+        audit_events: list[AuditEvent],
+        backend: ProverBackend,
+        attempted_backends: list[str],
+        turn: int,
+        timeout: int,
+        telemetry: SpanRecorder,
+        provider_usage: list[TokenUsage],
+        lean_feedback: list[str],
+        goals: list[str],
+        job_id: str,
+        on_progress: Callable[[str, dict[str, Any]], None] | None,
+    ) -> tuple[str | None, ProverFailure | None]:
+        before_state = self._mathlib_harness_state(session=session, goals=goals)
+        retrieval_event = self._retrieve_mathlib_premises(before_state.get("goals") or [], k=5)
+        retrieval_payload = retrieval_event.to_dict()
+        self._retrieval_events.append(retrieval_payload)
+        self._emit_progress(
+            on_progress,
+            "retrieval_event",
+            job_id=job_id,
+            stage="prover",
+            status="running_prover",
+            message="Retrieved mathlib premises for the active goal.",
+            metadata={
+                "turn": turn,
+                "target_name": target.name,
+                "claim_type": "mathlib_native",
+                "mathlib_native_mode": True,
+                "RetrievalEvent": retrieval_payload,
+            },
+        )
+        audit_events.append(
+            AuditEvent(
+                stage="prover",
+                event_type="RetrievalEvent",
+                provider=backend.provider,
+                model=backend.model,
+                success=True,
+                metadata={"turn": turn, "target_name": target.name, **retrieval_payload},
+            )
+        )
+        if not retrieval_event.retrieved_premises:
+            if _contains_lsp_unavailable(
+                before_state.get("diagnostics")
+            ) or _contains_lsp_unavailable(before_state.get("code_actions")):
+                self._record_mathlib_native_lsp_summary(
+                    trace=trace,
+                    audit_events=audit_events,
+                    backend=backend,
+                    target=target,
+                    turn=turn,
+                    success=False,
+                    error_code="lsp_unavailable",
+                    message="lsp_unavailable: priority LSP context was unavailable before harness fallback.",
+                    lean_feedback=lean_feedback,
+                    goals=goals,
+                    code_snapshot=session.read_code(),
+                    metadata={
+                        "claim_type": "mathlib_native",
+                        "mathlib_native_mode": True,
+                        "lsp_tool_name": "lean_diagnostic_messages",
+                        "candidate_count": 0,
+                        "compiled_candidate_count": 0,
+                        "selected_lemma": None,
+                        "search_query": None,
+                        "RetrievalEvent": retrieval_payload,
+                    },
+                )
+            trace.append(
+                ProverTraceStep(
+                    turn=turn,
+                    backend=backend.name,
+                    target_name=target.name,
+                    action_type="mathlib_native_harness_retrieval",
+                    success=False,
+                    rationale="Harness retrieval returned no premises; falling back to bounded LSP search.",
+                    tool_name="retrieve_premises",
+                    tool_arguments={"RetrievalEvent": retrieval_payload},
+                    tool_result="No retrieved premises.",
+                    lean_feedback=lean_feedback,
+                    goals=goals,
+                    code_snapshot=session.read_code(),
+                    error_code="retrieval_empty",
+                )
+            )
+            return None, None
+
+        diagnostics = before_state.get("diagnostics")
+        code_actions = before_state.get("code_actions")
+        prompt = self._build_mathlib_harness_prompt(
+            packet=packet,
+            target=target,
+            state=before_state,
+            retrieved_premises=retrieval_event.retrieved_premises,
+            diagnostics=diagnostics,
+            code_actions=code_actions,
+            prior_trace=trace,
+        )
+        provider_started_at = time.perf_counter()
+        try:
+            raw_action = self._drivers[backend.provider].next_action(
+                backend=backend,
+                prompt=prompt,
+            )
+            telemetry.record_provider(provider_started_at)
+            action, metadata = _unwrap_action_response(raw_action)
+            usage = complete_usage(
+                stage="prover",
+                provider=backend.provider,
+                model=backend.model,
+                latency_ms=(time.perf_counter() - provider_started_at) * 1000.0,
+                success=True,
+                metadata=metadata,
+                prompt_text=prompt,
+            )
+            provider_usage.append(usage)
+            audit_events.append(
+                AuditEvent(
+                    stage="prover",
+                    event_type="mathlib_native_harness_provider_turn",
+                    provider=backend.provider,
+                    model=backend.model,
+                    success=True,
+                    prompt_hash=stable_hash_text(
+                        metadata.prompt_text if metadata is not None else prompt
+                    ),
+                    response_hash=stable_hash_text(
+                        metadata.response_text if metadata is not None else None
+                    ),
+                    metadata={
+                        "turn": turn,
+                        "target_name": target.name,
+                        "usage_source": usage.usage_source,
+                    },
+                )
+            )
+        except Exception as exc:
+            telemetry.record_provider(provider_started_at)
+            error_code = classify_exception(exc)
+            provider_usage.append(
+                complete_usage(
+                    stage="prover",
+                    provider=backend.provider,
+                    model=backend.model,
+                    latency_ms=(time.perf_counter() - provider_started_at) * 1000.0,
+                    success=False,
+                    error_code=error_code,
+                    prompt_text=prompt,
+                )
+            )
+            trace.append(
+                ProverTraceStep(
+                    turn=turn,
+                    backend=backend.name,
+                    target_name=target.name,
+                    action_type="mathlib_native_harness_loop",
+                    success=False,
+                    rationale="Harness provider invocation failed; falling back to bounded LSP search.",
+                    tool_name="provider_turn",
+                    tool_arguments={"RetrievalEvent": retrieval_payload},
+                    tool_result=str(exc),
+                    lean_feedback=lean_feedback,
+                    goals=goals,
+                    code_snapshot=session.read_code(),
+                    error_code=error_code,
+                )
+            )
+            return None, None
+
+        if backend.name not in attempted_backends:
+            attempted_backends.append(backend.name)
+
+        if (
+            action.action_type != "tool"
+            or action.tool is None
+            or action.tool.name != "apply_tactic"
+        ):
+            trace.append(
+                ProverTraceStep(
+                    turn=turn,
+                    backend=backend.name,
+                    target_name=target.name,
+                    action_type="mathlib_native_harness_loop",
+                    success=False,
+                    rationale="Harness loop only accepts provider `apply_tactic` actions.",
+                    tool_name=action.tool.name if action.tool is not None else None,
+                    tool_arguments={
+                        "RetrievalEvent": retrieval_payload,
+                        "provider_action": action.model_dump(mode="json"),
+                    },
+                    tool_result="Rejected non-apply_tactic harness action.",
+                    lean_feedback=lean_feedback,
+                    goals=goals,
+                    code_snapshot=session.read_code(),
+                    error_code="schema_invalid",
+                )
+            )
+            return None, None
+
+        before_hash = str(before_state["state_hash"])
+        tool_result = self._execute_tool(
+            session=session,
+            tool=action.tool,
+            packet=packet,
+            target=target,
+        )
+        after_state = self._mathlib_harness_state(session=session, goals=session.get_goals())
+        after_hash = str(after_state["state_hash"])
+        progress_delta = self._progress_delta_from_states(before_state, after_state)
+        state_transition = StateTransition(
+            goal_count_before=len(before_state.get("goals") or []),
+            goal_count_after=len(after_state.get("goals") or []),
+            progress_delta=progress_delta,
+            state_hash_before=before_hash,
+            state_hash_after=after_hash,
+            turn_index=turn,
+        )
+        tool_usage = ToolUsageTrace(
+            tool_name=action.tool.name,
+            args=action.tool.arguments,
+            result=tool_result.content,
+            state_hash_before=before_hash,
+            state_hash_after=after_hash,
+            success=not tool_result.is_error,
+        )
+        progress_payload = progress_delta.to_dict()
+        transition_payload = state_transition.to_dict()
+        tool_payload = tool_usage.to_dict()
+        self._tool_usage_traces.append(tool_payload)
+        self._state_transitions.append(transition_payload)
+        self._progress_deltas.append(progress_payload)
+        trace.append(
+            ProverTraceStep(
+                turn=turn,
+                backend=backend.name,
+                target_name=target.name,
+                action_type="mathlib_native_harness_loop",
+                success=not tool_result.is_error,
+                rationale=action.rationale,
+                tool_name=action.tool.name,
+                tool_arguments={
+                    **action.tool.arguments,
+                    "RetrievalEvent": retrieval_payload,
+                    "ToolUsageTrace": tool_payload,
+                    "StateTransition": transition_payload,
+                    "ProgressDelta": progress_payload,
+                    "retrieved_premises": retrieval_event.retrieved_premises,
+                },
+                tool_result=tool_result.content,
+                lean_feedback=lean_feedback,
+                goals=session.get_goals(),
+                code_snapshot=session.read_code(),
+                error_code=self._tool_error_code(action.tool.name, tool_result.content)
+                if tool_result.is_error
+                else None,
+                repl_local_solved=not tool_result.is_error and bool(session.solved),
+            )
+        )
+        for event_name, payload in (
+            ("tool_usage_trace", tool_payload),
+            ("state_transition", transition_payload),
+            ("progress_delta", progress_payload),
+        ):
+            self._emit_progress(
+                on_progress,
+                event_name,
+                job_id=job_id,
+                stage="prover",
+                status="running_prover",
+                message=f"Recorded {payload['event_type']}.",
+                metadata={"turn": turn, "target_name": target.name, payload["event_type"]: payload},
+            )
+        audit_events.append(
+            AuditEvent(
+                stage="prover",
+                event_type="ProgressDelta",
+                provider=backend.provider,
+                model=backend.model,
+                success=not progress_delta.stall_detected,
+                metadata={"turn": turn, "target_name": target.name, **progress_payload},
+            )
+        )
+        if progress_delta.stall_detected:
+            return None, ProverFailure(
+                reason="progress_stall",
+                message="Harness apply_tactic left the mathlib-native state and goals unchanged.",
+                error_code="unsolved_goals",
+                target_name=target.name,
+                turn=turn,
+                backend=backend.name,
+                lean_feedback=session.get_goals(),
+            )
+        if not tool_result.is_error and session.solved:
+            return session.read_code(), None
+        return None, None
+
+    def _mathlib_harness_state(
+        self,
+        *,
+        session: _ActiveProofSession,
+        goals: list[str],
+    ) -> dict[str, Any]:
+        code = session.read_code()
+        proof_path = session.proof_path
+        diagnostics: Any = None
+        code_actions: Any = None
+        file_outline: Any = None
+        if proof_path is not None:
+            proof_line = self._active_proof_line(code)
+            try:
+                diagnostics = self.lsp_client.lean_diagnostic_messages(
+                    proof_path,
+                    severity="error",
+                    start_line=max(1, proof_line - 2),
+                    end_line=proof_line + 2,
+                )
+            except LeanLSPUnavailableError as exc:
+                diagnostics = {"error": f"lsp_unavailable: {exc}"}
+            try:
+                code_actions = self.lsp_client.lean_code_actions(proof_path, line=proof_line)
+            except LeanLSPUnavailableError as exc:
+                code_actions = {"error": f"lsp_unavailable: {exc}"}
+            try:
+                file_outline = self.lsp_client.lean_file_outline(proof_path, max_declarations=40)
+            except (AttributeError, LeanLSPUnavailableError) as exc:
+                file_outline = {"error": f"lsp_unavailable: {exc}"}
+        code_hash = stable_hash_text(code)
+        state_hash = stable_hash_text(
+            json.dumps(
+                {
+                    "code_hash": code_hash,
+                    "goals": goals,
+                    "diagnostics": diagnostics,
+                },
+                sort_keys=True,
+                ensure_ascii=True,
+                default=str,
+            )
+        )
+        return {
+            "code": code,
+            "code_hash": code_hash,
+            "goals": list(goals),
+            "diagnostics": diagnostics,
+            "code_actions": code_actions,
+            "file_outline": file_outline,
+            "state_hash": state_hash,
+        }
+
+    def _retrieve_mathlib_premises(self, goals: list[str], *, k: int) -> RetrievalEvent:
+        started_at = time.perf_counter()
+        premises: list[dict[str, Any]] = []
+        try:
+            from src.retrieval.mathlib_rag import retrieve_premises
+
+            raw_premises = retrieve_premises("\n".join(goals), k=k)
+        except Exception:
+            raw_premises = []
+        for premise in list(raw_premises or [])[:k]:
+            if hasattr(premise, "to_dict"):
+                payload = premise.to_dict()
+            elif hasattr(premise, "__dict__"):
+                payload = dict(premise.__dict__)
+            elif isinstance(premise, dict):
+                payload = dict(premise)
+            else:
+                payload = {"name": str(premise)}
+            premises.append(payload)
+        scores = []
+        for premise in premises:
+            try:
+                scores.append(float(premise.get("score", 0.0)))
+            except (TypeError, ValueError):
+                scores.append(0.0)
+        return RetrievalEvent(
+            retrieved_premises=premises,
+            scores=scores,
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            k=k,
+        )
+
+    def _build_mathlib_harness_prompt(
+        self,
+        *,
+        packet: FormalizationPacket,
+        target: ProverTarget,
+        state: dict[str, Any],
+        retrieved_premises: list[dict[str, Any]],
+        diagnostics: Any,
+        code_actions: Any,
+        prior_trace: list[ProverTraceStep],
+    ) -> str:
+        recent_steps = [
+            {
+                "turn": step.turn,
+                "action_type": step.action_type,
+                "tool_name": step.tool_name,
+                "success": step.success,
+                "tool_result": step.tool_result,
+            }
+            for step in prior_trace[-3:]
+        ]
+        return json.dumps(
+            {
+                "claim": packet.claim,
+                "theorem_name": packet.theorem_name,
+                "claim_type": "mathlib_native",
+                "target": target.model_dump(mode="json"),
+                "current_code": state.get("code"),
+                "goals": state.get("goals"),
+                "diagnostics": diagnostics,
+                "code_actions": code_actions,
+                "file_outline": state.get("file_outline"),
+                "retrieved_premises": retrieved_premises,
+                "recent_trace": recent_steps,
+                "instructions": {
+                    "return_json_only": True,
+                    "only_allowed_tool": "apply_tactic",
+                    "use_retrieved_premises": True,
+                    "rules": [
+                        "Return one apply_tactic action.",
+                        "Prefer tactics that reference retrieved Mathlib premises.",
+                        "Do not rewrite the theorem body in this harness loop.",
+                    ],
+                },
+                "response_schema": {
+                    "action_type": "tool",
+                    "rationale": "string",
+                    "tool": {"name": "apply_tactic", "arguments": {"tactic": "Lean tactic"}},
+                },
+            },
+            ensure_ascii=True,
+            indent=2,
+            default=str,
+        )
+
+    def _progress_delta_from_states(
+        self,
+        before_state: dict[str, Any],
+        after_state: dict[str, Any],
+    ) -> ProgressDelta:
+        before_goals = list(before_state.get("goals") or [])
+        after_goals = list(after_state.get("goals") or [])
+        before_complexity = sum(len(str(goal).strip()) for goal in before_goals)
+        after_complexity = sum(len(str(goal).strip()) for goal in after_goals)
+        return ProgressDelta(
+            goals_reduced=len(after_goals) < len(before_goals),
+            complexity_reduced=after_complexity < before_complexity,
+            stall_detected=(
+                before_goals == after_goals
+                and (
+                    before_state.get("state_hash") == after_state.get("state_hash")
+                    or after_complexity >= before_complexity
+                )
+            ),
+            goal_count_before=len(before_goals),
+            goal_count_after=len(after_goals),
+            complexity_before=before_complexity,
+            complexity_after=after_complexity,
+        )
+
     def _try_mathlib_native_lsp_search(
         self,
         *,
@@ -2006,7 +2786,11 @@ class Prover:
             try:
                 payload = callback()
             except LeanLSPUnavailableError as exc:
-                error_code = "lsp_search_exhausted" if "no results" in str(exc).lower() else "lsp_unavailable"
+                error_code = (
+                    "lsp_search_exhausted"
+                    if "no results" in str(exc).lower()
+                    else "lsp_unavailable"
+                )
                 first_error_code = first_error_code or error_code
                 self._emit_progress(
                     on_progress,
@@ -2062,7 +2846,9 @@ class Prover:
         )
         lsp_payloads["goal"] = call_lsp(
             "lean_goal",
-            lambda: self.lsp_client.lean_goal(session.proof_path, line=proof_line, column=proof_column),
+            lambda: self.lsp_client.lean_goal(
+                session.proof_path, line=proof_line, column=proof_column
+            ),
         )
         lsp_payloads["code_actions"] = call_lsp(
             "lean_code_actions",
@@ -2070,10 +2856,14 @@ class Prover:
         )
         lsp_payloads["hover"] = call_lsp(
             "lean_hover_info",
-            lambda: self.lsp_client.lean_hover_info(session.proof_path, line=proof_line, column=proof_column),
+            lambda: self.lsp_client.lean_hover_info(
+                session.proof_path, line=proof_line, column=proof_column
+            ),
         )
 
-        search_query = self._mathlib_native_search_query(packet=packet, goals=goals, current_code=code)
+        search_query = self._mathlib_native_search_query(
+            packet=packet, goals=goals, current_code=code
+        )
         lsp_payloads["leansearch"] = call_lsp(
             "lean_leansearch",
             lambda: self.lsp_client.lean_leansearch(
@@ -2122,7 +2912,12 @@ class Prover:
                     stage="prover",
                     status="running_prover",
                     message="Closed via mathlib-native LSP-assisted search.",
-                    metadata={"target_name": target.name, "tool_name": "mathlib_native_lsp_search", "success": True, **metadata},
+                    metadata={
+                        "target_name": target.name,
+                        "tool_name": "mathlib_native_lsp_search",
+                        "success": True,
+                        **metadata,
+                    },
                 )
                 self._record_mathlib_native_lsp_summary(
                     trace=trace,
@@ -2159,7 +2954,13 @@ class Prover:
             stage="prover",
             status="running_prover",
             message="Mathlib-native LSP-assisted search did not close the target.",
-            metadata={"target_name": target.name, "tool_name": "mathlib_native_lsp_search", "success": False, "error_code": error_code, **metadata},
+            metadata={
+                "target_name": target.name,
+                "tool_name": "mathlib_native_lsp_search",
+                "success": False,
+                "error_code": error_code,
+                **metadata,
+            },
         )
         self._record_mathlib_native_lsp_summary(
             trace=trace,
@@ -2239,7 +3040,9 @@ class Prover:
             return 1
         text = lines[max(0, min(line - 1, len(lines) - 1))]
         match = re.search(r"[A-Za-z_][A-Za-z0-9_'.]*", text)
-        return (match.start() + 1) if match is not None else max(1, len(text) - len(text.lstrip()) + 1)
+        return (
+            (match.start() + 1) if match is not None else max(1, len(text) - len(text.lstrip()) + 1)
+        )
 
     def _mathlib_native_search_query(
         self,
@@ -2304,7 +3107,11 @@ class Prover:
     ) -> list[tuple[str, str, str | None]]:
         candidates: list[tuple[str, str, str | None]] = []
         theorem_names = self._extract_search_item_names(search_results)
-        candidates.extend(self._mathlib_native_heuristic_candidates(current_code=current_code, theorem_names=theorem_names))
+        candidates.extend(
+            self._mathlib_native_heuristic_candidates(
+                current_code=current_code, theorem_names=theorem_names
+            )
+        )
         for tactic in self._extract_code_action_tactics(code_actions):
             candidates.append((tactic, "lean_code_actions", None))
         for name in theorem_names:
@@ -2396,7 +3203,10 @@ class Prover:
                         "exists_isConstrainedMaximum_of_isCompact_continuousOn",
                     )
                 )
-            if "IsCompact.exists_isMaxOn" not in names and "IsCompact.exists_sSup_image_eq_and_ge" not in names:
+            if (
+                "IsCompact.exists_isMaxOn" not in names
+                and "IsCompact.exists_sSup_image_eq_and_ge" not in names
+            ):
                 return candidates
             candidates.append(
                 (
@@ -2433,12 +3243,31 @@ class Prover:
         monotone = self._monotone_convergence_context(current_code)
         if monotone is not None and "tendsto_of_monotone" in names:
             hmono, hbdd = monotone
-            candidates.append(("exact (tendsto_of_monotone " + hmono + ").resolve_left " + hbdd, "lean_leansearch", "tendsto_of_monotone"))
-            candidates.append(("rcases tendsto_of_monotone " + hmono + " with htop | hconv\n· exfalso\n  exact " + hbdd + ".not_tendsto_atTop htop\n· exact hconv", "lean_leansearch", "tendsto_of_monotone"))
+            candidates.append(
+                (
+                    "exact (tendsto_of_monotone " + hmono + ").resolve_left " + hbdd,
+                    "lean_leansearch",
+                    "tendsto_of_monotone",
+                )
+            )
+            candidates.append(
+                (
+                    "rcases tendsto_of_monotone "
+                    + hmono
+                    + " with htop | hconv\n· exfalso\n  exact "
+                    + hbdd
+                    + ".not_tendsto_atTop htop\n· exact hconv",
+                    "lean_leansearch",
+                    "tendsto_of_monotone",
+                )
+            )
         return candidates
 
     def _is_contraction_context(self, code: str) -> tuple[str, str] | None:
-        named = re.search(r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*IsContraction\s+[A-Za-z_][A-Za-z0-9_']*\s*\)", code)
+        named = re.search(
+            r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*IsContraction\s+[A-Za-z_][A-Za-z0-9_']*\s*\)",
+            code,
+        )
         if named is not None:
             return named.group(1), ""
         if re.search(r"IsContraction\s+[A-Za-z_][A-Za-z0-9_']*\s*→", code):
@@ -2455,22 +3284,40 @@ class Prover:
         return match.group(1), match.group(2)
 
     def _compact_extreme_value_context(self, code: str) -> tuple[str, str, str, str] | None:
-        compact = re.search(r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*IsCompact\s+([A-Za-z_][A-Za-z0-9_']*)\s*\)", code)
+        compact = re.search(
+            r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*IsCompact\s+([A-Za-z_][A-Za-z0-9_']*)\s*\)", code
+        )
         if compact is not None:
             set_name = compact.group(2)
-            nonempty = re.search(rf"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*{re.escape(set_name)}\.Nonempty\s*\)", code)
-            continuous = re.search(rf"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*ContinuousOn\s+[A-Za-z_][A-Za-z0-9_']*\s+{re.escape(set_name)}\s*\)", code)
+            nonempty = re.search(
+                rf"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*{re.escape(set_name)}\.Nonempty\s*\)", code
+            )
+            continuous = re.search(
+                rf"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*ContinuousOn\s+[A-Za-z_][A-Za-z0-9_']*\s+{re.escape(set_name)}\s*\)",
+                code,
+            )
             if nonempty is None or continuous is None:
                 return None
             return compact.group(1), nonempty.group(1), continuous.group(1), ""
-        if re.search(r"IsCompact\s+[A-Za-z_][A-Za-z0-9_']*\s*→", code) and re.search(
-            r"[A-Za-z_][A-Za-z0-9_']*\.Nonempty\s*→", code
-        ) and re.search(r"ContinuousOn\s+[A-Za-z_][A-Za-z0-9_']*\s+[A-Za-z_][A-Za-z0-9_']*\s*→", code):
-            return "hcompact", "hne", "hcontinuous", "intro α _ _ _ _ f feasible hcompact hne hcontinuous\n"
+        if (
+            re.search(r"IsCompact\s+[A-Za-z_][A-Za-z0-9_']*\s*→", code)
+            and re.search(r"[A-Za-z_][A-Za-z0-9_']*\.Nonempty\s*→", code)
+            and re.search(
+                r"ContinuousOn\s+[A-Za-z_][A-Za-z0-9_']*\s+[A-Za-z_][A-Za-z0-9_']*\s*→", code
+            )
+        ):
+            return (
+                "hcompact",
+                "hne",
+                "hcontinuous",
+                "intro α _ _ _ _ f feasible hcompact hne hcontinuous\n",
+            )
         return None
 
     def _monotone_convergence_context(self, code: str) -> tuple[str, str] | None:
-        monotone = re.search(r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*Monotone\s+([A-Za-z_][A-Za-z0-9_']*)\s*\)", code)
+        monotone = re.search(
+            r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*Monotone\s+([A-Za-z_][A-Za-z0-9_']*)\s*\)", code
+        )
         if monotone is None:
             return None
         seq_name = monotone.group(2)
@@ -2543,7 +3390,11 @@ class Prover:
             candidates.extend(
                 [
                     (f"exact {hypothesis}", "direct_hypothesis", f"Goal matches `{hypothesis}`."),
-                    (f"simpa using {hypothesis}", "direct_hypothesis", f"Normalize using `{hypothesis}`."),
+                    (
+                        f"simpa using {hypothesis}",
+                        "direct_hypothesis",
+                        f"Normalize using `{hypothesis}`.",
+                    ),
                 ]
             )
 
@@ -2563,10 +3414,18 @@ class Prover:
                         explicit_goal_arg_names,
                     ):
                         lemma_candidates.append(
-                            (f"exact {expression}", entry.name, f"Exact preamble lemma `{expression}` closes the goal.")
+                            (
+                                f"exact {expression}",
+                                entry.name,
+                                f"Exact preamble lemma `{expression}` closes the goal.",
+                            )
                         )
                         lemma_candidates.append(
-                            (f"simpa using {expression}", entry.name, f"Simplify using preamble lemma `{expression}`.")
+                            (
+                                f"simpa using {expression}",
+                                entry.name,
+                                f"Simplify using preamble lemma `{expression}`.",
+                            )
                         )
                         if rewrite_tokens:
                             lemma_candidates.append(
@@ -2648,7 +3507,11 @@ class Prover:
             include_fallback_tactics=include_fallback_tactics,
         )
         remaining_budget = attempt_budget.get("remaining") if attempt_budget is not None else None
-        attempt_cap = policy.attempt_cap if remaining_budget is None else min(policy.attempt_cap, max(remaining_budget, 0))
+        attempt_cap = (
+            policy.attempt_cap
+            if remaining_budget is None
+            else min(policy.attempt_cap, max(remaining_budget, 0))
+        )
         attempt_limit = min(len(candidates), attempt_cap)
         attempts_used = 0
         for index, (proof, source, rationale) in enumerate(candidates[:attempt_limit], start=1):
@@ -2739,7 +3602,9 @@ class Prover:
     ) -> None:
         claim_type = policy.claim_type if policy is not None else None
         claim_type_policy = policy.claim_type_policy if policy is not None else "default"
-        preamble_shortcuts_enabled = policy.preamble_shortcuts_enabled if policy is not None else True
+        preamble_shortcuts_enabled = (
+            policy.preamble_shortcuts_enabled if policy is not None else True
+        )
         mathlib_native_mode = claim_type == "mathlib_native"
         trace.append(
             ProverTraceStep(
@@ -2958,7 +3823,12 @@ class Prover:
         ):
             prefix_rank = 0 if proof.startswith(("exact ", "simpa ")) else 1
             intro_rank = 0 if any(name in proof for name in intro_names) else 1
-            hint_rank = 0 if "Metadata tactic hint" in rationale and proof.startswith(("exact ", "simpa ", "refine ")) else 1
+            hint_rank = (
+                0
+                if "Metadata tactic hint" in rationale
+                and proof.startswith(("exact ", "simpa ", "refine "))
+                else 1
+            )
             ranked.append(((prefix_rank, intro_rank, hint_rank, len(proof)), proof))
         tactics: list[str] = []
         for _score, proof in sorted(ranked, key=lambda item: item[0]):
@@ -2998,9 +3868,14 @@ class Prover:
                 tactic_hints=self._metadata_tactic_hints(packet),
             )
             scaffold_tactic = goal_shape.scaffold_tactic if goal_shape is not None else None
-            if scaffold_tactic is not None and (state_key, scaffold_tactic) not in scaffold_attempts:
+            if (
+                scaffold_tactic is not None
+                and (state_key, scaffold_tactic) not in scaffold_attempts
+            ):
                 scaffold_attempts.add((state_key, scaffold_tactic))
-                tool = ProverToolInvocation(name="apply_tactic", arguments={"tactic": scaffold_tactic})
+                tool = ProverToolInvocation(
+                    name="apply_tactic", arguments={"tactic": scaffold_tactic}
+                )
                 tool_result = self._execute_tool(
                     session=session,
                     tool=tool,
@@ -3021,7 +3896,9 @@ class Prover:
                         lean_feedback=lean_feedback,
                         goals=session.get_goals(),
                         code_snapshot=session.read_code(),
-                        error_code=self._tool_error_code("apply_tactic", tool_result.content) if tool_result.is_error else None,
+                        error_code=self._tool_error_code("apply_tactic", tool_result.content)
+                        if tool_result.is_error
+                        else None,
                     )
                 )
                 audit_events.append(
@@ -3031,20 +3908,30 @@ class Prover:
                         provider=backend.provider,
                         model=backend.model,
                         success=not tool_result.is_error,
-                        error_code=self._tool_error_code("apply_tactic", tool_result.content) if tool_result.is_error else None,
+                        error_code=self._tool_error_code("apply_tactic", tool_result.content)
+                        if tool_result.is_error
+                        else None,
                         error_message=tool_result.content if tool_result.is_error else None,
-                        metadata={"turn": turn, "target_name": target.name, "tactic": scaffold_tactic},
+                        metadata={
+                            "turn": turn,
+                            "target_name": target.name,
+                            "tactic": scaffold_tactic,
+                        },
                     )
                 )
                 if tool_result.is_error and "no_progress_stall:" in tool_result.content:
-                    return False, session.read_code(), ProverFailure(
-                        reason="no_progress_stall",
-                        message="Deterministic scaffolding did not change the active goal.",
-                        error_code="unsolved_goals",
-                        target_name=target.name,
-                        turn=turn,
-                        backend=backend.name,
-                        lean_feedback=session.get_goals(),
+                    return (
+                        False,
+                        session.read_code(),
+                        ProverFailure(
+                            reason="no_progress_stall",
+                            message="Deterministic scaffolding did not change the active goal.",
+                            error_code="unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=backend.name,
+                            lean_feedback=session.get_goals(),
+                        ),
                     )
                 return False, session.read_code(), None
 
@@ -3053,7 +3940,8 @@ class Prover:
             theorem_name=theorem_name,
         )
         can_retry_direct_recovery = structural_state not in exhausted_direct_closure_states and (
-            include_fallback_tactics or self._has_direct_candidates(packet=packet, current_code=session.read_code())
+            include_fallback_tactics
+            or self._has_direct_candidates(packet=packet, current_code=session.read_code())
         )
         if can_retry_direct_recovery:
             recovery, recovery_summary = self._try_repl_compile_recovery(
@@ -3120,7 +4008,9 @@ class Prover:
                         lean_feedback=lean_feedback,
                         goals=session.get_goals(),
                         code_snapshot=session.read_code(),
-                        error_code=self._tool_error_code("apply_tactic", tool_result.content) if tool_result.is_error else None,
+                        error_code=self._tool_error_code("apply_tactic", tool_result.content)
+                        if tool_result.is_error
+                        else None,
                         repl_local_solved=not tool_result.is_error and bool(session.solved),
                     )
                 )
@@ -3131,20 +4021,26 @@ class Prover:
                         provider=backend.provider,
                         model=backend.model,
                         success=not tool_result.is_error,
-                        error_code=self._tool_error_code("apply_tactic", tool_result.content) if tool_result.is_error else None,
+                        error_code=self._tool_error_code("apply_tactic", tool_result.content)
+                        if tool_result.is_error
+                        else None,
                         error_message=tool_result.content if tool_result.is_error else None,
                         metadata={"turn": turn, "target_name": target.name, "tactic": tactic},
                     )
                 )
                 if tool_result.is_error and "no_progress_stall:" in tool_result.content:
-                    return False, session.read_code(), ProverFailure(
-                        reason="no_progress_stall",
-                        message="Deterministic branch tactics stopped making progress on the active goal.",
-                        error_code="unsolved_goals",
-                        target_name=target.name,
-                        turn=turn,
-                        backend=backend.name,
-                        lean_feedback=session.get_goals(),
+                    return (
+                        False,
+                        session.read_code(),
+                        ProverFailure(
+                            reason="no_progress_stall",
+                            message="Deterministic branch tactics stopped making progress on the active goal.",
+                            error_code="unsolved_goals",
+                            target_name=target.name,
+                            turn=turn,
+                            backend=backend.name,
+                            lean_feedback=session.get_goals(),
+                        ),
                     )
                 if not tool_result.is_error:
                     return False, session.read_code(), None
@@ -3170,7 +4066,11 @@ class Prover:
         return hints
 
     def _target_theorem_name(self, packet: FormalizationPacket, target: ProverTarget) -> str:
-        return packet.theorem_name if target.kind == "theorem_body" else target.helper_theorem_name or target.name
+        return (
+            packet.theorem_name
+            if target.kind == "theorem_body"
+            else target.helper_theorem_name or target.name
+        )
 
     def _record_claim_type_awareness(
         self,
@@ -3241,6 +4141,33 @@ class Prover:
             )
         )
 
+    def _normalize_mathlib_progress_failure(self, failure: ProverFailure) -> ProverFailure:
+        if failure.reason != "no_progress_stall":
+            return failure
+        if not any(bool(delta.get("stall_detected")) for delta in self._progress_deltas):
+            goal_count = len(failure.lean_feedback)
+            self._progress_deltas.append(
+                ProgressDelta(
+                    goals_reduced=False,
+                    complexity_reduced=False,
+                    stall_detected=True,
+                    goal_count_before=goal_count,
+                    goal_count_after=goal_count,
+                    complexity_before=sum(len(goal) for goal in failure.lean_feedback),
+                    complexity_after=sum(len(goal) for goal in failure.lean_feedback),
+                ).to_dict()
+            )
+        return ProverFailure(
+            reason="progress_stall",
+            message=failure.message,
+            error_code=failure.error_code,
+            target_name=failure.target_name,
+            turn=failure.turn,
+            backend=failure.backend,
+            lean_feedback=list(failure.lean_feedback),
+            repeated_action=failure.repeated_action,
+        )
+
     def _direct_close_stall_failure(
         self,
         *,
@@ -3277,9 +4204,7 @@ class Prover:
         limit: int = SHALLOW_LOOP_WINDOW,
     ) -> list[ProverTraceStep]:
         return [
-            step
-            for step in trace
-            if step.target_name == target.name and step.tool_name is not None
+            step for step in trace if step.target_name == target.name and step.tool_name is not None
         ][-limit:]
 
     def _detect_shallow_loop_pattern(
@@ -3296,9 +4221,7 @@ class Prover:
         if names == ["apply_tactic", "get_goals", "apply_tactic", "get_goals"]:
             if all(step.success for step in recent):
                 goal_signatures = {
-                    tuple(step.goals)
-                    for step in recent
-                    if step.tool_name == "get_goals"
+                    tuple(step.goals) for step in recent if step.tool_name == "get_goals"
                 }
                 tactics = [
                     str(step.tool_arguments.get("tactic") or "")
@@ -3308,7 +4231,12 @@ class Prover:
                 if len(goal_signatures) == 1 and len(set(tactics)) == 1:
                     return "repeated `apply_tactic` -> `get_goals` cycle without changing the active goal"
 
-        if names == ["write_current_code", "compile_current_code", "write_current_code", "compile_current_code"]:
+        if names == [
+            "write_current_code",
+            "compile_current_code",
+            "write_current_code",
+            "compile_current_code",
+        ]:
             compile_steps = [step for step in recent if step.tool_name == "compile_current_code"]
             if len(compile_steps) == 2 and all(not step.success for step in compile_steps):
                 compile_failures = {step.tool_result for step in compile_steps}
@@ -3355,7 +4283,9 @@ class Prover:
     ) -> dict[str, Any] | None:
         shortcut, _summary = self._try_direct_definable_closure(
             packet=packet,
-            target=ProverTarget(name="theorem_body", statement=packet.theorem_name, kind="theorem_body"),
+            target=ProverTarget(
+                name="theorem_body", statement=packet.theorem_name, kind="theorem_body"
+            ),
             current_code=current_code,
             timeout=timeout,
             include_fallback_tactics=True,
@@ -3383,7 +4313,9 @@ class Prover:
             apollo_lemma=overrides.apollo_lemma or timeout,
         )
 
-    def _timeout_for_target(self, target: ProverTarget, target_timeouts: ProverTargetTimeouts) -> int:
+    def _timeout_for_target(
+        self, target: ProverTarget, target_timeouts: ProverTargetTimeouts
+    ) -> int:
         value = getattr(target_timeouts, target.kind)
         assert value is not None
         return int(value)
@@ -3428,7 +4360,10 @@ class Prover:
             tool_name = step.tool_name or ""
             if tool_name in LSP_TOOL_NAMES or step.action_type == "mathlib_native_lsp_search":
                 step.lsp_tool_call = True
-            if tool_name in NATIVE_SEARCH_TOOL_NAMES or step.action_type == "mathlib_native_lsp_search":
+            if (
+                tool_name in NATIVE_SEARCH_TOOL_NAMES
+                or step.action_type == "mathlib_native_lsp_search"
+            ):
                 step.native_search_attempt = True
 
     def _aggregate_stage_usage(self, provider_usage: list[TokenUsage]) -> TokenUsage | None:
@@ -3445,7 +4380,9 @@ class Prover:
             latency_ms=sum(usage.latency_ms or 0.0 for usage in provider_usage),
             success=all(usage.success for usage in provider_usage),
             usage_source=latest.usage_source,
-            error_code=next((usage.error_code for usage in reversed(provider_usage) if usage.error_code), None),
+            error_code=next(
+                (usage.error_code for usage in reversed(provider_usage) if usage.error_code), None
+            ),
         )
 
     def _audit_summary(self, audit_events: list[AuditEvent]) -> dict[str, Any]:
@@ -3513,15 +4450,23 @@ class Prover:
         if tool.name == "write_current_code":
             code = str(tool.arguments.get("code", ""))
             if session.read_code().strip() == code.strip():
-                return ToolResult(call.id, "no_progress_stall: write_current_code did not change the proof.", is_error=True)
+                return ToolResult(
+                    call.id,
+                    "no_progress_stall: write_current_code did not change the proof.",
+                    is_error=True,
+                )
             session.write_code(code)
             return ToolResult(call.id, "Updated the current proof code.")
         if tool.name == "lean_run_code":
-            result = session.run_code(str(tool.arguments.get("code")) if "code" in tool.arguments else None)
+            result = session.run_code(
+                str(tool.arguments.get("code")) if "code" in tool.arguments else None
+            )
             return ToolResult(call.id, json.dumps(result, ensure_ascii=True))
         if tool.name == "compile_current_code":
             result = session.compile_current_code()
-            return ToolResult(call.id, json.dumps(result, ensure_ascii=True), is_error=not result["success"])
+            return ToolResult(
+                call.id, json.dumps(result, ensure_ascii=True), is_error=not result["success"]
+            )
         if tool.name == "get_goals":
             goals = session.get_goals()
             return ToolResult(call.id, "\n".join(goals) if goals else "All goals solved.")
@@ -3530,7 +4475,10 @@ class Prover:
             before_goals = session.get_goals()
             success, message = session.apply_tactic(str(tool.arguments.get("tactic", "")))
             if success and not session.solved:
-                if before_code.strip() == session.read_code().strip() and before_goals == session.get_goals():
+                if (
+                    before_code.strip() == session.read_code().strip()
+                    and before_goals == session.get_goals()
+                ):
                     return ToolResult(
                         call.id,
                         f"no_progress_stall: `{tool.arguments.get('tactic', '')}` did not change code or goals.",
@@ -3540,14 +4488,26 @@ class Prover:
         if tool.name == "memory_retrieve":
             payload = self._memory_examples(packet)
             return ToolResult(call.id, json.dumps(payload, ensure_ascii=True))
-        if tool.name in {"lean_goal", "lean_code_actions", "lean_hover_info", "lean_diagnostic_messages"}:
+        if tool.name in {
+            "lean_goal",
+            "lean_code_actions",
+            "lean_hover_info",
+            "lean_diagnostic_messages",
+            "lean_file_outline",
+        }:
             if session.proof_path is None:
-                return ToolResult(call.id, "lsp_unavailable: no proof file is attached to the session.", is_error=True)
+                return ToolResult(
+                    call.id,
+                    "lsp_unavailable: no proof file is attached to the session.",
+                    is_error=True,
+                )
             line = int(tool.arguments.get("line", max(1, len(session.read_code().splitlines()))))
             column = int(tool.arguments.get("column", 1))
             try:
                 if tool.name == "lean_goal":
-                    payload = self.lsp_client.lean_goal(session.proof_path, line=line, column=column)
+                    payload = self.lsp_client.lean_goal(
+                        session.proof_path, line=line, column=column
+                    )
                 elif tool.name == "lean_code_actions":
                     payload = self.lsp_client.lean_code_actions(session.proof_path, line=line)
                 elif tool.name == "lean_diagnostic_messages":
@@ -3557,20 +4517,35 @@ class Prover:
                         start_line=tool.arguments.get("start_line"),
                         end_line=tool.arguments.get("end_line"),
                     )
+                elif tool.name == "lean_file_outline":
+                    payload = self.lsp_client.lean_file_outline(
+                        session.proof_path,
+                        max_declarations=tool.arguments.get("max_declarations"),
+                    )
                 else:
-                    payload = self.lsp_client.lean_hover_info(session.proof_path, line=line, column=column)
+                    payload = self.lsp_client.lean_hover_info(
+                        session.proof_path, line=line, column=column
+                    )
             except LeanLSPUnavailableError as exc:
                 return ToolResult(call.id, f"lsp_unavailable: {exc}", is_error=True)
             return ToolResult(call.id, json.dumps(payload, ensure_ascii=True))
-        if tool.name in {"lean_leansearch", "lean_loogle"}:
+        if tool.name in {"lean_leansearch", "lean_loogle", "lean_local_search"}:
             query = str(tool.arguments.get("query", "")).strip()
             if not query:
                 return ToolResult(call.id, "Missing query.", is_error=True)
-            num_results = int(tool.arguments.get("num_results", MATHLIB_NATIVE_LSP_SEARCH_RESULTS))
             try:
                 if tool.name == "lean_leansearch":
+                    num_results = int(
+                        tool.arguments.get("num_results", MATHLIB_NATIVE_LSP_SEARCH_RESULTS)
+                    )
                     payload = self.lsp_client.lean_leansearch(query, num_results=num_results)
+                elif tool.name == "lean_local_search":
+                    limit = int(tool.arguments.get("limit", MATHLIB_NATIVE_LSP_SEARCH_RESULTS))
+                    payload = self.lsp_client.lean_local_search(query, limit=limit)
                 else:
+                    num_results = int(
+                        tool.arguments.get("num_results", MATHLIB_NATIVE_LSP_SEARCH_RESULTS)
+                    )
                     payload = self.lsp_client.lean_loogle(query, num_results=num_results)
             except LeanLSPUnavailableError as exc:
                 return ToolResult(call.id, f"lsp_unavailable: {exc}", is_error=True)

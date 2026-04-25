@@ -145,6 +145,9 @@ EMBEDDING_MODEL = os.getenv("LEANECON_EMBEDDING_MODEL", "sentence-transformers/a
 FORMALIZER_BACKEND = os.getenv("LEANECON_FORMALIZER_BACKEND", "leanstral")
 FORMALIZER_MODEL = os.getenv("LEANECON_FORMALIZER_MODEL", "labs-leanstral-2603")
 PROVER_BACKEND = os.getenv("LEANECON_PROVER_BACKEND", "leanstral").strip() or "leanstral"
+PROVER_FALLBACK_BACKEND = (
+    os.getenv("LEANECON_PROVER_FALLBACK_BACKEND", "leanstral").strip() or "leanstral"
+)
 PROVER_MODEL = os.getenv("LEANECON_PROVER_MODEL", "hf:Goedel-LM/Goedel-Prover-V2-32B")
 PROVER_PROVIDER = os.getenv("LEANECON_PROVER_PROVIDER", "auto").strip() or "auto"
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip()

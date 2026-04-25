@@ -1,0 +1,140 @@
+Lake version 5.0.0-src+3dc1a08 (Lean version 4.30.0-rc2)
+Current branch: HEAD
+Using cache (Azure) from origin: leanprover-community/mathlib4
+No files to download
+Already decompressed 8010 file(s)
+Build completed successfully (1800 jobs).
+
+[tier2_frontier_mathlib_native] starting
++-----------+--------------------------+
+| Field     | Value                    |
++-----------+--------------------------+
+| Mode      | benchmark                |
+| Claims    | 3                        |
+| Sampling  | focused_sample (seed=21) |
+| Readiness | ready                    |
++-----------+--------------------------+
+[claim  1/3 ] tier2_frontier_mathlib_native t2_contraction_mapping_fixed_point bucket=mathlib-native
+[heartbeat  1/3 ] tier2_frontier_mathlib_native t2_contraction_mapping_fixed_point stage=prover elapsed=30.0s claim_type = mathlib_native; mathlib_native_m...
+[heartbeat  1/3 ] tier2_frontier_mathlib_native t2_contraction_mapping_fixed_point stage=prover elapsed=60.0s claim_type = mathlib_native; mathlib_native_m...
+[heartbeat  1/3 ] tier2_frontier_mathlib_native t2_contraction_mapping_fixed_point stage=prover elapsed=90.0s Closed via mathlib-native LSP-assisted search.
+[####--------]  1/3  verified t2_contraction_mapping_fixe...   91.8s full_pipeline
+[claim  2/3 ] tier2_frontier_mathlib_native t2_extreme_value_repair bucket=mathlib-native
+[heartbeat  2/3 ] tier2_frontier_mathlib_native t2_extreme_value_repair stage=prover elapsed=30.0s claim_type = mathlib_native; mathlib_native_m...
+[heartbeat  2/3 ] tier2_frontier_mathlib_native t2_extreme_value_repair stage=prover elapsed=60.0s LSP tool `lean_leansearch` executed.
+[heartbeat  2/3 ] tier2_frontier_mathlib_native t2_extreme_value_repair stage=prover elapsed=90.0s Tool `write_current_code` executed.
+[########----]  2/3  failed   t2_extreme_value_repair          97.5s unsolved_goals
+[claim  3/3 ] tier2_frontier_mathlib_native t2_monotone_sequence_converges bucket=mathlib-native
+[heartbeat  3/3 ] tier2_frontier_mathlib_native t2_monotone_sequence_converges stage=prover elapsed=30.0s claim_type = mathlib_native; mathlib_native_m...
+[heartbeat  3/3 ] tier2_frontier_mathlib_native t2_monotone_sequence_converges stage=prover elapsed=60.0s Tool `apply_tactic` executed.
+[heartbeat  3/3 ] tier2_frontier_mathlib_native t2_monotone_sequence_converges stage=prover elapsed=90.0s Tool `apply_tactic` executed.
+[############]  3/3  failed   t2_monotone_sequence_converges   90.2s compile_failed
+
+[tier2_frontier_preamble_definable] starting
++-----------+--------------------------+
+| Field     | Value                    |
++-----------+--------------------------+
+| Mode      | benchmark                |
+| Claims    | 9                        |
+| Sampling  | focused_sample (seed=21) |
+| Readiness | ready                    |
++-----------+--------------------------+
+[claim  1/9 ] tier2_frontier_preamble_definable t2_pareto_dominance_transitive bucket=preamble-definable
+[heartbeat  1/9 ] tier2_frontier_preamble_definable t2_pareto_dominance_transitive stage=prover elapsed=30.0s Closed via direct definable closure.
+[#-----------]  1/9  verified t2_pareto_dominance_transitive   30.8s full_pipeline
+[claim  2/9 ] tier2_frontier_preamble_definable t2_utilitarian_swf_pareto_monotone bucket=preamble-definable
+[heartbeat  2/9 ] tier2_frontier_preamble_definable t2_utilitarian_swf_pareto_monotone stage=prover elapsed=30.0s Direct closure attempt 3/17.
+[heartbeat  2/9 ] tier2_frontier_preamble_definable t2_utilitarian_swf_pareto_monotone stage=prover elapsed=60.0s Direct closure attempt 3/17.
+[###---------]  2/9  verified t2_utilitarian_swf_pareto_m...   86.7s full_pipeline
+[claim  3/9 ] tier2_frontier_preamble_definable t2_bellman_monotone_value_function bucket=preamble-definable
+[heartbeat  3/9 ] tier2_frontier_preamble_definable t2_bellman_monotone_value_function stage=prover elapsed=30.0s Direct closure attempt 3/17.
+[####--------]  3/9  verified t2_bellman_monotone_value_f...   50.3s full_pipeline
+[claim  4/9 ] tier2_frontier_preamble_definable t2_expected_payoff_convex_mixture bucket=preamble-definable
+[heartbeat  4/9 ] tier2_frontier_preamble_definable t2_expected_payoff_convex_mixture stage=prover elapsed=30.0s Direct closure attempt 2/10.
+[#####-------]  4/9  verified t2_expected_payoff_convex_m...   39.5s full_pipeline
+[claim  5/9 ] tier2_frontier_preamble_definable t2_ces_crs bucket=preamble-definable
+[heartbeat  5/9 ] tier2_frontier_preamble_definable t2_ces_crs stage=prover elapsed=30.0s Direct closure attempt 3/18.
+[heartbeat  5/9 ] tier2_frontier_preamble_definable t2_ces_crs stage=prover elapsed=60.0s Direct closure attempt 9/18.
+[heartbeat  5/9 ] tier2_frontier_preamble_definable t2_ces_crs stage=prover elapsed=90.0s Direct closure attempt 15/18.
+[heartbeat  5/9 ] tier2_frontier_preamble_definable t2_ces_crs stage=prover elapsed=120.0s Direct closure attempt 18/18.
+[heartbeat  5/9 ] tier2_frontier_preamble_definable t2_ces_crs stage=prover elapsed=150.0s Direct closure attempt 18/18.
+[heartbeat  5/9 ] tier2_frontier_preamble_definable t2_ces_crs stage=prover elapsed=180.0s Direct closure attempt 18/18.
+[heartbeat  5/9 ] tier2_frontier_preamble_definable t2_ces_crs stage=prover elapsed=210.0s Direct closure attempt 18/18.
+[heartbeat  5/9 ] tier2_frontier_preamble_definable t2_ces_crs stage=prover elapsed=240.2s Tool `get_goals` executed.
+[#######-----]  5/9  failed   t2_ces_crs                      245.0s unsolved_goals
+[claim  6/9 ] tier2_frontier_preamble_definable t2_stone_geary_monotone_alpha bucket=preamble-definable
+[heartbeat  6/9 ] tier2_frontier_preamble_definable t2_stone_geary_monotone_alpha stage=prover elapsed=30.0s Direct closure attempt 1/10.
+[########----]  6/9  verified t2_stone_geary_monotone_alpha    45.4s full_pipeline
+[claim  7/9 ] tier2_frontier_preamble_definable t2_bellman_contraction bucket=preamble-definable
+[heartbeat  7/9 ] tier2_frontier_preamble_definable t2_bellman_contraction stage=prover elapsed=30.0s Direct closure attempt 3/17.
+[heartbeat  7/9 ] tier2_frontier_preamble_definable t2_bellman_contraction stage=prover elapsed=60.0s Direct closure attempt 9/17.
+[heartbeat  7/9 ] tier2_frontier_preamble_definable t2_bellman_contraction stage=prover elapsed=90.0s Direct closure attempt 15/17.
+[heartbeat  7/9 ] tier2_frontier_preamble_definable t2_bellman_contraction stage=prover elapsed=120.0s Tool `lean_hover_info` executed.
+[#########---]  7/9  failed   t2_bellman_contraction          124.3s unsolved_goals
+[claim  8/9 ] tier2_frontier_preamble_definable t2_phillips_curve_stagflation bucket=preamble-definable
+[heartbeat  8/9 ] tier2_frontier_preamble_definable t2_phillips_curve_stagflation stage=prover elapsed=30.0s Direct closure attempt 4/14.
+[heartbeat  8/9 ] tier2_frontier_preamble_definable t2_phillips_curve_stagflation stage=prover elapsed=60.0s Direct closure attempt 4/14.
+[###########-]  8/9  verified t2_phillips_curve_stagflation    77.5s full_pipeline
+[claim  9/9 ] tier2_frontier_preamble_definable t2_indirect_utility_roys_identity bucket=preamble-definable
+[heartbeat  9/9 ] tier2_frontier_preamble_definable t2_indirect_utility_roys_identity stage=prover elapsed=30.0s Direct closure attempt 4/11.
+[heartbeat  9/9 ] tier2_frontier_preamble_definable t2_indirect_utility_roys_identity stage=prover elapsed=60.0s Direct closure attempt 10/11.
+[############]  9/9  failed   t2_indirect_utility_roys_id...   87.6s unsolved_goals
+
+[tier2_frontier_mathlib_native] summary
++-------------------+-----------------------------------------------------------------------------------------------------------------------------------------+
+| Metric            | Value                                                                                                                                   |
++-------------------+-----------------------------------------------------------------------------------------------------------------------------------------+
+| Pass@1            | 33.3% (1/3)                                                                                                                             |
+| Failures          | 2                                                                                                                                       |
+| Avg total latency | 93.1s                                                                                                                                   |
+| Total cost        | $0.0018                                                                                                                                 |
+| Output            | /Users/bonorinoa/Desktop/Github_Repositories/leanecon_v3/benchmark_baselines/v3_alpha/benchmark_mode/tier2_frontier_mathlib_native.json |
++-------------------+-----------------------------------------------------------------------------------------------------------------------------------------+
++------------+-------------+
+| Stage      | Avg latency |
++------------+-------------+
+| planner    | 6.6s        |
+| formalizer | 9.6s        |
+| prover     | 76.9s       |
+| total      | 93.1s       |
++------------+-------------+
++----------------+-------+
+| Failure code   | Count |
++----------------+-------+
+| compile_failed | 1     |
+| unsolved_goals | 1     |
++----------------+-------+
+
+[tier2_frontier_preamble_definable] summary
++-------------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| Metric            | Value                                                                                                                                       |
++-------------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| Pass@1            | 66.7% (6/9)                                                                                                                                 |
+| Failures          | 3                                                                                                                                           |
+| Avg total latency | 87.5s                                                                                                                                       |
+| Total cost        | $0.0059                                                                                                                                     |
+| Output            | /Users/bonorinoa/Desktop/Github_Repositories/leanecon_v3/benchmark_baselines/v3_alpha/benchmark_mode/tier2_frontier_preamble_definable.json |
++-------------------+---------------------------------------------------------------------------------------------------------------------------------------------+
++------------+-------------+
+| Stage      | Avg latency |
++------------+-------------+
+| planner    | 5.4s        |
+| formalizer | 9.7s        |
+| prover     | 72.4s       |
+| total      | 87.5s       |
++------------+-------------+
++----------------+-------+
+| Failure code   | Count |
++----------------+-------+
+| unsolved_goals | 3     |
++----------------+-------+
+
+[local_gate] combined
++-----------------------------------+--------------+
+| Claim set                         | Pass@1       |
++-----------------------------------+--------------+
+| tier2_frontier_mathlib_native     | 33.3% (1/3)  |
+| tier2_frontier_preamble_definable | 66.7% (6/9)  |
+| local_gate                        | 58.3% (7/12) |
++-----------------------------------+--------------+
+Output: /Users/bonorinoa/Desktop/Github_Repositories/leanecon_v3/benchmark_baselines/v3_alpha/benchmark_mode/local_gate.json

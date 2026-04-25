@@ -181,8 +181,12 @@ def finalize_verification_result(
     payload["repair_count"] = repair_count if repair_count is not None else 0
     payload["outcome"] = outcome or verification_outcome(
         str(payload.get("status") or ""),
-        payload.get("termination_reason") if isinstance(payload.get("termination_reason"), str) else None,
-        result_status=str(payload.get("status") or "") if payload.get("status") is not None else None,
+        payload.get("termination_reason")
+        if isinstance(payload.get("termination_reason"), str)
+        else None,
+        result_status=str(payload.get("status") or "")
+        if payload.get("status") is not None
+        else None,
     )
     payload["input_tokens"] = None
     payload["output_tokens"] = None
@@ -223,60 +227,3 @@ def repl_validation_result(repl_report: dict[str, Any]) -> dict[str, Any]:
         "exit_code": 0 if success else 1,
         "source": "repl_start_proof",
     }
-
-
-async def generate_proof_sketch(
-    driver: ProverDriver,
-    theorem_with_sorry: str,
-    on_progress: Callable[[str, dict[str, Any]], None] | None = None,
-    usage_acc: list[ProviderUsage] | None = None,
-) -> str | None:
-    def reject_tool_call(tool_call: ToolCall) -> ToolResult:
-        return ToolResult(
-            tool_call.id,
-            "Proof sketch generation does not use tools.",
-            is_error=True,
-        )
-
-    sketch_chunks: list[str] = []
-    try:
-        async for event in driver.prove(
-            system_prompt=PROOF_SKETCH_SYSTEM_PROMPT,
-            user_prompt=build_proof_sketch_user_prompt(theorem_with_sorry),
-            tools=[],
-            on_tool_call=reject_tool_call,
-            max_steps=1,
-        ):
-            if event.type == "assistant":
-                content = event.data.get("content") if isinstance(event.data, dict) else None
-                if isinstance(content, str) and content.strip():
-                    sketch_chunks.append(content.strip())
-                continue
-            if event.type == "usage":
-                append_usage_event(usage_acc, event.data if isinstance(event.data, dict) else None)
-                continue
-            if event.type == "done":
-                content = event.data.get("content") if isinstance(event.data, dict) else None
-                if isinstance(content, str) and content.strip():
-                    sketch_chunks.append(content.strip())
-                break
-            if event.type == "error":
-                if on_progress is not None:
-                    on_progress("proof_sketch_fallback", {"reason": str(event.data)})
-                return None
-            if event.type == "tool_call":
-                if on_progress is not None:
-                    on_progress(
-                        "proof_sketch_fallback",
-                        {"reason": "Proof sketch generation attempted an unexpected tool call."},
-                    )
-                return None
-    except Exception as exc:
-        if on_progress is not None:
-            on_progress("proof_sketch_fallback", {"reason": f"{type(exc).__name__}: {exc}"})
-        return None
-
-    sketch = "\n".join(chunk for chunk in sketch_chunks if chunk).strip()
-    if sketch and on_progress is not None:
-        on_progress("proof_sketch", {"sketch": sketch})
-    return sketch or None

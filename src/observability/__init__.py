@@ -3,8 +3,24 @@
 from .errors import StageExecutionError, classify_exception
 from .lean_lsp_client import LeanLSPClient, LeanLSPUnavailableError, default_lean_lsp_client
 from .logging import log_event
-from .models import AuditEvent, ProviderCallMetadata, StageRunResult, StageTiming, TokenUsage
-from .pricing import complete_usage, dump_pricing_registry, estimate_tokens_from_text, lookup_pricing, stable_hash_text
+from .models import (
+    AuditEvent,
+    ProgressDelta,
+    ProviderCallMetadata,
+    RetrievalEvent,
+    StageRunResult,
+    StageTiming,
+    StateTransition,
+    TokenUsage,
+    ToolUsageTrace,
+)
+from .pricing import (
+    complete_usage,
+    dump_pricing_registry,
+    estimate_tokens_from_text,
+    lookup_pricing,
+    stable_hash_text,
+)
 from .progress import build_progress_event
 from .sse import encode_sse
 from .telemetry import (
@@ -24,12 +40,16 @@ __all__ = [
     "AuditEvent",
     "LeanLSPClient",
     "LeanLSPUnavailableError",
+    "ProgressDelta",
     "ProviderCallMetadata",
+    "RetrievalEvent",
     "SpanRecorder",
     "StageExecutionError",
     "StageRunResult",
     "StageTiming",
+    "StateTransition",
     "TokenUsage",
+    "ToolUsageTrace",
     "attach_telemetry",
     "classify_exception",
     "complete_usage",

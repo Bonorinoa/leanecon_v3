@@ -30,7 +30,9 @@ class ProverAction(ProverModel):
 
     @field_validator("tool")
     @classmethod
-    def _validate_tool(cls, value: ProverToolInvocation | None, info: Any) -> ProverToolInvocation | None:
+    def _validate_tool(
+        cls, value: ProverToolInvocation | None, info: Any
+    ) -> ProverToolInvocation | None:
         if info.data.get("action_type") == "tool" and value is None:
             raise ValueError("Tool actions must include a tool invocation.")
         return value
@@ -108,3 +110,7 @@ class ProverResult(ProverModel):
     timing_breakdown: dict[str, Any] = Field(default_factory=dict)
     target_timeouts: ProverTargetTimeouts = Field(default_factory=ProverTargetTimeouts)
     audit_summary: dict[str, Any] = Field(default_factory=dict)
+    retrieval_events: list[dict[str, Any]] = Field(default_factory=list)
+    tool_usage_traces: list[dict[str, Any]] = Field(default_factory=list)
+    state_transitions: list[dict[str, Any]] = Field(default_factory=list)
+    progress_deltas: list[dict[str, Any]] = Field(default_factory=list)

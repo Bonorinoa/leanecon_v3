@@ -52,4 +52,3 @@ class ProverMemoryWriter:
         )
         self.trace_store.record(trace)
         return trace
-

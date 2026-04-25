@@ -12,4 +12,3 @@ logger = logging.getLogger("leanecon.observability")
 def log_event(event: str, **payload: Any) -> None:
     message = {"event": event, **payload}
     logger.info(json.dumps(message, sort_keys=True, default=str))
-

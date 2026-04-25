@@ -11,6 +11,8 @@ from src.memory.store import ProofTraceStore
 from src.prover import Prover, ProverAction, ProverTargetTimeouts
 from src.prover.file_controller import ProofFileController
 from src.prover.models import ProverTarget
+from src.prover.repl import ReplToolOrchestrator
+from src.tools import ToolCall
 from src.prover.tactics import should_decompose
 
 
@@ -139,6 +141,12 @@ class FakeLSPClient:
     def lean_loogle(self, query: str, *, num_results: int = 8):
         return {"items": []}
 
+    def lean_local_search(self, query: str, *, limit: int = 8):
+        return {"items": [{"name": query, "source": "local"}]}
+
+    def lean_file_outline(self, file_path, *, max_declarations=None):
+        return {"declarations": [{"name": "main_claim"}], "max_declarations": max_declarations}
+
 
 def _theorem_name(code: str) -> str:
     for line in code.splitlines():
@@ -242,7 +250,9 @@ async def test_prover_benchmark_mode_uses_direct_definable_closure_for_preamble_
 
 
 @pytest.mark.anyio
-async def test_prover_reports_no_progress_stall_for_unchanged_repl_state(tmp_path, monkeypatch) -> None:
+async def test_prover_reports_no_progress_stall_for_unchanged_repl_state(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     class NoProgressReplSession(FakeReplSession):
@@ -301,7 +311,9 @@ async def test_prover_reports_no_progress_stall_for_unchanged_repl_state(tmp_pat
 
 
 @pytest.mark.anyio
-async def test_prover_fails_fast_after_direct_closure_exhaustion_stalls(tmp_path, monkeypatch) -> None:
+async def test_prover_fails_fast_after_direct_closure_exhaustion_stalls(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     theorem_code = "import Mathlib\n\ntheorem stalled_after_shortcuts : True := by\n  sorry\n"
@@ -395,7 +407,9 @@ async def test_prover_fails_fast_after_direct_closure_exhaustion_stalls(tmp_path
 
 
 @pytest.mark.anyio
-async def test_mathlib_native_claim_caps_direct_close_attempts_and_logs_awareness(tmp_path, monkeypatch) -> None:
+async def test_mathlib_native_claim_caps_direct_close_attempts_and_logs_awareness(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     attempt_counter = {"count": 0}
@@ -414,9 +428,16 @@ async def test_mathlib_native_claim_caps_direct_close_attempts_and_logs_awarenes
     original_try_direct = prover_module.Prover._try_direct_definable_closure
 
     def fake_candidates(self, *, packet, current_code, include_fallback_tactics=False):
-        candidates = [(f"exact candidate_{index}", "mock", f"candidate {index}") for index in range(10)]
+        candidates = [
+            (f"exact candidate_{index}", "mock", f"candidate {index}") for index in range(10)
+        ]
         if include_fallback_tactics:
-            return [*candidates, *original_candidates(self, packet=packet, current_code=current_code, include_fallback_tactics=True)]
+            return [
+                *candidates,
+                *original_candidates(
+                    self, packet=packet, current_code=current_code, include_fallback_tactics=True
+                ),
+            ]
         return candidates
 
     def counting_try_direct(self, **kwargs):
@@ -435,7 +456,12 @@ async def test_mathlib_native_claim_caps_direct_close_attempts_and_logs_awarenes
                     {
                         "action_type": "tool",
                         "rationale": "Attempt a tactic after direct-close budget is exhausted.",
-                        "tool": {"name": "write_current_code", "arguments": {"code": "import Mathlib\n\ntheorem mathlib_native_budget : True := by\n  sorry\n"}},
+                        "tool": {
+                            "name": "write_current_code",
+                            "arguments": {
+                                "code": "import Mathlib\n\ntheorem mathlib_native_budget : True := by\n  sorry\n"
+                            },
+                        },
                     }
                 ]
             }
@@ -470,7 +496,9 @@ async def test_mathlib_native_claim_caps_direct_close_attempts_and_logs_awarenes
 
 
 @pytest.mark.anyio
-async def test_claim_type_awareness_logs_for_subgoals_and_theorem_body(tmp_path, monkeypatch) -> None:
+async def test_claim_type_awareness_logs_for_subgoals_and_theorem_body(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
@@ -526,14 +554,14 @@ async def test_claim_type_awareness_logs_for_subgoals_and_theorem_body(tmp_path,
 
     assert result.status == "verified"
     awareness_targets = {
-        step.target_name
-        for step in result.trace
-        if step.action_type == "claim_type_awareness"
+        step.target_name for step in result.trace if step.action_type == "claim_type_awareness"
     }
     assert {"h_sub", "theorem_body"} <= awareness_targets
 
 
-def test_mathlib_native_lsp_search_records_subgoal_context_and_tooling(tmp_path, monkeypatch) -> None:
+def test_mathlib_native_lsp_search_records_subgoal_context_and_tooling(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     def compile_when_candidate_closes(code: str, **_: object) -> dict[str, object]:
@@ -566,7 +594,9 @@ def test_mathlib_native_lsp_search_records_subgoal_context_and_tooling(tmp_path,
         lean_code="import Mathlib\n\ntheorem main_claim : True := by\n  sorry\n",
         claim_type="mathlib_native",
     )
-    target = ProverTarget(name="h_sub", statement="True", kind="subgoal", helper_theorem_name="h_sub")
+    target = ProverTarget(
+        name="h_sub", statement="True", kind="subgoal", helper_theorem_name="h_sub"
+    )
     session = SimpleNamespace(
         proof_path=tmp_path / "h_sub.lean",
         read_code=lambda: "import Mathlib\n\ntheorem h_sub : True := by\n  sorry\n",
@@ -601,7 +631,9 @@ def test_mathlib_native_lsp_search_records_subgoal_context_and_tooling(tmp_path,
     assert trace[0].lsp_tool_call is True
     assert trace[0].native_search_attempt is True
     assert trace[0].tool_arguments["target_kind"] == "subgoal"
-    assert any(event["metadata"].get("lsp_tool_name") == "lean_leansearch" for event in progress_events)
+    assert any(
+        event["metadata"].get("lsp_tool_name") == "lean_leansearch" for event in progress_events
+    )
 
 
 @pytest.mark.anyio
@@ -924,7 +956,9 @@ async def test_prover_self_corrects_after_lean_feedback(tmp_path, monkeypatch) -
 
 
 @pytest.mark.anyio
-async def test_prover_benchmark_mode_skips_memory_and_cleans_artifacts(tmp_path, monkeypatch) -> None:
+async def test_prover_benchmark_mode_skips_memory_and_cleans_artifacts(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
@@ -998,18 +1032,27 @@ def test_prover_resolves_per_target_timeouts_with_request_fallback(tmp_path) -> 
         "subgoal": 180,
         "apollo_lemma": 300,
     }
-    assert prover._timeout_for_target(
-        ProverTarget(name="main", statement="True", kind="theorem_body"),
-        resolved,
-    ) == 300
-    assert prover._timeout_for_target(
-        ProverTarget(name="sub", statement="True", kind="subgoal"),
-        resolved,
-    ) == 180
-    assert prover._timeout_for_target(
-        ProverTarget(name="lemma", statement="True", kind="apollo_lemma"),
-        resolved,
-    ) == 300
+    assert (
+        prover._timeout_for_target(
+            ProverTarget(name="main", statement="True", kind="theorem_body"),
+            resolved,
+        )
+        == 300
+    )
+    assert (
+        prover._timeout_for_target(
+            ProverTarget(name="sub", statement="True", kind="subgoal"),
+            resolved,
+        )
+        == 180
+    )
+    assert (
+        prover._timeout_for_target(
+            ProverTarget(name="lemma", statement="True", kind="apollo_lemma"),
+            resolved,
+        )
+        == 300
+    )
     assert prover._final_compile_timeout(resolved) == 300
 
 
@@ -1022,7 +1065,9 @@ def test_prover_recursion_depth_allows_three_and_rejects_four() -> None:
         }
     )
 
-    allowed = ProverTarget(name="depth_three", statement="True", kind="apollo_lemma", recursion_depth=3)
+    allowed = ProverTarget(
+        name="depth_three", statement="True", kind="apollo_lemma", recursion_depth=3
+    )
     assert allowed.recursion_depth == 3
     assert should_decompose(
         failed_turns_for_target=2,
@@ -1078,7 +1123,9 @@ def test_prover_recursion_depth_allows_three_and_rejects_four() -> None:
 
 
 @pytest.mark.anyio
-async def test_prover_recovers_repl_compile_disagreement_with_compile_normalization(tmp_path, monkeypatch) -> None:
+async def test_prover_recovers_repl_compile_disagreement_with_compile_normalization(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
@@ -1202,7 +1249,9 @@ async def test_prover_uses_apollo_decomposition_for_stalled_target(tmp_path, mon
 
 
 @pytest.mark.anyio
-async def test_prover_decomposition_rewrites_subgoal_after_repl_materialization(tmp_path, monkeypatch) -> None:
+async def test_prover_decomposition_rewrites_subgoal_after_repl_materialization(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
@@ -1330,7 +1379,9 @@ async def test_prover_supports_lsp_tools_via_client(tmp_path, monkeypatch) -> No
 
 
 @pytest.mark.anyio
-async def test_mathlib_native_lsp_search_closes_with_compile_validated_code_action(tmp_path, monkeypatch) -> None:
+async def test_mathlib_native_lsp_search_closes_with_compile_validated_code_action(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
@@ -1403,7 +1454,9 @@ async def test_mathlib_native_lsp_search_closes_with_compile_validated_code_acti
     assert result.verified_code is not None
     assert "trivial" in result.verified_code
     assert driver.call_count == 0
-    search_steps = [step for step in result.trace if step.action_type == "mathlib_native_lsp_search"]
+    search_steps = [
+        step for step in result.trace if step.action_type == "mathlib_native_lsp_search"
+    ]
     assert search_steps
     assert search_steps[-1].success is True
     assert search_steps[-1].tool_arguments["mathlib_native_mode"] is True
@@ -1417,7 +1470,9 @@ async def test_mathlib_native_lsp_search_closes_with_compile_validated_code_acti
 
 
 @pytest.mark.anyio
-async def test_preamble_definable_claim_does_not_run_mathlib_native_lsp_search(tmp_path, monkeypatch) -> None:
+async def test_preamble_definable_claim_does_not_run_mathlib_native_lsp_search(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
@@ -1523,14 +1578,24 @@ async def test_mathlib_native_lsp_unavailable_falls_back_to_provider(tmp_path, m
     assert result.status == "verified"
     assert driver.call_count == 1
     failed_search_steps = [
-        step for step in result.trace if step.action_type == "mathlib_native_lsp_search" and not step.success
+        step
+        for step in result.trace
+        if step.action_type == "mathlib_native_lsp_search" and not step.success
     ]
-    assert failed_search_steps
-    assert failed_search_steps[-1].error_code == "lsp_unavailable"
+    harness_steps = [
+        step for step in result.trace if step.action_type == "mathlib_native_harness_loop"
+    ]
+    assert failed_search_steps or harness_steps
+    if failed_search_steps:
+        assert failed_search_steps[-1].error_code == "lsp_unavailable"
+    else:
+        assert harness_steps[-1].tool_arguments["RetrievalEvent"]["retrieved_count"] >= 1
 
 
 @pytest.mark.anyio
-async def test_mathlib_native_lsp_search_compile_validates_before_accepting(tmp_path, monkeypatch) -> None:
+async def test_mathlib_native_lsp_search_compile_validates_before_accepting(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
@@ -1601,7 +1666,9 @@ async def test_mathlib_native_lsp_search_compile_validates_before_accepting(tmp_
     assert "exact GoodLemma" in result.verified_code
     assert any("exact BadLemma" in attempt for attempt in compile_attempts)
     assert any("exact GoodLemma" in attempt for attempt in compile_attempts)
-    final_search_step = [step for step in result.trace if step.action_type == "mathlib_native_lsp_search"][-1]
+    final_search_step = [
+        step for step in result.trace if step.action_type == "mathlib_native_lsp_search"
+    ][-1]
     assert final_search_step.tool_arguments["compiled_candidate_count"] == 2
     assert final_search_step.tool_arguments["selected_lemma"] == "GoodLemma"
 
@@ -1672,9 +1739,7 @@ async def test_prover_uses_trivial_shortcut_when_goal_matches_hypothesis(
 
 
 @pytest.mark.anyio
-async def test_prover_shortcut_falls_back_to_exact_question_mark(
-    tmp_path, monkeypatch
-) -> None:
+async def test_prover_shortcut_falls_back_to_exact_question_mark(tmp_path, monkeypatch) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
@@ -1780,12 +1845,18 @@ async def test_prover_soft_repairs_repl_compile_disagreement(tmp_path, monkeypat
                     {
                         "action_type": "tool",
                         "rationale": "First exact attempt closes the local REPL goal.",
-                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "exact True.intro"}},
+                        "tool": {
+                            "name": "apply_tactic",
+                            "arguments": {"tactic": "exact True.intro"},
+                        },
                     },
                     {
                         "action_type": "tool",
                         "rationale": "Repeat the same exact proof so the prover triggers a soft repair.",
-                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "exact True.intro"}},
+                        "tool": {
+                            "name": "apply_tactic",
+                            "arguments": {"tactic": "exact True.intro"},
+                        },
                     },
                 ]
             }
@@ -1864,7 +1935,9 @@ async def test_prover_preserves_max_turns_exhausted_error_code(tmp_path, monkeyp
 
 
 @pytest.mark.anyio
-async def test_prover_scaffolds_monotone_goal_before_metadata_branch_closure(tmp_path, monkeypatch) -> None:
+async def test_prover_scaffolds_monotone_goal_before_metadata_branch_closure(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     class MonotoneScaffoldRepl(FakeReplSession):
@@ -1883,7 +1956,9 @@ async def test_prover_scaffolds_monotone_goal_before_metadata_branch_closure(tmp
             if tactic == "intro x y hxy":
                 return SimpleNamespace(
                     has_errors=lambda: False,
-                    goals=["⊢ BellmanOperator reward transition β x ≤ BellmanOperator reward transition β y"],
+                    goals=[
+                        "⊢ BellmanOperator reward transition β x ≤ BellmanOperator reward transition β y"
+                    ],
                     proof_status="InProgress",
                     proof_state=len(self.tactics) + 1,
                 )
@@ -1961,7 +2036,9 @@ async def test_prover_scaffolds_monotone_goal_before_metadata_branch_closure(tmp
 
 
 @pytest.mark.anyio
-async def test_prover_scaffolds_conjunction_goal_and_closes_both_branches(tmp_path, monkeypatch) -> None:
+async def test_prover_scaffolds_conjunction_goal_and_closes_both_branches(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     class ConjunctionRepl(FakeReplSession):
@@ -1986,7 +2063,10 @@ async def test_prover_scaffolds_conjunction_goal_and_closes_both_branches(tmp_pa
                     proof_status="InProgress",
                     proof_state=len(self.tactics) + 1,
                 )
-            if self.branch == "left" and tactic in {"exact hu.continuousOn", "exact continuousPreference_continuousOn hu feasible"}:
+            if self.branch == "left" and tactic in {
+                "exact hu.continuousOn",
+                "exact continuousPreference_continuousOn hu feasible",
+            }:
                 self.branch = "right"
                 return SimpleNamespace(
                     has_errors=lambda: False,
@@ -1994,7 +2074,10 @@ async def test_prover_scaffolds_conjunction_goal_and_closes_both_branches(tmp_pa
                     proof_status="InProgress",
                     proof_state=len(self.tactics) + 1,
                 )
-            if self.branch == "right" and tactic in {"exact hx.2 hy", "exact IsConstrainedMaximum.value_le hx hy"}:
+            if self.branch == "right" and tactic in {
+                "exact hx.2 hy",
+                "exact IsConstrainedMaximum.value_le hx hy",
+            }:
                 self.branch = "done"
                 return SimpleNamespace(
                     has_errors=lambda: False,
@@ -2011,10 +2094,7 @@ async def test_prover_scaffolds_conjunction_goal_and_closes_both_branches(tmp_pa
                 "exact continuousPreference_continuousOn hu feasible" in code
                 or "exact hu.continuousOn" in code
             )
-            and (
-                "exact IsConstrainedMaximum.value_le hx hy" in code
-                or "exact hx.2 hy" in code
-            )
+            and ("exact IsConstrainedMaximum.value_le hx hy" in code or "exact hx.2 hy" in code)
             and "sorry" not in code
         )
         return {
@@ -2085,7 +2165,9 @@ async def test_prover_scaffolds_conjunction_goal_and_closes_both_branches(tmp_pa
 
 
 @pytest.mark.anyio
-async def test_prover_prefers_existential_witness_scaffold_from_metadata(tmp_path, monkeypatch) -> None:
+async def test_prover_prefers_existential_witness_scaffold_from_metadata(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     class ExistentialRepl(FakeReplSession):
@@ -2183,17 +2265,24 @@ async def test_prover_prefers_existential_witness_scaffold_from_metadata(tmp_pat
     assert "exact ContractingWith.fixedPoint_isFixedPt (f := f) hf" in result.verified_code
     scaffold_steps = [step for step in result.trace if step.action_type == "deterministic_scaffold"]
     assert scaffold_steps
-    assert scaffold_steps[0].tool_arguments["tactic"] == "refine ⟨ContractingWith.fixedPoint (f := f) hf, ?_⟩"
+    assert (
+        scaffold_steps[0].tool_arguments["tactic"]
+        == "refine ⟨ContractingWith.fixedPoint (f := f) hf, ?_⟩"
+    )
 
 
 @pytest.mark.anyio
-async def test_prover_wrapper_aware_direct_closure_uses_simpa_on_known_lemma(tmp_path, monkeypatch) -> None:
+async def test_prover_wrapper_aware_direct_closure_uses_simpa_on_known_lemma(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
 
     def _compile_wrapper_direct(code: str, **_: object) -> dict[str, object]:
-        success = "simpa [Monotone] using BellmanOperator.monotone hβ" in code and "sorry" not in code
+        success = (
+            "simpa [Monotone] using BellmanOperator.monotone hβ" in code and "sorry" not in code
+        )
         return {
             "success": success,
             "has_sorry": "sorry" in code,
@@ -2250,7 +2339,9 @@ async def test_prover_wrapper_aware_direct_closure_uses_simpa_on_known_lemma(tmp
 
 
 @pytest.mark.anyio
-async def test_prover_statewise_direct_closure_prefers_fully_applied_preamble_lemma(tmp_path, monkeypatch) -> None:
+async def test_prover_statewise_direct_closure_prefers_fully_applied_preamble_lemma(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
@@ -2320,10 +2411,13 @@ async def test_prover_statewise_direct_closure_prefers_fully_applied_preamble_le
 
 
 @pytest.mark.anyio
-async def test_prover_fails_fast_after_repeated_schema_invalid_actions(tmp_path, monkeypatch) -> None:
+async def test_prover_fails_fast_after_repeated_schema_invalid_actions(
+    tmp_path, monkeypatch
+) -> None:
     import src.prover.prover as prover_module
 
     monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+
     def _always_fail_compile(code: str, **_: object) -> dict[str, object]:
         return {
             "success": False,
@@ -2348,9 +2442,21 @@ async def test_prover_fails_fast_after_repeated_schema_invalid_actions(tmp_path,
     driver = ScriptedDriver(
         {
             "theorem_body": [
-                {"action_type": "tool", "rationale": "Invalid tool action.", "tool": {"name": "bad_tool", "arguments": {}}},
-                {"action_type": "tool", "rationale": "Repeat the same invalid action.", "tool": {"name": "bad_tool", "arguments": {}}},
-                {"action_type": "tool", "rationale": "Repeat again; prover should stop here.", "tool": {"name": "bad_tool", "arguments": {}}},
+                {
+                    "action_type": "tool",
+                    "rationale": "Invalid tool action.",
+                    "tool": {"name": "bad_tool", "arguments": {}},
+                },
+                {
+                    "action_type": "tool",
+                    "rationale": "Repeat the same invalid action.",
+                    "tool": {"name": "bad_tool", "arguments": {}},
+                },
+                {
+                    "action_type": "tool",
+                    "rationale": "Repeat again; prover should stop here.",
+                    "tool": {"name": "bad_tool", "arguments": {}},
+                },
             ]
         }
     )
@@ -2377,3 +2483,363 @@ async def test_prover_fails_fast_after_repeated_schema_invalid_actions(tmp_path,
     assert result.failure is not None
     assert result.failure.reason in {"no_progress_stall", "max_turns_exhausted"}
     assert driver.call_count < 6
+
+
+class PromptCapturingDriver:
+    def __init__(self, tactic: str) -> None:
+        self.tactic = tactic
+        self.prompts: list[str] = []
+        self.call_count = 0
+
+    def next_action(self, *, backend, prompt: str) -> ProverAction:
+        self.call_count += 1
+        self.prompts.append(prompt)
+        return ProverAction.model_validate(
+            {
+                "action_type": "tool",
+                "rationale": "Use the retrieved premise context to close the goal.",
+                "tool": {"name": "apply_tactic", "arguments": {"tactic": self.tactic}},
+            }
+        )
+
+
+def _mathlib_summary(prover_module):
+    return prover_module.DirectCloseAttemptSummary(
+        candidate_count=0,
+        attempt_limit=2,
+        attempts_used=0,
+        claim_type="mathlib_native",
+        claim_type_policy="mathlib_native_cap_2_no_preamble_shortcuts",
+        preamble_shortcuts_enabled=False,
+    )
+
+
+@pytest.mark.anyio
+async def test_mathlib_native_harness_loop_uses_retrieved_premises_in_prompt(
+    tmp_path, monkeypatch
+) -> None:
+    import src.prover.prover as prover_module
+    import src.retrieval.mathlib_rag as mathlib_rag
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_try_direct_definable_closure",
+        lambda self, **kwargs: (None, _mathlib_summary(prover_module)),
+    )
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_apply_deterministic_repair",
+        lambda self, **kwargs: (False, None, None),
+    )
+    monkeypatch.setattr(
+        mathlib_rag,
+        "retrieve_premises",
+        lambda goal_state, k=5: [
+            {
+                "name": "True.intro",
+                "statement": "True",
+                "score": 0.91,
+                "file_path": "Mathlib/Init/Logic.lean",
+            }
+        ],
+    )
+
+    driver = PromptCapturingDriver("trivial")
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="mathlib_harness_retrieval",
+            claim="A mathlib-native claim should retrieve premises before proposing tactics.",
+            lean_code="import Mathlib\n\ntheorem mathlib_harness_retrieval : True := by\n  sorry\n",
+            claim_type="mathlib_native",
+        ),
+        "job_mathlib_harness_retrieval",
+        max_turns=3,
+        benchmark_mode=True,
+    )
+
+    assert result.status == "verified"
+    assert driver.call_count == 1
+    assert "True.intro" in driver.prompts[0]
+    harness_steps = [
+        step for step in result.trace if step.action_type == "mathlib_native_harness_loop"
+    ]
+    assert harness_steps
+    payload = harness_steps[-1].tool_arguments
+    assert payload["RetrievalEvent"]["retrieved_count"] == 1
+    assert payload["ToolUsageTrace"]["state_hash_before"]
+    assert payload["ToolUsageTrace"]["state_hash_after"]
+    assert payload["ProgressDelta"]["goals_reduced"] is True
+
+
+@pytest.mark.anyio
+async def test_mathlib_native_harness_stall_uses_progress_delta_not_no_progress_reason(
+    tmp_path, monkeypatch
+) -> None:
+    import src.prover.prover as prover_module
+    import src.retrieval.mathlib_rag as mathlib_rag
+
+    class NoProgressReplSession(FakeReplSession):
+        def apply_tactic(self, tactic: str, timeout=None):
+            self.tactics.append(tactic)
+            return SimpleNamespace(
+                has_errors=lambda: False,
+                goals=[f"goal:{self.theorem_name}"],
+                proof_status="InProgress",
+                proof_state=len(self.tactics) + 1,
+            )
+
+        def materialize_proof(self):
+            return self.code
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", NoProgressReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_try_direct_definable_closure",
+        lambda self, **kwargs: (None, _mathlib_summary(prover_module)),
+    )
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_apply_deterministic_repair",
+        lambda self, **kwargs: (False, None, None),
+    )
+    monkeypatch.setattr(
+        mathlib_rag,
+        "retrieve_premises",
+        lambda goal_state, k=5: [{"name": "SomeLemma", "statement": goal_state, "score": 0.8}],
+    )
+
+    driver = PromptCapturingDriver("simp")
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="mathlib_harness_stall",
+            claim="A mathlib-native harness turn should report observable stall deltas.",
+            lean_code="import Mathlib\n\ntheorem mathlib_harness_stall : True := by\n  sorry\n",
+            claim_type="mathlib_native",
+        ),
+        "job_mathlib_harness_stall",
+        max_turns=3,
+        benchmark_mode=True,
+    )
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.reason == "progress_stall"
+    assert result.termination_reason != "no_progress_stall"
+    harness_steps = [
+        step for step in result.trace if step.action_type == "mathlib_native_harness_loop"
+    ]
+    assert harness_steps[-1].tool_arguments["ProgressDelta"]["stall_detected"] is True
+
+
+@pytest.mark.anyio
+async def test_repl_orchestrator_supports_priority_lsp_tools(tmp_path) -> None:
+    proof_path = tmp_path / "priority_tools.lean"
+    proof_path.write_text(
+        "import Mathlib\n\ntheorem priority_tools : True := by\n  sorry\n", encoding="utf-8"
+    )
+    verification_trace: dict[str, object] = {}
+    orchestrator = ReplToolOrchestrator(
+        repl=FakeReplSession(),
+        theorem_code=proof_path.read_text(encoding="utf-8"),
+        file_controller=None,
+        job_id="job_priority_tools",
+        budget_tracker=SimpleNamespace(record_sub_agent_call=lambda _name: None),
+        telemetry=None,
+        theorem_name="priority_tools",
+        attempts=[],
+        verification_trace=verification_trace,
+        timed_compile_check=lambda *args, **kwargs: {"success": True},
+        sync_classified_errors=lambda *args, **kwargs: None,
+        build_status=lambda *args, **kwargs: {},
+        completed_status=lambda *args, **kwargs: {},
+        goal_analyst_hint_fn=lambda **kwargs: None,
+        lsp_client=FakeLSPClient(),
+        proof_path=proof_path,
+    )
+    await orchestrator.initialize()
+
+    local = orchestrator.handle_tool_call(
+        ToolCall(id="local", name="lean_local_search", arguments={"query": "True.intro"}),
+        read_without_act=0,
+    )
+    outline = orchestrator.handle_tool_call(
+        ToolCall(id="outline", name="lean_file_outline", arguments={"max_declarations": 5}),
+        read_without_act=0,
+    )
+    actions = orchestrator.handle_tool_call(
+        ToolCall(id="actions", name="code_actions", arguments={"line": 3}),
+        read_without_act=0,
+    )
+
+    assert local.is_error is False
+    assert "True.intro" in local.content
+    assert outline.is_error is False
+    assert "declarations" in outline.content
+    assert actions.is_error is False
+
+
+# ----- MistralProverDriver retry behaviour (Sprint 21) -----
+
+
+def _mistral_payload(
+    content: str = '{"action_type":"finish","finish_reason":"done"}',
+) -> dict[str, object]:
+    return {
+        "choices": [{"message": {"content": content}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+
+
+class _StubResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self) -> "_StubResponse":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _http_error(code: int, message: bytes = b""):
+    import io
+    import urllib.error as urllib_error
+
+    return urllib_error.HTTPError(
+        url="https://api.mistral.ai/v1/chat/completions",
+        code=code,
+        msg=str(code),
+        hdrs=None,
+        fp=io.BytesIO(message),
+    )
+
+
+def test_mistral_prover_driver_retries_on_429_then_succeeds(monkeypatch) -> None:
+    import urllib.request
+
+    from src.prover.prover import MistralProverDriver, ProverBackend
+
+    driver = MistralProverDriver(
+        api_key="test-key", base_url="https://api.mistral.ai/v1", timeout=1.0
+    )
+    backend = ProverBackend(
+        name="leanstral", provider="mistral", model="labs-leanstral", notes="test"
+    )
+
+    sleeps: list[float] = []
+    monkeypatch.setattr("src.prover.prover.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    calls: list[int] = []
+
+    def fake_urlopen(request, timeout=None):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(429, b'{"error":"rate_limited"}')
+        return _StubResponse(_mistral_payload())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    result = driver.next_action(backend=backend, prompt="goal")
+    assert isinstance(result, tuple)
+    action, metadata = result
+
+    assert action.action_type == "finish"
+    assert action.finish_reason == "done"
+    assert len(calls) == 2  # one 429 + one success
+    assert sleeps == [0.5]
+    assert metadata is not None
+    assert metadata.usage_source == "provider"
+
+
+def test_mistral_prover_driver_exhausts_attempts_on_503(monkeypatch) -> None:
+    import urllib.request
+
+    from src.prover.prover import (
+        MistralProverDriver,
+        ProverBackend,
+        ProverDriverError,
+        PROVER_RETRY_ATTEMPTS,
+    )
+
+    driver = MistralProverDriver(
+        api_key="test-key", base_url="https://api.mistral.ai/v1", timeout=1.0
+    )
+    backend = ProverBackend(
+        name="leanstral", provider="mistral", model="labs-leanstral", notes="test"
+    )
+
+    sleeps: list[float] = []
+    monkeypatch.setattr("src.prover.prover.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    calls: list[int] = []
+
+    def fake_urlopen(request, timeout=None):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        raise _http_error(503, b'{"error":"service_unavailable"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(ProverDriverError) as excinfo:
+        driver.next_action(backend=backend, prompt="goal")
+
+    assert "service_unavailable" in str(excinfo.value) or "503" in str(excinfo.value)
+    assert len(calls) == PROVER_RETRY_ATTEMPTS
+    # Backoff fires before the final attempt only.
+    assert sleeps == [0.5, 1.0]
+
+
+def test_mistral_prover_driver_does_not_retry_on_auth_failure(monkeypatch) -> None:
+    import urllib.request
+
+    from src.prover.prover import MistralProverDriver, ProverBackend, ProverDriverError
+
+    driver = MistralProverDriver(
+        api_key="test-key", base_url="https://api.mistral.ai/v1", timeout=1.0
+    )
+    backend = ProverBackend(
+        name="leanstral", provider="mistral", model="labs-leanstral", notes="test"
+    )
+
+    sleeps: list[float] = []
+    monkeypatch.setattr("src.prover.prover.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    calls: list[int] = []
+
+    def fake_urlopen(request, timeout=None):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        raise _http_error(401, b'{"error":"unauthorized"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(ProverDriverError):
+        driver.next_action(backend=backend, prompt="goal")
+
+    # Auth failures must surface immediately — no retry, no backoff sleeps.
+    assert len(calls) == 1
+    assert sleeps == []

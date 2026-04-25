@@ -12,12 +12,14 @@ LSP_TOOL_NAMES = frozenset(
         "lean_code_actions",
         "lean_hover_info",
         "lean_diagnostic_messages",
+        "lean_local_search",
+        "lean_file_outline",
         "lean_leansearch",
         "lean_loogle",
     }
 )
 
-NATIVE_SEARCH_TOOL_NAMES = frozenset({"lean_leansearch", "lean_loogle"})
+NATIVE_SEARCH_TOOL_NAMES = frozenset({"lean_leansearch", "lean_loogle", "lean_local_search"})
 
 
 @dataclass
@@ -38,7 +40,7 @@ class BudgetTracker:
     def record(self, tool_name: str) -> None:
         self.total_tool_calls += 1
         self.tool_history.append(tool_name)
-        if tool_name in {"search", "lean_leansearch", "lean_loogle"}:
+        if tool_name in {"search", "lean_leansearch", "lean_loogle", "lean_local_search"}:
             self.search_tool_calls += 1
         if tool_name in LSP_TOOL_NAMES:
             self.lsp_tool_calls += 1

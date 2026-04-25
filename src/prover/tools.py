@@ -11,6 +11,7 @@ from src.tools import ToolCall, ToolResult
 try:  # pragma: no cover - optional runtime dependency
     from lean_interact.interface import LeanError
 except ModuleNotFoundError:  # pragma: no cover
+
     class LeanError(Exception):
         message: str = ""
 
@@ -112,9 +113,7 @@ class REPLToolDispatcher:
                 content = "\n".join(error_messages) if error_messages else response.message
             else:
                 content = (
-                    "\n".join(error_messages)
-                    if error_messages
-                    else f"Tactic failed: {tactic}"
+                    "\n".join(error_messages) if error_messages else f"Tactic failed: {tactic}"
                 )
             return ToolResult(call_id, content, is_error=True)
 
@@ -129,7 +128,9 @@ class REPLToolDispatcher:
         return ToolResult(call_id, _format_goals(list(response.goals)))
 
     def _write_current_code(self, tool_call: ToolCall) -> ToolResult:
-        new_code = str(tool_call.arguments.get("theorem_code") or tool_call.arguments.get("code") or "").strip()
+        new_code = str(
+            tool_call.arguments.get("theorem_code") or tool_call.arguments.get("code") or ""
+        ).strip()
         if not new_code:
             return ToolResult(tool_call.id, "Missing theorem_code.", is_error=True)
 
