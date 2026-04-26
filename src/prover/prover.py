@@ -765,6 +765,9 @@ class Prover:
         self._tool_usage_traces: list[dict[str, Any]] = []
         self._state_transitions: list[dict[str, Any]] = []
         self._progress_deltas: list[dict[str, Any]] = []
+        # Sprint 23: caches for LeanSearch hover enrichment (per-prove invocation).
+        self._outline_cache: dict[str, list[dict[str, Any]]] = {}
+        self._hover_cache: dict[tuple[str, int, int], str] = {}
 
     def _selected_preamble_entries(self, packet: FormalizationPacket) -> list[Any]:
         from src.preamble_library import PREAMBLE_LIBRARY
@@ -835,6 +838,8 @@ class Prover:
         max_recursion_depth = BENCHMARK_MAX_RECURSION_DEPTH if benchmark_mode else 3
         self._extracted_lemmas = 0
         self._reset_budget_tracker()
+        # Sprint 23 Task 3: bump budgets for mathlib_native claims (preamble untouched).
+        self._apply_budget_limits_for_packet(packet)
         self._retrieval_events = []
         self._tool_usage_traces = []
         self._state_transitions = []
@@ -2345,6 +2350,57 @@ class Prover:
             ls_event.retrieved_premises,
             k=8,
         )
+        # Sprint 23 Task 3: stall-recovery — if last turn made no progress and
+        # we still have search budget, do a refined leansearch keyed on the
+        # current unsolved subgoal text and merge those premises in.
+        prev_delta = self._last_progress_delta_obj()
+        if self._should_do_second_retrieval(
+            turn=turn - 1,
+            last_delta=prev_delta,
+            budget_remaining_frac=self._budget_remaining_frac(),
+        ):
+            refined_query = self._refined_leansearch_query(before_state)
+            if refined_query and refined_query != ls_query:
+                ls2_event = self._retrieve_lean_search_premises(
+                    refined_query, k=5, retrieval_pass=2
+                )
+                ls2_payload = ls2_event.to_dict()
+                self._retrieval_events.append(ls2_payload)
+                self._emit_progress(
+                    on_progress,
+                    "retrieval_event",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message="Refined LeanSearch (second pass) after stalled turn.",
+                    metadata={
+                        "turn": turn,
+                        "target_name": target.name,
+                        "claim_type": "mathlib_native",
+                        "mathlib_native_mode": True,
+                        "RetrievalEvent": ls2_payload,
+                    },
+                )
+                audit_events.append(
+                    AuditEvent(
+                        stage="prover",
+                        event_type="RetrievalEvent",
+                        provider=backend.provider,
+                        model=backend.model,
+                        success=True,
+                        metadata={
+                            "turn": turn,
+                            "target_name": target.name,
+                            "retrieval_pass": 2,
+                            **ls2_payload,
+                        },
+                    )
+                )
+                merged_premises = self._merge_retrieval_premises(
+                    merged_premises,
+                    ls2_event.retrieved_premises,
+                    k=10,
+                )
         if not merged_premises:
             if _contains_lsp_unavailable(
                 before_state.get("diagnostics")
@@ -2685,10 +2741,18 @@ class Prover:
             k=k,
         )
 
-    def _retrieve_lean_search_premises(self, query: str, *, k: int) -> RetrievalEvent:
+    def _retrieve_lean_search_premises(
+        self, query: str, *, k: int, retrieval_pass: int = 1
+    ) -> RetrievalEvent:
         started_at = time.perf_counter()
         if not self.budget_tracker.can_search():
-            return RetrievalEvent(source="lean_leansearch", query=query, latency_ms=0.0, k=k)
+            return RetrievalEvent(
+                source="lean_leansearch",
+                query=query,
+                latency_ms=0.0,
+                k=k,
+                retrieval_pass=retrieval_pass,
+            )
         premises: list[dict[str, Any]] = []
         try:
             self.budget_tracker.record("lean_leansearch")
@@ -2712,6 +2776,8 @@ class Prover:
                 )
         except Exception:
             pass
+        # Sprint 23 Task 2: enrich each leansearch premise with outline+hover.
+        enriched_count = self._enrich_leansearch_premises(premises)
         scores = [float(p.get("score", 0.0)) for p in premises]
         return RetrievalEvent(
             retrieved_premises=premises,
@@ -2720,7 +2786,94 @@ class Prover:
             k=k,
             source="lean_leansearch",
             query=query,
+            enriched_count=enriched_count,
+            retrieval_pass=retrieval_pass,
         )
+
+    def _enrich_leansearch_premises(self, premises: list[dict[str, Any]]) -> int:
+        """Populate full_type_signature + detailed_docstring + declaration_location.
+
+        Mutates premises in place. Uses per-prove ``_outline_cache`` and
+        ``_hover_cache``. Returns the number of premises successfully enriched.
+        """
+        enriched = 0
+        for premise in premises:
+            module = premise.get("file_path")
+            name = premise.get("name")
+            if not module or not name:
+                continue
+            outline = self._cached_outline(module)
+            decl = self._find_outline_decl(outline, name)
+            if decl is None:
+                continue
+            line = self._coerce_int(decl.get("line"))
+            column = self._coerce_int(decl.get("column"), default=0)
+            if line is None:
+                continue
+            hover_text = self._cached_hover(module, line, column)
+            if not hover_text:
+                continue
+            premise["full_type_signature"] = hover_text
+            premise["detailed_docstring"] = hover_text
+            premise["declaration_location"] = f"{module}:{line}"
+            enriched += 1
+        return enriched
+
+    def _cached_outline(self, module: str) -> list[dict[str, Any]]:
+        cached = self._outline_cache.get(module)
+        if cached is not None:
+            return cached
+        decls: list[dict[str, Any]] = []
+        try:
+            payload = self.lsp_client.lean_file_outline(module)
+            decls = list((payload or {}).get("declarations") or (payload or {}).get("items") or [])
+        except Exception:
+            decls = []
+        self._outline_cache[module] = decls
+        return decls
+
+    @staticmethod
+    def _find_outline_decl(
+        outline: list[dict[str, Any]], name: str
+    ) -> dict[str, Any] | None:
+        for decl in outline:
+            if str(decl.get("name") or "") == name:
+                return decl
+        # Fall back on suffix match (handles namespaced vs unqualified).
+        for decl in outline:
+            decl_name = str(decl.get("name") or "")
+            if decl_name and (name.endswith(decl_name) or decl_name.endswith(name)):
+                return decl
+        return None
+
+    def _cached_hover(self, module: str, line: int, column: int) -> str:
+        key = (module, int(line), int(column))
+        if key in self._hover_cache:
+            return self._hover_cache[key]
+        text = ""
+        try:
+            payload = self.lsp_client.lean_hover_info(
+                module, line=line, column=column
+            )
+            if isinstance(payload, dict):
+                contents = payload.get("contents") or payload.get("value")
+                if isinstance(contents, list):
+                    text = "\n".join(str(c) for c in contents if c)
+                elif contents is not None:
+                    text = str(contents)
+            elif isinstance(payload, str):
+                text = payload
+        except Exception:
+            text = ""
+        self._hover_cache[key] = text
+        return text
+
+    @staticmethod
+    def _coerce_int(value: Any, default: int | None = None) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _merge_retrieval_premises(
@@ -2761,6 +2914,22 @@ class Prover:
             }
             for step in prior_trace[-3:]
         ]
+        # Sprint 23 Task 2: prefer enriched hover signature over thin leansearch payload.
+        prompt_premises = [
+            self._project_premise_for_prompt(p) for p in (retrieved_premises or [])
+        ]
+        # Sprint 23 Task 3: decomposition hint for goals with nested quantifiers/conjuncts.
+        rules = [
+            "Return one apply_tactic action.",
+            "Prefer tactics that reference retrieved Mathlib premises.",
+            "Do not rewrite the theorem body in this harness loop.",
+        ]
+        if self._goals_need_decomposition_hint(state.get("goals")):
+            rules.append(
+                "If a goal contains nested quantifiers (∀/∃) or conjuncts (∧/↔), "
+                "consider intro/obtain/refine to introduce hypotheses or split the goal "
+                "before applying retrieved premises."
+            )
         return json.dumps(
             {
                 "claim": packet.claim,
@@ -2772,17 +2941,13 @@ class Prover:
                 "diagnostics": diagnostics,
                 "code_actions": code_actions,
                 "file_outline": state.get("file_outline"),
-                "retrieved_premises": retrieved_premises,
+                "retrieved_premises": prompt_premises,
                 "recent_trace": recent_steps,
                 "instructions": {
                     "return_json_only": True,
                     "only_allowed_tool": "apply_tactic",
                     "use_retrieved_premises": True,
-                    "rules": [
-                        "Return one apply_tactic action.",
-                        "Prefer tactics that reference retrieved Mathlib premises.",
-                        "Do not rewrite the theorem body in this harness loop.",
-                    ],
+                    "rules": rules,
                 },
                 "response_schema": {
                     "action_type": "tool",
@@ -2794,6 +2959,115 @@ class Prover:
             indent=2,
             default=str,
         )
+
+    @staticmethod
+    def _project_premise_for_prompt(premise: dict[str, Any]) -> dict[str, Any]:
+        """Prefer ``full_type_signature``/``detailed_docstring`` over thin leansearch fields."""
+        out = dict(premise)
+        full_sig = premise.get("full_type_signature")
+        if full_sig:
+            out["statement"] = full_sig
+        detailed_doc = premise.get("detailed_docstring")
+        if detailed_doc and not premise.get("docstring"):
+            out["docstring"] = detailed_doc
+        return out
+
+    @staticmethod
+    def _goals_need_decomposition_hint(goals: Any) -> bool:
+        if not goals:
+            return False
+        if isinstance(goals, str):
+            text = goals
+        else:
+            try:
+                text = "\n".join(str(g) for g in goals)
+            except TypeError:
+                text = str(goals)
+        return any(marker in text for marker in ("∀", "∃", "∧", "↔"))
+
+    @staticmethod
+    def _should_do_second_retrieval(
+        *,
+        turn: int,
+        last_delta: ProgressDelta | None,
+        budget_remaining_frac: float,
+    ) -> bool:
+        """Sprint 23 Task 3: stall-recovery heuristic for a second leansearch pass.
+
+        Fires when the first turn made no progress, the model has budget left,
+        and we haven't already done a second pass.
+        """
+        if last_delta is None:
+            return False
+        if turn != 1:
+            return False
+        if last_delta.goals_reduced:
+            return False
+        return budget_remaining_frac > 0.30
+
+    @staticmethod
+    def _refined_leansearch_query(state: dict[str, Any]) -> str | None:
+        """Build a refined leansearch query from the current unsolved subgoal text.
+
+        Returns the trimmed first goal from the state, or None if no goal text
+        is available.
+        """
+        goals = state.get("goals") or []
+        if not goals:
+            return None
+        first = goals[0] if isinstance(goals, list) else goals
+        text = str(first or "").strip()
+        if not text:
+            return None
+        # Trim to one logical line and cap length to keep the query effective.
+        first_line = text.splitlines()[0].strip()
+        if not first_line:
+            first_line = text
+        return first_line[:240]
+
+    def _last_progress_delta_obj(self) -> ProgressDelta | None:
+        """Return the most recent ProgressDelta as a typed object (None if empty)."""
+        if not self._progress_deltas:
+            return None
+        last = self._progress_deltas[-1]
+        try:
+            return ProgressDelta(
+                goals_reduced=bool(last.get("goals_reduced", False)),
+                complexity_reduced=bool(last.get("complexity_reduced", False)),
+                stall_detected=bool(last.get("stall_detected", False)),
+                goal_count_before=int(last.get("goal_count_before", 0)),
+                goal_count_after=int(last.get("goal_count_after", 0)),
+                complexity_before=int(last.get("complexity_before", 0)),
+                complexity_after=int(last.get("complexity_after", 0)),
+            )
+        except (TypeError, ValueError):
+            return None
+
+    def _budget_remaining_frac(self) -> float:
+        max_search = max(1, int(self.budget_tracker.max_search_tool_calls))
+        used = int(self.budget_tracker.search_tool_calls)
+        return max(0.0, 1.0 - used / max_search)
+
+    def _apply_budget_limits_for_packet(self, packet: FormalizationPacket) -> None:
+        """Sprint 23 Task 3: hybrid budget bump for mathlib_native claims only."""
+        from src.config import (
+            MAX_PROVE_STEPS,
+            MAX_PROVE_STEPS_HYBRID,
+            MAX_SEARCH_TOOL_CALLS,
+            MAX_SEARCH_TOOL_CALLS_HYBRID,
+            MAX_TOTAL_TOOL_CALLS,
+        )
+
+        # Restore defaults first so a prior mathlib_native call doesn't leak.
+        self.budget_tracker.max_search_tool_calls = MAX_SEARCH_TOOL_CALLS
+        self.budget_tracker.max_total_tool_calls = MAX_TOTAL_TOOL_CALLS
+        if self._normalized_claim_type(packet) == "mathlib_native":
+            self.budget_tracker.max_search_tool_calls = MAX_SEARCH_TOOL_CALLS_HYBRID
+            # Total is "search + everything else"; keep the existing total ceiling
+            # but allow the hybrid prove-step extension via the env-overridable
+            # constant for callers that consult it directly. (Steps are governed
+            # by max_turns, so the constant is informational for now.)
+            _ = MAX_PROVE_STEPS, MAX_PROVE_STEPS_HYBRID  # exported for tests/config inspection
 
     def _progress_delta_from_states(
         self,
@@ -4435,6 +4709,9 @@ class Prover:
         self.budget_tracker.sub_agent_calls = 0
         self.budget_tracker.tool_history.clear()
         self.budget_tracker.sub_agent_history.clear()
+        # Sprint 23: clear per-invocation enrichment caches
+        self._outline_cache.clear()
+        self._hover_cache.clear()
 
     def _enrich_trace_context(
         self,

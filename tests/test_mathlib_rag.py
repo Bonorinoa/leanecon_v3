@@ -22,10 +22,77 @@ def rag(tmp_path: Path) -> MathlibRAG:
 def test_seed_file_shape() -> None:
     assert DEFAULT_SEED_PATH.exists(), "seed JSONL missing"
     lines = [line for line in DEFAULT_SEED_PATH.read_text().splitlines() if line.strip()]
-    assert len(lines) >= 30, f"seed too small: {len(lines)} entries"
+    assert len(lines) >= 300, f"seed too small: {len(lines)} entries"
     sample = json.loads(lines[0])
     for key in ("name", "type_signature", "tags"):
         assert key in sample, f"seed missing key {key!r}"
+
+
+def _seed_names() -> set[str]:
+    return {
+        json.loads(line)["name"]
+        for line in DEFAULT_SEED_PATH.read_text().splitlines()
+        if line.strip()
+    }
+
+
+def test_seed_covers_extreme_value_domain() -> None:
+    """Sprint 23: extractor must seed the extreme value theorem family."""
+    names = _seed_names()
+    assert "IsCompact.exists_isMaxOn" in names, "missing core extreme value premise"
+    related = {
+        n
+        for n in names
+        if "exists_isMaxOn" in n or "exists_isMinOn" in n or "exists_isLeast" in n
+    }
+    assert len(related) >= 2, f"too few extreme value premises: {related}"
+
+
+def test_seed_covers_monotone_convergence_domain() -> None:
+    """Sprint 23: extractor must seed monotone-convergence-style premises."""
+    names = _seed_names()
+    monotone_convergence = {
+        n
+        for n in names
+        if "tendsto_atTop_of_monotone" in n
+        or ("Monotone" in n and "tendsto" in n.lower())
+        or "MonotoneConvergence" in n
+    }
+    assert (
+        "tendsto_atTop_of_monotone" in names or monotone_convergence
+    ), f"no monotone-convergence premise in seed: {monotone_convergence}"
+    bounded_or_monotone = {n for n in names if "Monotone" in n or "bounded" in n.lower()}
+    assert len(bounded_or_monotone) >= 2, (
+        f"too few bounded/monotone premises in seed: {bounded_or_monotone}"
+    )
+
+
+def test_retrieve_extreme_value_returns_relevant(rag: MathlibRAG) -> None:
+    """A Lean-syntax extreme-value goal should surface IsCompact.exists_isMaxOn in top-5.
+
+    The harness feeds the RAG actual Lean goal-state text, not natural language —
+    name-token Jaccard dominates the score, so the query must share decl-name
+    vocabulary with the target premise.
+    """
+    goal = "IsCompact s → ContinuousOn f s → ∃ x ∈ s, IsMaxOn f s x"
+    hits = rag.retrieve_premises(goal, k=5)
+    names = [p.name for p in hits]
+    assert "IsCompact.exists_isMaxOn" in names, (
+        f"extreme value premise not in top-5: {names}"
+    )
+
+
+def test_retrieve_monotone_convergence_returns_relevant(rag: MathlibRAG) -> None:
+    """A Lean-syntax monotone-convergence goal should surface ≥1 relevant tendsto/Monotone premise."""
+    goal = "Monotone f → Tendsto f atTop atTop ∨ ∃ l, Tendsto f atTop (𝓝 l)"
+    hits = rag.retrieve_premises(goal, k=5)
+    names = [p.name for p in hits]
+    relevant = [
+        n
+        for n in names
+        if "tendsto" in n.lower() and ("monotone" in n.lower() or "atTop" in n)
+    ]
+    assert relevant, f"no monotone-convergence-relevant premise in top-5: {names}"
 
 
 def test_retrieve_continuous_add_smoke(rag: MathlibRAG) -> None:

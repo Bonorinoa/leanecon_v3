@@ -132,6 +132,14 @@ MAX_PROVE_STEPS = int(os.getenv("MAX_PROVE_STEPS", "32"))
 MAX_PROVE_TIMEOUT = int(os.getenv("MAX_PROVE_TIMEOUT", "300"))
 MAX_TOTAL_TOOL_CALLS = int(os.getenv("MAX_TOTAL_TOOL_CALLS", "40"))
 MAX_SEARCH_TOOL_CALLS = int(os.getenv("MAX_SEARCH_TOOL_CALLS", "12"))
+# Sprint 23: hybrid (mathlib-native) mode gets a small budget bump to allow
+# enrichment + second-retrieval rounds without starving the proof stage.
+MAX_PROVE_STEPS_HYBRID = int(
+    os.getenv("MAX_PROVE_STEPS_HYBRID", str(MAX_PROVE_STEPS + 4))
+)
+MAX_SEARCH_TOOL_CALLS_HYBRID = int(
+    os.getenv("MAX_SEARCH_TOOL_CALLS_HYBRID", str(MAX_SEARCH_TOOL_CALLS + 2))
+)
 JOB_TTL_SECONDS = int(os.getenv("JOB_TTL_SECONDS", "3600"))
 JOB_MAX_CONCURRENT = int(os.getenv("JOB_MAX_CONCURRENT", "2"))
 BENCHMARK_MAX_RECURSION_DEPTH = int(os.getenv("LEANECON_BENCHMARK_MAX_RECURSION_DEPTH", "1"))

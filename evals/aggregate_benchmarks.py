@@ -48,6 +48,10 @@ def _compute_retrieval_metrics(progress_jsonl: Path) -> dict[str, float]:
     """Parse a progress JSONL and return hybrid retrieval metrics."""
     local_hits = local_total = ls_hits = ls_total = 0
     ls_latencies: list[float] = []
+    # Sprint 23 Task 4: second-retrieval + enrichment metrics.
+    second_pass_calls = 0
+    enriched_total = 0
+    retrieved_total = 0
     if not progress_jsonl.exists():
         return {}
     with open(progress_jsonl) as fh:
@@ -70,6 +74,10 @@ def _compute_retrieval_metrics(progress_jsonl: Path) -> dict[str, float]:
                 ls_latencies.append(latency)
                 if hit:
                     ls_hits += 1
+                if int(re_payload.get("retrieval_pass", 1)) >= 2:
+                    second_pass_calls += 1
+                enriched_total += int(re_payload.get("enriched_count", 0))
+                retrieved_total += int(re_payload.get("retrieved_count", 0))
             else:
                 local_total += 1
                 if hit:
@@ -79,6 +87,8 @@ def _compute_retrieval_metrics(progress_jsonl: Path) -> dict[str, float]:
         "leansearch_hit_rate_at_5": round(ls_hits / ls_total, 4) if ls_total else 0.0,
         "hybrid_retrieval_latency_ms": round(sum(ls_latencies) / len(ls_latencies), 1) if ls_latencies else 0.0,
         "leansearch_call_count": float(ls_total),
+        "second_retrieval_rate": round(second_pass_calls / ls_total, 4) if ls_total else 0.0,
+        "enriched_leansearch_hit_rate": round(enriched_total / retrieved_total, 4) if retrieved_total else 0.0,
     }
 
 
@@ -154,6 +164,8 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
                 _format_percent(rm.get("leansearch_hit_rate_at_5", 0.0)),
                 _format_duration_ms(rm.get("hybrid_retrieval_latency_ms", 0.0)),
                 str(int(rm.get("leansearch_call_count", 0))),
+                _format_percent(rm.get("second_retrieval_rate", 0.0)),
+                _format_percent(rm.get("enriched_leansearch_hit_rate", 0.0)),
             ]
         )
 
@@ -234,7 +246,15 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
         "## Hybrid Retrieval Metrics",
         "",
         _render_markdown_table(
-            ["Claim Set", "Local RAG Hit Rate", "LeanSearch Hit Rate@5", "LeanSearch Avg Latency", "LeanSearch Calls"],
+            [
+                "Claim Set",
+                "Local RAG Hit Rate",
+                "LeanSearch Hit Rate@5",
+                "LeanSearch Avg Latency",
+                "LeanSearch Calls",
+                "2nd-Pass Rate",
+                "Enriched Hit Rate",
+            ],
             retrieval_rows,
         ),
         "",

@@ -73,6 +73,8 @@ class RetrievalEvent:
     source: str = "mathlib_rag"
     goal_digest: str | None = None
     query: str | None = None
+    enriched_count: int = 0
+    retrieval_pass: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +88,8 @@ class RetrievalEvent:
             "k": int(self.k),
             "retrieved_count": len(self.retrieved_premises),
             "hit": bool(self.retrieved_premises),
+            "enriched_count": int(self.enriched_count),
+            "retrieval_pass": int(self.retrieval_pass),
         }
 
 

@@ -78,6 +78,49 @@ def test_build_markdown_report_includes_overview_latency_and_failures(tmp_path) 
     assert "overall" in report
 
 
+def _write_progress_jsonl(path: Path, events: list[dict]) -> None:
+    path.write_text(
+        "\n".join(json.dumps({"metadata": {"RetrievalEvent": event}}) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_compute_retrieval_metrics_includes_sprint23_fields(tmp_path) -> None:
+    """Sprint 23 Task 4: aggregator emits second_retrieval_rate + enriched_leansearch_hit_rate."""
+    from evals.aggregate_benchmarks import _compute_retrieval_metrics
+
+    progress = tmp_path / "x.progress.jsonl"
+    _write_progress_jsonl(
+        progress,
+        [
+            # local RAG event (no enrichment, retrieval_pass=1)
+            {"source": "mathlib_rag", "hit": True, "latency_ms": 5.0, "retrieval_pass": 1},
+            # leansearch turn-1 (first pass, 2 of 3 enriched)
+            {
+                "source": "lean_leansearch",
+                "hit": True,
+                "latency_ms": 80.0,
+                "retrieval_pass": 1,
+                "enriched_count": 2,
+                "retrieved_count": 3,
+            },
+            # leansearch turn-2 second pass (1 of 2 enriched)
+            {
+                "source": "lean_leansearch",
+                "hit": True,
+                "latency_ms": 90.0,
+                "retrieval_pass": 2,
+                "enriched_count": 1,
+                "retrieved_count": 2,
+            },
+        ],
+    )
+    metrics = _compute_retrieval_metrics(progress)
+    assert metrics["second_retrieval_rate"] == 0.5  # 1 of 2 leansearch events was pass=2
+    # 2+1 enriched out of 3+2 retrieved = 3/5 = 0.6
+    assert metrics["enriched_leansearch_hit_rate"] == 0.6
+
+
 def test_aggregate_benchmarks_main_reads_standard_files(tmp_path, capsys) -> None:
     _write_summary(
         tmp_path / "tier1_core_preamble_definable.json",
