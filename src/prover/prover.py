@@ -24,6 +24,8 @@ from src.config import (
 from src.formalizer.models import FormalizationPacket
 from src.lean import LeanREPLSession, compile_check, lean_run_code
 from src.memory import ProofTraceStore, trace_store as default_trace_store
+from src.prover.lsp_cache import LSPCache
+from src.utils.json_extraction import extract_json_object
 from src.observability import (
     AuditEvent,
     BudgetTracker,
@@ -220,18 +222,12 @@ class DriverRegistry:
 
 
 def _extract_json_payload(raw_text: str) -> dict[str, object]:
-    stripped = raw_text.strip()
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise ProverDriverError("Prover backend did not return a JSON object.")
-    try:
-        payload = json.loads(stripped[start : end + 1])
-    except json.JSONDecodeError as error:
-        raise ProverDriverError(f"Prover backend returned invalid JSON: {error}") from error
-    if not isinstance(payload, dict):
-        raise ProverDriverError("Prover backend returned non-object JSON.")
-    return payload
+    return extract_json_object(
+        raw_text,
+        error_factory=lambda message: ProverDriverError(
+            message.replace("Driver", "Prover backend", 1)
+        ),
+    )
 
 
 def _contains_lsp_unavailable(value: Any) -> bool:
@@ -765,9 +761,10 @@ class Prover:
         self._tool_usage_traces: list[dict[str, Any]] = []
         self._state_transitions: list[dict[str, Any]] = []
         self._progress_deltas: list[dict[str, Any]] = []
-        # Sprint 23: caches for LeanSearch hover enrichment (per-prove invocation).
-        self._outline_cache: dict[str, list[dict[str, Any]]] = {}
-        self._hover_cache: dict[tuple[str, int, int], str] = {}
+        # Sprint 24: per-prove LSP outline/hover cache + premise enrichment.
+        # The cache is constructed lazily via ``_get_lsp_cache`` because
+        # ``self.lsp_client`` may be swapped by tests *after* ``__init__``.
+        self._lsp_cache: LSPCache | None = None
 
     def _selected_preamble_entries(self, packet: FormalizationPacket) -> list[Any]:
         from src.preamble_library import PREAMBLE_LIBRARY
@@ -2741,6 +2738,31 @@ class Prover:
             k=k,
         )
 
+    def _handle_lsp_error(
+        self,
+        tool_name: str,
+        exc: BaseException,
+        *,
+        context: str = "",
+    ) -> None:
+        """Record an LSP tool failure as a structured audit event.
+
+        Why: prior to Sprint 24 these failures were swallowed by bare
+        ``except Exception: pass`` blocks, making outages invisible in traces.
+        """
+        log_event(
+            AuditEvent(
+                stage="prover",
+                event_type="lsp_tool_error",
+                provider=self.primary_backend.provider,
+                model=self.primary_backend.model,
+                success=False,
+                error_code="lsp_unavailable",
+                error_message=f"{tool_name}: {exc}",
+                metadata={"tool": tool_name, "context": context},
+            )
+        )
+
     def _retrieve_lean_search_premises(
         self, query: str, *, k: int, retrieval_pass: int = 1
     ) -> RetrievalEvent:
@@ -2755,8 +2777,10 @@ class Prover:
             )
         premises: list[dict[str, Any]] = []
         try:
-            self.budget_tracker.record("lean_leansearch")
             payload = self.lsp_client.lean_leansearch(query, num_results=k)
+            # Record budget only on a successful round-trip so that retries on
+            # LSP outage do not exhaust the search budget for the run.
+            self.budget_tracker.record("lean_leansearch")
             items = (payload or {}).get("items") or []
             for item in items[:k]:
                 name = str(item.get("name") or item.get("theorem_name") or "")
@@ -2774,8 +2798,8 @@ class Prover:
                         "source": "lean_leansearch",
                     }
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            self._handle_lsp_error("lean_leansearch", exc, context=query[:120])
         # Sprint 23 Task 2: enrich each leansearch premise with outline+hover.
         enriched_count = self._enrich_leansearch_premises(premises)
         scores = [float(p.get("score", 0.0)) for p in premises]
@@ -2790,90 +2814,27 @@ class Prover:
             retrieval_pass=retrieval_pass,
         )
 
-    def _enrich_leansearch_premises(self, premises: list[dict[str, Any]]) -> int:
-        """Populate full_type_signature + detailed_docstring + declaration_location.
+    def _get_lsp_cache(self) -> LSPCache:
+        """Return the per-prove LSP cache, rebinding if ``lsp_client`` changed.
 
-        Mutates premises in place. Uses per-prove ``_outline_cache`` and
-        ``_hover_cache``. Returns the number of premises successfully enriched.
+        Tests may monkey-patch ``self.lsp_client`` after the cache was first
+        constructed; we detect that and refresh the cache so it points at the
+        active client. This costs O(1) and only allocates when the client
+        identity changes.
         """
-        enriched = 0
-        for premise in premises:
-            module = premise.get("file_path")
-            name = premise.get("name")
-            if not module or not name:
-                continue
-            outline = self._cached_outline(module)
-            decl = self._find_outline_decl(outline, name)
-            if decl is None:
-                continue
-            line = self._coerce_int(decl.get("line"))
-            column = self._coerce_int(decl.get("column"), default=0)
-            if line is None:
-                continue
-            hover_text = self._cached_hover(module, line, column)
-            if not hover_text:
-                continue
-            premise["full_type_signature"] = hover_text
-            premise["detailed_docstring"] = hover_text
-            premise["declaration_location"] = f"{module}:{line}"
-            enriched += 1
-        return enriched
-
-    def _cached_outline(self, module: str) -> list[dict[str, Any]]:
-        cached = self._outline_cache.get(module)
-        if cached is not None:
-            return cached
-        decls: list[dict[str, Any]] = []
-        try:
-            payload = self.lsp_client.lean_file_outline(module)
-            decls = list((payload or {}).get("declarations") or (payload or {}).get("items") or [])
-        except Exception:
-            decls = []
-        self._outline_cache[module] = decls
-        return decls
-
-    @staticmethod
-    def _find_outline_decl(
-        outline: list[dict[str, Any]], name: str
-    ) -> dict[str, Any] | None:
-        for decl in outline:
-            if str(decl.get("name") or "") == name:
-                return decl
-        # Fall back on suffix match (handles namespaced vs unqualified).
-        for decl in outline:
-            decl_name = str(decl.get("name") or "")
-            if decl_name and (name.endswith(decl_name) or decl_name.endswith(name)):
-                return decl
-        return None
-
-    def _cached_hover(self, module: str, line: int, column: int) -> str:
-        key = (module, int(line), int(column))
-        if key in self._hover_cache:
-            return self._hover_cache[key]
-        text = ""
-        try:
-            payload = self.lsp_client.lean_hover_info(
-                module, line=line, column=column
+        cache = self._lsp_cache
+        if cache is None or cache.lsp_client is not self.lsp_client:
+            cache = LSPCache(
+                self.lsp_client,
+                on_error=lambda tool, exc, ctx: self._handle_lsp_error(
+                    tool, exc, context=ctx
+                ),
             )
-            if isinstance(payload, dict):
-                contents = payload.get("contents") or payload.get("value")
-                if isinstance(contents, list):
-                    text = "\n".join(str(c) for c in contents if c)
-                elif contents is not None:
-                    text = str(contents)
-            elif isinstance(payload, str):
-                text = payload
-        except Exception:
-            text = ""
-        self._hover_cache[key] = text
-        return text
+            self._lsp_cache = cache
+        return cache
 
-    @staticmethod
-    def _coerce_int(value: Any, default: int | None = None) -> int | None:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
+    def _enrich_leansearch_premises(self, premises: list[dict[str, Any]]) -> int:
+        return self._get_lsp_cache().enrich_premises(premises)
 
     @staticmethod
     def _merge_retrieval_premises(
@@ -4709,9 +4670,9 @@ class Prover:
         self.budget_tracker.sub_agent_calls = 0
         self.budget_tracker.tool_history.clear()
         self.budget_tracker.sub_agent_history.clear()
-        # Sprint 23: clear per-invocation enrichment caches
-        self._outline_cache.clear()
-        self._hover_cache.clear()
+        # Sprint 24: clear per-invocation enrichment caches via the LSP cache.
+        if self._lsp_cache is not None:
+            self._lsp_cache.clear()
 
     def _enrich_trace_context(
         self,

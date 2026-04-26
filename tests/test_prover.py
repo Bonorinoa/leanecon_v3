@@ -2847,3 +2847,69 @@ def test_mistral_prover_driver_does_not_retry_on_auth_failure(monkeypatch) -> No
     # Auth failures must surface immediately — no retry, no backoff sleeps.
     assert len(calls) == 1
     assert sleeps == []
+
+
+def test_find_outline_decl_qualified_suffix_match():
+    """Sprint 24: suffix match must be qualified-only (decl_name endswith '.' + name).
+
+    Bidirectional matching previously could pick the wrong overload when the
+    query name and a decl name shared a trailing substring.
+    """
+    from src.prover.lsp_cache import LSPCache
+
+    outline = [
+        {"name": "Foo.bar", "line": 10, "column": 0},
+        {"name": "Other.barbaz", "line": 20, "column": 0},
+    ]
+    assert LSPCache.find_decl(outline, "Foo.bar") == outline[0]
+    assert LSPCache.find_decl(outline, "bar") == outline[0]
+    # The wrong-overload case: "baz" must NOT pick "Other.barbaz" because it
+    # only matches a raw substring, not a "." + name suffix.
+    assert LSPCache.find_decl(outline, "baz") is None
+
+
+def test_handle_lsp_error_emits_audit_event(monkeypatch):
+    """Sprint 24: LSP failures must surface as structured audit events."""
+    from src.prover import prover as prover_module
+
+    captured: list[prover_module.AuditEvent] = []
+
+    def fake_log_event(event):
+        captured.append(event)
+
+    monkeypatch.setattr(prover_module, "log_event", fake_log_event)
+
+    prover = prover_module.DEFAULT_PROVER
+    prover._handle_lsp_error("lean_leansearch", RuntimeError("boom"), context="q")
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.stage == "prover"
+    assert event.event_type == "lsp_tool_error"
+    assert event.success is False
+    assert event.error_code == "lsp_unavailable"
+    assert "lean_leansearch: boom" in (event.error_message or "")
+    assert event.metadata.get("tool") == "lean_leansearch"
+    assert event.metadata.get("context") == "q"
+
+
+def test_retrieve_lean_search_premises_does_not_record_budget_on_failure(monkeypatch):
+    """Sprint 24: a failed lean_leansearch call must not consume the budget."""
+    from src.prover import prover as prover_module
+
+    prover = prover_module.DEFAULT_PROVER
+
+    class _BoomClient:
+        def lean_leansearch(self, query, num_results):
+            raise RuntimeError("LSP unavailable")
+
+    # Replace LSP client with one that fails, and reset the budget tracker.
+    monkeypatch.setattr(prover, "lsp_client", _BoomClient())
+    monkeypatch.setattr(prover_module, "log_event", lambda event: None)
+    prover.budget_tracker.search_tool_calls = 0
+
+    event = prover._retrieve_lean_search_premises("query", k=3)
+
+    assert event.retrieved_premises == []
+    # Budget unchanged: failure did not count against the search budget.
+    assert prover.budget_tracker.search_tool_calls == 0

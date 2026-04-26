@@ -7,6 +7,7 @@ and zero-cost at inference time.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -144,12 +145,36 @@ class MathlibRAG:
 
     # ---- index management ---------------------------------------------------
 
+    @property
+    def _hash_sidecar_path(self) -> Path:
+        return self.index_path.with_suffix(self.index_path.suffix + ".sha256")
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(64 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     def is_stale(self) -> bool:
         if not self.index_path.exists():
             return True
         if not self.seed_path.exists():
             return False
-        return self.seed_path.stat().st_mtime > self.index_path.stat().st_mtime
+        # mtime is the cheap check; falls through to a content-hash compare so
+        # that ``git reset`` / rebases (which can leave the seed mtime older
+        # than the cache mtime despite different bytes) still trigger a rebuild.
+        if self.seed_path.stat().st_mtime > self.index_path.stat().st_mtime:
+            return True
+        sidecar = self._hash_sidecar_path
+        if not sidecar.exists():
+            return True
+        try:
+            stored_hash = sidecar.read_text(encoding="utf-8").strip()
+        except OSError:
+            return True
+        return self._file_sha256(self.seed_path) != stored_hash
 
     def rebuild(self) -> None:
         with self._lock:
@@ -163,6 +188,11 @@ class MathlibRAG:
             return
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(self.seed_path, self.index_path)
+        # Write the content hash alongside the cache so future is_stale() calls
+        # can detect seed changes that mtime alone would miss.
+        self._hash_sidecar_path.write_text(
+            self._file_sha256(self.seed_path), encoding="utf-8"
+        )
 
     def _load_if_needed(self) -> None:
         if self._loaded:

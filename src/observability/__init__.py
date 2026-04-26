@@ -22,7 +22,6 @@ from .pricing import (
     stable_hash_text,
 )
 from .progress import build_progress_event
-from .sse import encode_sse
 from .telemetry import (
     SpanRecorder,
     attach_telemetry,
@@ -58,7 +57,6 @@ __all__ = [
     "dominant_failure_class",
     "dump_pricing_registry",
     "estimate_tokens_from_text",
-    "encode_sse",
     "lookup_pricing",
     "log_event",
     "preamble_names_from_theorem",

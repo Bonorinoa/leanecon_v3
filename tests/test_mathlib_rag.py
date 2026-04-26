@@ -171,6 +171,42 @@ def test_retrieval_event_has_query_field() -> None:
     assert evt2.to_dict()["query"] is None
 
 
+def test_is_stale_detects_seed_content_change_even_with_older_mtime(tmp_path: Path) -> None:
+    """Sprint 24: hash-based invalidation triggers a rebuild after a seed
+    content change that mtime alone would miss (e.g. after a ``git reset``)."""
+    import os
+
+    seed = tmp_path / "seed.jsonl"
+    cache = tmp_path / "cache.jsonl"
+    seed.write_text('{"name": "Foo.bar", "tags": ["x"]}\n', encoding="utf-8")
+
+    rag = MathlibRAG(seed_path=seed, index_path=cache)
+    rag.rebuild()
+    assert cache.exists()
+    assert (cache.with_suffix(cache.suffix + ".sha256")).exists()
+    assert rag.is_stale() is False
+
+    # Change content but force seed mtime to be OLDER than cache mtime so the
+    # plain mtime check would say "fresh".
+    seed.write_text('{"name": "Foo.baz", "tags": ["x"]}\n', encoding="utf-8")
+    cache_mtime = cache.stat().st_mtime
+    os.utime(seed, (cache_mtime - 10, cache_mtime - 10))
+
+    assert rag.is_stale() is True, "content-hash check should detect the seed change"
+
+
+def test_is_stale_treats_legacy_cache_without_sidecar_as_stale(tmp_path: Path) -> None:
+    """A pre-Sprint-24 cache (no .sha256 sidecar) should rebuild on next access."""
+    seed = tmp_path / "seed.jsonl"
+    cache = tmp_path / "cache.jsonl"
+    seed.write_text('{"name": "Foo.bar"}\n', encoding="utf-8")
+    # Simulate a legacy cache by copying the seed without writing a sidecar.
+    cache.write_bytes(seed.read_bytes())
+
+    rag = MathlibRAG(seed_path=seed, index_path=cache)
+    assert rag.is_stale() is True
+
+
 def test_default_rag_uses_get_default_embedder() -> None:
     import src.retrieval.mathlib_rag as rag_mod
 

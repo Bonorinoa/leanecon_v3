@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import json
 import threading
 import shutil
 import time
@@ -53,13 +54,16 @@ from src.observability import (
     classify_exception,
     complete_usage,
     dump_pricing_registry,
-    encode_sse,
     log_event,
     lookup_pricing,
 )
 from src.planner import PlannerService
 from src.providers import is_provider_pinned
 from src.prover import DEFAULT_PROVER, ProverTargetTimeouts
+
+
+def _encode_sse(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, sort_keys=True)}\n\n"
 
 
 def _claim_set_counts() -> dict[str, int]:
@@ -716,6 +720,6 @@ async def job_events(job_id: str) -> StreamingResponse:
 
     async def event_stream():
         async for envelope in job_store.subscribe(job_id):
-            yield encode_sse(str(envelope.get("event") or "job.update"), dict(envelope.get("payload") or {}))
+            yield _encode_sse(str(envelope.get("event") or "job.update"), dict(envelope.get("payload") or {}))
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

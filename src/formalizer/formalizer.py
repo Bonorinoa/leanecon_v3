@@ -33,6 +33,7 @@ from src.lean import lean_run_code
 from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerPacket
 from src.providers import normalize_huggingface_provider
+from src.utils.json_extraction import extract_json_object
 
 
 class FormalizerDriverError(RuntimeError):
@@ -126,18 +127,12 @@ def parse_theorem_stub(theorem_stub: str) -> ParsedTheoremStub:
 
 
 def _extract_json_payload(raw_text: str) -> dict[str, object]:
-    stripped = raw_text.strip()
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise FormalizerDriverError("Formalizer backend did not return a JSON object.")
-    try:
-        payload = json.loads(stripped[start : end + 1])
-    except json.JSONDecodeError as error:
-        raise FormalizerDriverError(f"Formalizer backend returned invalid JSON: {error}") from error
-    if not isinstance(payload, dict):
-        raise FormalizerDriverError("Formalizer backend returned non-object JSON.")
-    return payload
+    return extract_json_object(
+        raw_text,
+        error_factory=lambda message: FormalizerDriverError(
+            message.replace("Driver", "Formalizer backend", 1)
+        ),
+    )
 
 
 def _unwrap_driver_response(

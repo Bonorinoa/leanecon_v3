@@ -14,3 +14,4 @@ lean_workspace/_v2_check_*.lean
 lean_workspace/_formalizer_check_*.lean
 lean_workspace/_prover_check_*.lean
 .cache/
+benchmark_baselines/**/sprint*_sample/

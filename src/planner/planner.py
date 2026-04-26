@@ -29,6 +29,7 @@ from src.planner.models import PlannerContext, PlannerLLMResponse, PlannerPacket
 from src.planner.prompts import build_system_prompt, build_user_prompt
 from src.planner.retrieval import PlannerRetrievalService, TextEmbedder
 from src.providers import normalize_huggingface_provider
+from src.utils.json_extraction import extract_json_object
 
 
 PLANNER_RETRY_ATTEMPTS = 3
@@ -102,25 +103,12 @@ class DriverRegistry:
 
 
 def _extract_json_payload(raw_text: str) -> dict[str, object]:
-    stripped = raw_text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise PlannerDriverError("Planner backend did not return a JSON object.")
-    try:
-        payload = json.loads(stripped[start : end + 1])
-    except json.JSONDecodeError as error:
-        raise PlannerDriverError(f"Planner backend returned invalid JSON: {error}") from error
-    if not isinstance(payload, dict):
-        raise PlannerDriverError("Planner backend returned non-object JSON.")
-    return payload
+    return extract_json_object(
+        raw_text,
+        error_factory=lambda message: PlannerDriverError(
+            message.replace("Driver", "Planner backend", 1)
+        ),
+    )
 
 
 def _clean_string_list(values: object) -> list[str]:
