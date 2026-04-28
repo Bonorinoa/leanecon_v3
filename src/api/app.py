@@ -39,7 +39,6 @@ from src.config import (
     LEAN_WORKSPACE,
     MISTRAL_API_KEY,
     OLLAMA_API_KEY,
-    PLANNER_PROVIDER,
     PROVER_PROVIDER,
 )
 from src.evals.metrics_aggregator import CANONICAL_HISTORY_PATH, load_history_rows

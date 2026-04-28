@@ -1,10 +1,11 @@
 # Lean Econ v3 Architecture
 **Version:** 3.0.0-alpha  
-**Date:** 24 April 2026  
+**Date:** 27 April 2026  
 **Status:** Authoritative — Single Source of Truth for All Implementation
 
 > Integrity note (April 22, 2026): repository code, tests, and checked-in manifests override any overstated readiness or benchmark claims elsewhere in the docs.
 > Sprint 20 update (April 24, 2026): mathlib-native proving is now a first-class route. `mathlib_native_mode` gates preamble shortcuts, exposes `lean-lsp-mcp` tools to Leanstral, and records LSP/native-search usage in benchmark traces.
+> Sprint 24 update (April 27, 2026): The cumulative hybrid retrieval pipeline is described across §4A (Sprint 20 LSP surface + Sprint 22 LeanSearch merge) and §4B (Sprints 21–24: harness RAG, semantic embedding, seed expansion, enrichment, stall recovery, observable failures, rescue retrieval). Headline `tier2_frontier_mathlib_native` pass rate has held at 1/3 across Sprints 20–24 — the synthesis bottleneck is now isolated and the Sprint 25 work plan attacks it from the prover side.
 
 ## 1. High-Level Flow (Matches Your Hand-Drawn Sketch)
 ```
@@ -103,6 +104,9 @@ Python harness is deliberately minimal.
 ---
 
 ## 4A. Claim-Type Routing and Lean LSP
+
+> §4A and §4B together describe the cumulative hybrid retrieval pipeline. §4A covers the LSP surface (Sprint 20) and `lean_leansearch` merging (Sprint 22). §4B covers the harness-owned RAG primitive (Sprint 21), semantic embedding (Sprint 22), seed expansion + enrichment + stall recovery (Sprint 23), and observable failure paths + rescue retrieval (Sprint 24).
+
 The prover receives `claim_type` from the benchmark manifest/formalization packet when available:
 
 - `preamble_definable`: LeanEcon Preamble metadata and proven lemmas are trusted as the first search surface. Direct closure remains enabled up to the normal bounded cap.
@@ -140,6 +144,8 @@ Sprint 21 moves Mathlib retrieval into the harness so the prover stays model-agn
 
 **Sprint 23 addition (synthesis lift).** With Sprint 22 retrieval at 100% hit rate but only 1/3 pass@1 on the focused mathlib-native sample, the bottleneck shifted to *using* the retrieved premises. Sprint 23 lands four pieces: (1) the local seed grew from 62 → ~1500 entries via `scripts/extract_mathlib_premises.py` (regex extractor over curated Topology / Order / Analysis / FixedPoints subdirectories of Mathlib), so the failing extreme-value and monotone-convergence claims now have rich premise coverage; (2) LeanSearch results are enriched with `lean_file_outline` + `lean_hover_info` (cached per file) so each premise carries `full_type_signature` and `detailed_docstring` instead of the thin leansearch payload; (3) a stall-recovery second leansearch pass fires when turn 1 makes no progress and ≥30% of search budget remains, requerying with the current unsolved subgoal text; (4) a generic decomposition hint (`intro/obtain/refine` for goals with `∀/∃/∧/↔`) is appended to the prompt rules. Mathlib-native claims also receive a hybrid budget bump (`MAX_SEARCH_TOOL_CALLS_HYBRID = +2`, `MAX_PROVE_STEPS_HYBRID = +4`) — preamble_definable budgets are unchanged. New traces: `RetrievalEvent.enriched_count`, `RetrievalEvent.retrieval_pass`; new aggregator metrics: `second_retrieval_rate`, `enriched_leansearch_hit_rate`.
 
+**Sprint 24 addition (observable failures + rescue retrieval).** Sprint 23's synthesis-lift infrastructure was complete but several harness-side failures were still silent. Sprint 24 closes the observability gaps and adds two narrowly-scoped recovery primitives. (1) `LeanSearchFailureEvent` (in `src/observability/models.py`) gives 0-result and exception failures structured visibility — `_retrieve_lean_search_premises` now emits the event, retries once with a refined sub-goal query, and preserves all budget/recording semantics on the success path. (2) Rescue retrieval keyed on `unknown identifier` errors: `_extract_unknown_identifier` lifts identifiers from Lean error text, `_query_from_failed_identifier` splits snake/camel case into a plain-English query (e.g., `MonotoneBddAboveConverges` → `"monotone bdd above converges theorem"`), and the harness fires one extra `lean_leansearch` call before stalling. Tracked via `_rescue_retrieval_targets` per-target idempotence sets so a single hallucinated identifier triggers at most one rescue. (3) Decomposition hints from Sprint 23 are strengthened with explicit multi-step pattern examples. (4) Empty-goal harness skip avoids false-positive stall when an LSP probe shows no goal state. (5) Infrastructure consolidation: shared JSON extraction in `src/utils/json_extraction.py` (per-module wrappers retained for module-specific error context), and a dedicated `src/prover/lsp_cache.py` (`LSPCache` with SHA256-keyed invalidation). Result: full local_gate at **11/16 (68.8%)**, `tier2_frontier_mathlib_native` still at **1/3**. Headline rate did not move; the remaining failures are now visible at every step. The cumulative result of Sprints 20–24 isolates synthesis as the wall — Sprint 25 must change the model-side approach (different prover model, different prompting strategy, or different decomposition primitives) rather than adding more retrieval surface.
+
 ---
 
 ## 5. Key Invariants (Never Violate)
@@ -169,4 +175,4 @@ Sprint 21 moves Mathlib retrieval into the harness so the prover stays model-agn
 This architecture is deliberately **simple enough to reason about** and **powerful enough to hit PhD-qualifying coverage**.
 
 — User, Founder and Grok, CTO  
-Original: 19 April 2026. Sprint 20 operating update: 24 April 2026.
+Original: 19 April 2026. Sprint 20 operating update: 24 April 2026. Sprint 24 operating update: 27 April 2026.

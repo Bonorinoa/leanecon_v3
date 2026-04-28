@@ -212,7 +212,7 @@ def test_default_rag_uses_get_default_embedder() -> None:
 
     rag_mod._DEFAULT_RAG = None
     rag = rag_mod._default_rag()
-    from src.planner.retrieval import HashingTextEmbedder, SentenceTransformerEmbedder, get_default_embedder
+    from src.planner.retrieval import get_default_embedder
 
     expected_type = type(get_default_embedder())
     assert isinstance(rag._embedder, expected_type), (

@@ -199,7 +199,6 @@ def _select_heuristic(
     identifiers: list[str],
     bucket: str,
 ) -> dict[str, Any] | None:
-    identifier_blob = " ".join(identifiers)
     target_blob = " ".join(target_names).lower()
 
     if (

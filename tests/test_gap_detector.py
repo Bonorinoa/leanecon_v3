@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from evals.gap_report import main
 from src.evals.gap_detector import append_gaps_jsonl, detect_gaps_from_claim_result, detect_gaps_from_summaries
