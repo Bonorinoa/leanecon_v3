@@ -75,6 +75,8 @@ class RetrievalEvent:
     query: str | None = None
     enriched_count: int = 0
     retrieval_pass: int = 1
+    claim_id: str | None = None
+    error_code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +92,40 @@ class RetrievalEvent:
             "hit": bool(self.retrieved_premises),
             "enriched_count": int(self.enriched_count),
             "retrieval_pass": int(self.retrieval_pass),
+            "claim_id": self.claim_id,
+            "error_code": self.error_code,
+        }
+
+
+@dataclass(frozen=True)
+class LeanSearchFailureEvent:
+    """Structured event for lean_leansearch failures (0 results or LSP exception).
+
+    Emitted to make previously invisible failures observable in benchmark JSONL,
+    audit streams, and progress logs. Supports retry tracking.
+    """
+    query: str | None = None
+    refined_query: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    retry_attempted: bool = False
+    hit: bool = False
+    latency_ms: float = 0.0
+    retrieval_pass: int = 1
+    claim_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": "LeanSearchFailureEvent",
+            "query": self.query,
+            "refined_query": self.refined_query,
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "retry_attempted": self.retry_attempted,
+            "hit": self.hit,
+            "latency_ms": round(float(self.latency_ms), 3),
+            "retrieval_pass": int(self.retrieval_pass),
+            "claim_id": self.claim_id,
         }
 
 

@@ -215,6 +215,7 @@ class MathlibRAG:
         if not path.exists():
             return []
         entries: list[Premise] = []
+        skipped = 0
         with path.open("r", encoding="utf-8") as fh:
             for line_no, raw in enumerate(fh, start=1):
                 line = raw.strip()
@@ -223,6 +224,7 @@ class MathlibRAG:
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError:
+                    skipped += 1
                     continue
                 entries.append(
                     Premise(
@@ -234,6 +236,29 @@ class MathlibRAG:
                         dependencies=tuple(record.get("dependencies") or ()),
                     )
                 )
+        if skipped:
+            # Stage 2 H.3: surface silent index degradation as a single startup
+            # audit event. Loading remains resilient; the audit just makes drift
+            # observable in benchmark traces.
+            try:
+                from src.observability import AuditEvent, log_event
+
+                log_event(
+                    AuditEvent(
+                        stage="retrieval",
+                        event_type="mathlib_rag_jsonl_skip",
+                        provider="mathlib_rag",
+                        model="local",
+                        success=False,
+                        error_code="jsonl_decode_error",
+                        error_message=(
+                            f"Skipped {skipped} malformed line(s) while loading {path.name}"
+                        ),
+                        metadata={"path": str(path), "skipped_lines": int(skipped)},
+                    )
+                )
+            except Exception:
+                pass
         return entries
 
     # ---- scoring ------------------------------------------------------------

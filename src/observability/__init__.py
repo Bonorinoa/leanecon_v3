@@ -5,6 +5,7 @@ from .lean_lsp_client import LeanLSPClient, LeanLSPUnavailableError, default_lea
 from .logging import log_event
 from .models import (
     AuditEvent,
+    LeanSearchFailureEvent,
     ProgressDelta,
     ProviderCallMetadata,
     RetrievalEvent,
@@ -39,6 +40,7 @@ __all__ = [
     "AuditEvent",
     "LeanLSPClient",
     "LeanLSPUnavailableError",
+    "LeanSearchFailureEvent",
     "ProgressDelta",
     "ProviderCallMetadata",
     "RetrievalEvent",

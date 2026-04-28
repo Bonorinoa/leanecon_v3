@@ -31,6 +31,7 @@ from src.observability import (
     BudgetTracker,
     LeanLSPClient,
     LeanLSPUnavailableError,
+    LeanSearchFailureEvent,
     ProgressDelta,
     ProviderCallMetadata,
     RetrievalEvent,
@@ -238,6 +239,65 @@ def _contains_lsp_unavailable(value: Any) -> bool:
     if isinstance(value, list):
         return any(_contains_lsp_unavailable(child) for child in value)
     return False
+
+
+# Stage 2 P1.A: identifier extraction for hypothesis-aware leansearch queries.
+# Matches Mathlib-style CamelCase tokens (e.g. IsCompact, BddAbove, ContinuousOn,
+# Tendsto). Excludes single capitals like "P", "Q", "S" (variable placeholders).
+_MATHLIB_IDENT_RE = re.compile(r"\b([A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)*)\b")
+_MATHLIB_IDENT_STOPWORDS = frozenset(
+    {"True", "False", "None", "Type", "Prop", "Sort", "Set", "Nat", "Int", "Real"}
+)
+
+
+def _extract_mathlib_idents(text: str) -> list[str]:
+    """Return Mathlib-style CamelCase identifiers in *text*, in first-seen order.
+
+    Used to build refined leansearch queries from goal/hypothesis context.
+    Stopwords filter out common non-discriminating types so queries stay
+    targeted on lemma-bearing identifiers like ``IsCompact``/``Monotone``.
+    """
+    if not text:
+        return []
+    seen: dict[str, None] = {}
+    for match in _MATHLIB_IDENT_RE.finditer(text):
+        ident = match.group(1)
+        if ident in _MATHLIB_IDENT_STOPWORDS:
+            continue
+        # Require at least one lowercase letter to skip pure-acronym noise like "BBB".
+        if ident not in seen:
+            seen[ident] = None
+    return list(seen.keys())
+
+
+# Stage 2-followup D: rescue path when the model hallucinates an identifier.
+# Lean reports e.g. ``unknown identifier 'monotone_bddAbove_converges'`` —
+# we lift the missing name out of the error text so a second-pass LeanSearch
+# can retry on the concept tokens that gave the model the right *idea*.
+_UNKNOWN_IDENT_RE = re.compile(
+    r"unknown\s+identifier\s+[`'\"]([A-Za-z_][A-Za-z0-9_.']*)[`'\"]",
+    re.IGNORECASE,
+)
+
+
+def _extract_unknown_identifier(error_text: str) -> str | None:
+    if not error_text:
+        return None
+    match = _UNKNOWN_IDENT_RE.search(error_text)
+    return match.group(1) if match else None
+
+
+def _query_from_failed_identifier(ident: str) -> str:
+    """Split a snake_case/CamelCase identifier into a LeanSearch query."""
+    if not ident:
+        return ""
+    parts = [p for p in ident.replace(".", "_").split("_") if p]
+    if not parts:
+        return ""
+    joined = " ".join(parts)
+    if not any(kw in joined.lower() for kw in ("theorem", "lemma", "prove")):
+        joined = f"{joined} theorem"
+    return joined[:200]
 
 
 class HuggingFaceProverDriver:
@@ -761,6 +821,14 @@ class Prover:
         self._tool_usage_traces: list[dict[str, Any]] = []
         self._state_transitions: list[dict[str, Any]] = []
         self._progress_deltas: list[dict[str, Any]] = []
+        # Stage 2-followup C: track which (claim_id, target_name) pairs have
+        # already triggered a second-pass refined retrieval. Ensures we fire
+        # at most once per target even after dropping the strict turn==1 gate.
+        self._second_retrieval_targets: set[tuple[str, str]] = set()
+        # Stage 2-followup D: track which (claim_id, target_name) pairs have
+        # already had an unknown-identifier rescue retrieval, so the rescue
+        # fires at most once per target.
+        self._rescue_retrieval_targets: set[tuple[str, str]] = set()
         # Sprint 24: per-prove LSP outline/hover cache + premise enrichment.
         # The cache is constructed lazily via ``_get_lsp_cache`` because
         # ``self.lsp_client`` may be swapped by tests *after* ``__init__``.
@@ -841,6 +909,8 @@ class Prover:
         self._tool_usage_traces = []
         self._state_transitions = []
         self._progress_deltas = []
+        self._second_retrieval_targets = set()
+        self._rescue_retrieval_targets = set()
         self.file_controller.initialize(job_id, working_code)
 
         try:
@@ -2280,7 +2350,47 @@ class Prover:
         on_progress: Callable[[str, dict[str, Any]], None] | None,
     ) -> tuple[str | None, ProverFailure | None]:
         before_state = self._mathlib_harness_state(session=session, goals=goals)
-        retrieval_event = self._retrieve_mathlib_premises(before_state.get("goals") or [], k=5)
+        claim_id = packet.theorem_name
+        # Stage 2-followup A: when the harness's probe shows an empty goal
+        # state, running the model produces a redundant tactic that the stall
+        # detector then flags as failure. Yield to the outer loop's LSP-search
+        # fallback (the path that historically closed claims like
+        # t2_contraction_mapping_fixed_point) instead of claiming closure —
+        # signalling closure here would bypass the final compile check.
+        if not (before_state.get("goals") or []):
+            self._emit_progress(
+                on_progress,
+                "harness_skipped_empty_goals",
+                job_id=job_id,
+                stage="prover",
+                status="running_prover",
+                message="Mathlib harness saw empty goal state; deferring to LSP search fallback.",
+                metadata={
+                    "turn": turn,
+                    "target_name": target.name,
+                    "claim_type": "mathlib_native",
+                    "mathlib_native_mode": True,
+                    "claim_id": claim_id,
+                },
+            )
+            audit_events.append(
+                AuditEvent(
+                    stage="prover",
+                    event_type="mathlib_native_harness_skipped_empty_goals",
+                    provider=backend.provider,
+                    model=backend.model,
+                    success=True,
+                    metadata={
+                        "turn": turn,
+                        "target_name": target.name,
+                        "claim_id": claim_id,
+                    },
+                )
+            )
+            return None, None
+        retrieval_event = self._retrieve_mathlib_premises(
+            before_state.get("goals") or [], k=5, claim_id=claim_id
+        )
         retrieval_payload = retrieval_event.to_dict()
         self._retrieval_events.append(retrieval_payload)
         self._emit_progress(
@@ -2314,7 +2424,9 @@ class Prover:
             goals=before_state.get("goals") or goals,
             current_code=session.read_code(),
         )
-        ls_event = self._retrieve_lean_search_premises(ls_query, k=5)
+        ls_event = self._retrieve_lean_search_premises(
+            ls_query, k=5, state=before_state, claim_id=claim_id
+        )
         ls_payload = ls_event.to_dict()
         self._retrieval_events.append(ls_payload)
         self._emit_progress(
@@ -2347,19 +2459,28 @@ class Prover:
             ls_event.retrieved_premises,
             k=8,
         )
-        # Sprint 23 Task 3: stall-recovery — if last turn made no progress and
-        # we still have search budget, do a refined leansearch keyed on the
-        # current unsolved subgoal text and merge those premises in.
+        # Sprint 23 Task 3 + Stage 2-followup C: stall-recovery — if last turn
+        # made no progress and we still have search budget, do a refined
+        # leansearch keyed on the current unsolved subgoal text and merge
+        # those premises in. Per-target idempotence prevents re-firing.
         prev_delta = self._last_progress_delta_obj()
-        if self._should_do_second_retrieval(
-            turn=turn - 1,
-            last_delta=prev_delta,
-            budget_remaining_frac=self._budget_remaining_frac(),
+        target_key = (claim_id or "", target.name or "")
+        if (
+            target_key not in self._second_retrieval_targets
+            and self._should_do_second_retrieval(
+                last_delta=prev_delta,
+                budget_remaining_frac=self._budget_remaining_frac(),
+            )
         ):
             refined_query = self._refined_leansearch_query(before_state)
             if refined_query and refined_query != ls_query:
+                self._second_retrieval_targets.add(target_key)
                 ls2_event = self._retrieve_lean_search_premises(
-                    refined_query, k=5, retrieval_pass=2
+                    refined_query,
+                    k=5,
+                    retrieval_pass=2,
+                    state=before_state,
+                    claim_id=claim_id,
                 )
                 ls2_payload = ls2_event.to_dict()
                 self._retrieval_events.append(ls2_payload)
@@ -2396,6 +2517,66 @@ class Prover:
                 merged_premises = self._merge_retrieval_premises(
                     merged_premises,
                     ls2_event.retrieved_premises,
+                    k=10,
+                )
+        # Stage 2-followup D: rescue retrieval after a hallucinated identifier.
+        # When the model's prior tactic raised "unknown identifier 'X'", run an
+        # extra LeanSearch keyed on the snake/camel parts of X — those tokens
+        # are usually the right concept (e.g. monotone_bddAbove_converges →
+        # "monotone bddAbove converges theorem") even when the name itself is
+        # made up. Fires at most once per target.
+        if (
+            target_key not in self._rescue_retrieval_targets
+            and self._budget_remaining_frac() > 0.20
+        ):
+            rescue_query = self._rescue_query_from_recent_trace(trace, target.name)
+            if rescue_query and rescue_query != ls_query:
+                self._rescue_retrieval_targets.add(target_key)
+                rescue_event = self._retrieve_lean_search_premises(
+                    rescue_query,
+                    k=5,
+                    retrieval_pass=2,
+                    state=before_state,
+                    claim_id=claim_id,
+                )
+                rescue_payload = rescue_event.to_dict()
+                self._retrieval_events.append(rescue_payload)
+                self._emit_progress(
+                    on_progress,
+                    "retrieval_event",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message="Rescue LeanSearch after unknown-identifier error.",
+                    metadata={
+                        "turn": turn,
+                        "target_name": target.name,
+                        "claim_type": "mathlib_native",
+                        "mathlib_native_mode": True,
+                        "rescue_query": rescue_query,
+                        "RetrievalEvent": rescue_payload,
+                    },
+                )
+                audit_events.append(
+                    AuditEvent(
+                        stage="prover",
+                        event_type="RetrievalEvent",
+                        provider=backend.provider,
+                        model=backend.model,
+                        success=True,
+                        metadata={
+                            "turn": turn,
+                            "target_name": target.name,
+                            "retrieval_pass": 2,
+                            "rescue": True,
+                            "rescue_query": rescue_query,
+                            **rescue_payload,
+                        },
+                    )
+                )
+                merged_premises = self._merge_retrieval_premises(
+                    merged_premises,
+                    rescue_event.retrieved_premises,
                     k=10,
                 )
         if not merged_premises:
@@ -2706,14 +2887,25 @@ class Prover:
             "state_hash": state_hash,
         }
 
-    def _retrieve_mathlib_premises(self, goals: list[str], *, k: int) -> RetrievalEvent:
+    def _retrieve_mathlib_premises(
+        self,
+        goals: list[str],
+        *,
+        k: int,
+        claim_id: str | None = None,
+    ) -> RetrievalEvent:
         started_at = time.perf_counter()
         premises: list[dict[str, Any]] = []
+        error_code: str | None = None
         try:
             from src.retrieval.mathlib_rag import retrieve_premises
 
             raw_premises = retrieve_premises("\n".join(goals), k=k)
-        except Exception:
+        except Exception as exc:  # Stage 2 H.2: surface RAG failures as audit events.
+            self._handle_lsp_error(
+                "mathlib_rag", exc, context="\n".join(goals)[:120]
+            )
+            error_code = "mathlib_rag_unavailable"
             raw_premises = []
         for premise in list(raw_premises or [])[:k]:
             if hasattr(premise, "to_dict"):
@@ -2736,6 +2928,8 @@ class Prover:
             scores=scores,
             latency_ms=(time.perf_counter() - started_at) * 1000.0,
             k=k,
+            claim_id=claim_id,
+            error_code=error_code,
         )
 
     def _handle_lsp_error(
@@ -2764,42 +2958,119 @@ class Prover:
         )
 
     def _retrieve_lean_search_premises(
-        self, query: str, *, k: int, retrieval_pass: int = 1
+        self,
+        query: str,
+        *,
+        k: int,
+        retrieval_pass: int = 1,
+        state: dict[str, Any] | None = None,
+        claim_id: str | None = None,
     ) -> RetrievalEvent:
+        """Enhanced with observable LeanSearchFailureEvent on 0-results or exceptions,
+        plus one retry using refined subgoal query from state (backwards-compatible).
+        Preserves exact success path, budget recording, and enrichment.
+        """
         started_at = time.perf_counter()
-        if not self.budget_tracker.can_search():
-            return RetrievalEvent(
-                source="lean_leansearch",
-                query=query,
-                latency_ms=0.0,
-                k=k,
-                retrieval_pass=retrieval_pass,
-            )
+        original_query = query
+        used_query = query
+        refined_query: str | None = None
+        retry_attempted = False
         premises: list[dict[str, Any]] = []
-        try:
-            payload = self.lsp_client.lean_leansearch(query, num_results=k)
-            # Record budget only on a successful round-trip so that retries on
-            # LSP outage do not exhaust the search budget for the run.
-            self.budget_tracker.record("lean_leansearch")
-            items = (payload or {}).get("items") or []
-            for item in items[:k]:
-                name = str(item.get("name") or item.get("theorem_name") or "")
-                if not name:
-                    continue
-                premises.append(
-                    {
-                        "name": name,
-                        "score": 0.80,
-                        "statement": item.get("type") or item.get("statement"),
-                        "docstring": item.get("docstring"),
-                        "file_path": item.get("module"),
-                        "tags": [],
-                        "dependencies": [],
-                        "source": "lean_leansearch",
-                    }
+        error: Exception | None = None
+
+        if not self.budget_tracker.can_search():
+            error = RuntimeError("search budget exhausted")
+        else:
+            for attempt in range(2):  # exactly one retry
+                if attempt > 0:
+                    retry_attempted = True
+                    if state is not None:
+                        refined_query = self._refined_leansearch_query(state)
+                        if refined_query and refined_query != used_query:
+                            used_query = refined_query
+                            premises = []  # reset for retry
+                    else:
+                        # fallback refinement from query text (subgoal-like)
+                        refined_query = (
+                            self._refined_leansearch_query({"goals": [used_query]})
+                            or used_query[:240]
+                        )
+                        if refined_query != used_query:
+                            used_query = refined_query
+                            premises = []
+
+                try:
+                    payload = self.lsp_client.lean_leansearch(
+                        used_query, num_results=k
+                    )
+                    # Record budget only on a successful round-trip so that retries on
+                    # LSP outage do not exhaust the search budget for the run.
+                    self.budget_tracker.record("lean_leansearch")
+                    items = (payload or {}).get("items") or []
+                    for item in items[:k]:
+                        name = str(
+                            item.get("name") or item.get("theorem_name") or ""
+                        )
+                        if not name:
+                            continue
+                        premises.append(
+                            {
+                                "name": name,
+                                "score": 0.80,
+                                "statement": item.get("type")
+                                or item.get("statement"),
+                                "docstring": item.get("docstring"),
+                                "file_path": item.get("module"),
+                                "tags": [],
+                                "dependencies": [],
+                                "source": "lean_leansearch",
+                            }
+                        )
+                    if premises:
+                        break  # success
+                    # successful call but empty = failure for retry
+                    if attempt == 0:
+                        continue
+                except Exception as exc:
+                    error = exc
+                    self._handle_lsp_error(
+                        "lean_leansearch", exc, context=used_query[:120]
+                    )
+                    if attempt == 0:
+                        continue
+                    break
+
+        # Make failures observable with structured event (visible in JSONL/audit)
+        if not premises or error is not None:
+            failure_event = LeanSearchFailureEvent(
+                query=original_query,
+                refined_query=refined_query,
+                error_code=(
+                    "no_results"
+                    if not premises and error is None
+                    else "lsp_error"
+                ),
+                error_message=str(error) if error else "lean_leansearch returned 0 results",
+                retry_attempted=retry_attempted,
+                hit=bool(premises),
+                latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                retrieval_pass=retrieval_pass,
+                claim_id=claim_id,
+            )
+            backend = getattr(self, "primary_backend", None)
+            log_event(
+                AuditEvent(
+                    stage="prover",
+                    event_type="LeanSearchFailureEvent",
+                    provider=backend.provider if backend is not None else "unknown",
+                    model=backend.model if backend is not None else "unknown",
+                    success=False,
+                    error_code=failure_event.error_code,
+                    error_message=failure_event.error_message,
+                    metadata=failure_event.to_dict(),
                 )
-        except Exception as exc:
-            self._handle_lsp_error("lean_leansearch", exc, context=query[:120])
+            )
+
         # Sprint 23 Task 2: enrich each leansearch premise with outline+hover.
         enriched_count = self._enrich_leansearch_premises(premises)
         scores = [float(p.get("score", 0.0)) for p in premises]
@@ -2809,9 +3080,10 @@ class Prover:
             latency_ms=(time.perf_counter() - started_at) * 1000.0,
             k=k,
             source="lean_leansearch",
-            query=query,
+            query=used_query,
             enriched_count=enriched_count,
             retrieval_pass=retrieval_pass,
+            claim_id=claim_id,
         )
 
     def _get_lsp_cache(self) -> LSPCache:
@@ -2879,7 +3151,9 @@ class Prover:
         prompt_premises = [
             self._project_premise_for_prompt(p) for p in (retrieved_premises or [])
         ]
-        # Sprint 23 Task 3: decomposition hint for goals with nested quantifiers/conjuncts.
+        # Stage 1 Task 2: strengthened decomposition hint (actionable tactics) + concise
+        # multi-step patterns (consider-this guidance). Aligns with lean4_proving skill:
+        # structural decomposition only; trust harness premises; no long inventories.
         rules = [
             "Return one apply_tactic action.",
             "Prefer tactics that reference retrieved Mathlib premises.",
@@ -2887,10 +3161,31 @@ class Prover:
         ]
         if self._goals_need_decomposition_hint(state.get("goals")):
             rules.append(
-                "If a goal contains nested quantifiers (∀/∃) or conjuncts (∧/↔), "
-                "consider intro/obtain/refine to introduce hypotheses or split the goal "
-                "before applying retrieved premises."
+                "If goal has quantifiers (∀/∃) or conjuncts (∧/↔), start with "
+                "intro (add hypotheses), obtain/cases (existentials), refine (premise "
+                "with holes), or constructor (split) before retrieved premises."
             )
+            rules.append(
+                "Consider patterns: 1. Quantified: `intro h; obtain ⟨x,hx⟩:=premise h; "
+                "refine ⟨x,hx,_⟩`. 2. Conjunctive: `constructor; · exact p1; · refine p2`. "
+                "3. Nested: `cases h with h1 h2; refine ...` (use Mathlib lemmas). "
+                "4. ExistsMembership-Conjunctive: `obtain ⟨x, hxs, hP⟩ := premise hyps; "
+                "exact ⟨x, hxs, hP, hQ⟩`."
+            )
+        # Stage 2 P1.B: premise-utilization protocol — teaches the model how to
+        # consume the enriched fields the harness already supplies (full type
+        # signature, detailed docstring, declaration location). General; no
+        # claim-specific guidance.
+        premise_utilization = [
+            "If a premise's full_type_signature ends in your goal shape, prefer "
+            "`exact <name> ...` or `apply <name>`.",
+            "If a premise has form `(h : P) → ∃ x, Q x` and your goal is `∃ x, Q x`, "
+            "use `obtain ⟨x, hx⟩ := <name> <hyp>` then close.",
+            "Match a premise by detailed_docstring keywords against the operators "
+            "and types in your current goal before guessing.",
+            "Prefer premises whose declaration_location lies in a Mathlib namespace "
+            "matching your goal's types.",
+        ]
         return json.dumps(
             {
                 "claim": packet.claim,
@@ -2909,6 +3204,7 @@ class Prover:
                     "only_allowed_tool": "apply_tactic",
                     "use_retrieved_premises": True,
                     "rules": rules,
+                    "premise_utilization": premise_utilization,
                 },
                 "response_schema": {
                     "action_type": "tool",
@@ -2949,18 +3245,19 @@ class Prover:
     @staticmethod
     def _should_do_second_retrieval(
         *,
-        turn: int,
         last_delta: ProgressDelta | None,
         budget_remaining_frac: float,
+        turn: int | None = None,  # accepted for backwards compatibility, ignored
     ) -> bool:
-        """Sprint 23 Task 3: stall-recovery heuristic for a second leansearch pass.
+        """Stall-recovery heuristic for a second leansearch pass.
 
-        Fires when the first turn made no progress, the model has budget left,
-        and we haven't already done a second pass.
+        Stage 2-followup C: dropped the strict ``turn == 1`` gate. Fires on
+        any turn where the previous turn produced no progress and budget is
+        ample. Per-target idempotence is enforced at the call site via the
+        ``_second_retrieval_targets`` set, so this stays a pure heuristic.
         """
+        del turn  # Backwards-compat parameter, no longer load-bearing.
         if last_delta is None:
-            return False
-        if turn != 1:
             return False
         if last_delta.goals_reduced:
             return False
@@ -2970,8 +3267,12 @@ class Prover:
     def _refined_leansearch_query(state: dict[str, Any]) -> str | None:
         """Build a refined leansearch query from the current unsolved subgoal text.
 
-        Returns the trimmed first goal from the state, or None if no goal text
-        is available.
+        Stage 2 P1.A: walks the full goal text (hypotheses + ⊢) and pulls
+        Mathlib-style CamelCase identifiers (IsCompact, Monotone, BddAbove,
+        IsMaxOn, ContinuousOn, Tendsto, …). These dominate Mathlib lemma names
+        so a query built from them retrieves better than raw goal text.
+        Falls back to the previous goal-line behaviour when no identifiers
+        are detected.
         """
         goals = state.get("goals") or []
         if not goals:
@@ -2980,11 +3281,44 @@ class Prover:
         text = str(first or "").strip()
         if not text:
             return None
-        # Trim to one logical line and cap length to keep the query effective.
+        idents = _extract_mathlib_idents(text)
+        if idents:
+            joined = " ".join(idents[:4])
+            if not any(kw in joined.lower() for kw in ("theorem", "lemma", "prove")):
+                joined = f"{joined} theorem"
+            return joined[:200]
+        # Fallback: original goal-only behaviour for non-Mathlib goals.
         first_line = text.splitlines()[0].strip()
         if not first_line:
             first_line = text
-        return first_line[:240]
+        key_part = first_line.split("⊢")[-1].strip() if "⊢" in first_line else first_line
+        if not any(kw in key_part.lower() for kw in ["theorem", "lemma", "prove"]):
+            key_part += " theorem"
+        return key_part[:200]
+
+    @staticmethod
+    def _rescue_query_from_recent_trace(
+        trace: list[ProverTraceStep],
+        target_name: str | None,
+    ) -> str | None:
+        """Stage 2-followup D: scan the recent harness trace for an
+        ``unknown identifier '<X>'`` error from a prior tactic on this target,
+        and turn it into a concept-token query for LeanSearch.
+        """
+        if not trace:
+            return None
+        for step in reversed(trace):
+            if target_name and step.target_name and step.target_name != target_name:
+                continue
+            if step.action_type != "mathlib_native_harness_loop":
+                continue
+            if not step.tool_result:
+                continue
+            ident = _extract_unknown_identifier(step.tool_result)
+            if ident:
+                query = _query_from_failed_identifier(ident)
+                return query or None
+        return None
 
     def _last_progress_delta_obj(self) -> ProgressDelta | None:
         """Return the most recent ProgressDelta as a typed object (None if empty)."""
@@ -3381,6 +3715,19 @@ class Prover:
         current_code: str,
     ) -> str:
         theorem_goal = theorem_goal_statement(current_code) or ""
+        # Stage 2-followup B: prefer Mathlib-style CamelCase identifiers when
+        # we can find them in the goal/theorem text. Falls back to the original
+        # verbose join when no idents are present, preserving existing behaviour
+        # on natural-language-only claims.
+        ident_source = "\n".join(
+            chunk for chunk in (theorem_goal, *(goals[:1])) if chunk
+        )
+        idents = _extract_mathlib_idents(ident_source)
+        if idents:
+            joined = " ".join(idents[:5])
+            if not any(kw in joined.lower() for kw in ("theorem", "lemma", "prove")):
+                joined = f"{joined} theorem"
+            return joined[:200]
         chunks = [packet.claim, theorem_goal, *(goals[:1])]
         return " ".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())[:900]
 
