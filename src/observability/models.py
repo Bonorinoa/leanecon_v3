@@ -153,6 +153,27 @@ class SynthesisEvent:
 
 
 @dataclass(frozen=True)
+class PremiseResolutionEvent:
+    raw_name: str
+    resolved_name: str | None = None
+    resolved: bool = False
+    source: str = ""
+    resolution_method: str = ""
+    failure_reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": "PremiseResolutionEvent",
+            "raw_name": self.raw_name,
+            "resolved_name": self.resolved_name,
+            "resolved": bool(self.resolved),
+            "source": self.source,
+            "resolution_method": self.resolution_method,
+            "failure_reason": self.failure_reason,
+        }
+
+
+@dataclass(frozen=True)
 class ProgressDelta:
     goals_reduced: bool = False
     complexity_reduced: bool = False
@@ -172,6 +193,31 @@ class ProgressDelta:
             "goal_count_after": int(self.goal_count_after),
             "complexity_before": int(self.complexity_before),
             "complexity_after": int(self.complexity_after),
+        }
+
+
+@dataclass(frozen=True)
+class CandidateTacticEvent:
+    tactic: str
+    origin: str
+    premise_name: str | None = None
+    success: bool = False
+    committed: bool = False
+    progress_delta: ProgressDelta | None = None
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": "CandidateTacticEvent",
+            "tactic": self.tactic,
+            "origin": self.origin,
+            "premise_name": self.premise_name,
+            "success": bool(self.success),
+            "committed": bool(self.committed),
+            "progress_delta": self.progress_delta.to_dict()
+            if self.progress_delta is not None
+            else None,
+            "error": self.error,
         }
 
 

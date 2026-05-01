@@ -219,6 +219,7 @@ class ProverSynthesisMixin:
                 "file_outline": state.get("file_outline"),
                 "retrieved_premises": prompt_premises,
                 "proof_sketch": proof_sketch,
+                "candidate_tactics": (proof_sketch or {}).get("candidate_tactics", []),
                 "synthesis_few_shots": self._proof_synthesizer.few_shots(),
                 "recent_trace": recent_steps,
                 "instructions": {
@@ -226,6 +227,10 @@ class ProverSynthesisMixin:
                     "only_allowed_tool": "apply_tactic",
                     "use_retrieved_premises": True,
                     "rules": rules,
+                    "candidate_tactic_rule": (
+                        "If candidate_tactics is non-empty, try the first candidate that "
+                        "mentions a retrieved premise before inventing a new tactic."
+                    ),
                     "premise_utilization": premise_utilization,
                 },
                 "response_schema": {

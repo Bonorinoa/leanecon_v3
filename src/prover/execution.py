@@ -21,7 +21,9 @@ from src.config import (
 from src.formalizer.models import FormalizationPacket
 from src.observability import (
     AuditEvent,
+    CandidateTacticEvent,
     LeanLSPUnavailableError,
+    PremiseResolutionEvent,
     SpanRecorder,
     StateTransition,
     SynthesisEvent,
@@ -32,11 +34,13 @@ from src.observability import (
     complete_usage,
     stable_hash_text,
 )
+from src.prover.synthesizer import ResolvedPremise, TacticCandidate
 from src.prover.budget import (
     DirectCloseAttemptSummary,
     DirectClosePolicy,
     MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT,
     MATHLIB_NATIVE_LSP_SEARCH_RESULTS,
+    MATHLIB_NATIVE_SUBGOAL_MAX_TURNS,
     POST_DIRECT_CLOSURE_STALL_LIMIT,
     SHORTCUT_ATTEMPT_TIMEOUT_SECONDS,
     SHORTCUT_FALLBACK_TACTICS,
@@ -97,6 +101,14 @@ def _compat_log_event(*args: Any, **kwargs: Any) -> Any:
 def _count_standalone_sorries(code: str) -> int:
     return sum(1 for line in code.splitlines() if line.strip() == "sorry")
 
+def _ensure_mathlib_import(code: str) -> str:
+    if "import Mathlib\n" in code or code.startswith("import Mathlib"):
+        return code
+    first_import = re.search(r"^import ", code, re.MULTILINE)
+    if first_import:
+        return code[: first_import.start()] + "import Mathlib\n" + code[first_import.start() :]
+    return "import Mathlib\n\n" + code
+
 def _replace_last_sorry(code: str, replacement: str) -> str:
     lines = code.splitlines()
     for index in range(len(lines) - 1, -1, -1):
@@ -108,6 +120,37 @@ def _replace_last_sorry(code: str, replacement: str) -> str:
         return "\n".join(lines[:index] + replacement_lines + lines[index + 1 :]) + "\n"
     raise ValueError("No standalone `sorry` found.")
 
+def _replace_named_have_body(code: str, have_name: str, replacement: str) -> str:
+    lines = code.splitlines()
+    header_index: int | None = None
+    header_indent = ""
+    pattern = re.compile(rf"^(\s*)have\s+{re.escape(have_name)}\s*:\s*.+:=\s*by\s*$")
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if match is None:
+            continue
+        header_index = index
+        header_indent = match.group(1)
+        break
+    if header_index is None:
+        raise ValueError(f"Could not locate subgoal `{have_name}`.")
+
+    body_start = header_index + 1
+    body_end = body_start
+    base_width = len(header_indent)
+    while body_end < len(lines):
+        line = lines[body_end]
+        stripped = line.strip()
+        if stripped:
+            indent_width = len(line) - len(line.lstrip())
+            if indent_width <= base_width:
+                break
+        body_end += 1
+
+    replacement_indent = f"{header_indent}  "
+    replacement_lines = [f"{replacement_indent}{part}" for part in replacement.splitlines()]
+    return "\n".join(lines[:body_start] + replacement_lines + lines[body_end:]) + "\n"
+
 def _replace_named_theorem_body(code: str, theorem_name: str, replacement: str) -> str:
     declaration = re.search(rf"(?m)^(theorem|lemma)\s+{re.escape(theorem_name)}\b", code)
     if declaration is None:
@@ -117,7 +160,58 @@ def _replace_named_theorem_body(code: str, theorem_name: str, replacement: str) 
         raise ValueError(f"Could not locate proof body for `{theorem_name}`.")
     body_start = declaration.start() + header.end()
     replacement_block = "\n".join(f"  {part}" for part in replacement.splitlines())
-    return f"{code[:body_start]}{replacement_block}\n"
+    next_decl = re.search(r"(?m)^(/--|theorem |lemma )", code[body_start:])
+    body_end = body_start + next_decl.start() if next_decl is not None else len(code)
+    return f"{code[:body_start]}{replacement_block}\n{code[body_end:].lstrip()}"
+
+def _top_level_theorem_names(code: str) -> list[str]:
+    return re.findall(r"(?m)^(?:theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_']*)\b", code)
+
+def _replace_single_theorem_body(code: str, replacement: str) -> str:
+    names = _top_level_theorem_names(code)
+    if len(names) != 1:
+        raise ValueError("Expected exactly one theorem or lemma proof site.")
+    return _replace_named_theorem_body(code, names[0], replacement)
+
+def _replace_target_proof_site(
+    code: str,
+    *,
+    theorem_name: str,
+    target_name: str,
+    replacement: str,
+) -> str:
+    # For theorem_body targets, replace the whole body even when subgoal sorries remain
+    # from bypassed helpers (which leave the working_code with multiple standalone sorries).
+    if target_name == "theorem_body":
+        try:
+            return _replace_named_theorem_body(code, theorem_name, replacement)
+        except ValueError:
+            pass
+    if _count_standalone_sorries(code) > 0:
+        return _replace_last_sorry(code, replacement)
+    try:
+        return _replace_named_theorem_body(code, theorem_name, replacement)
+    except ValueError:
+        pass
+    try:
+        return _replace_named_have_body(code, target_name, replacement)
+    except ValueError:
+        pass
+    try:
+        return _replace_single_theorem_body(code, replacement)
+    except ValueError:
+        pass
+    raise ValueError(f"Could not locate proof site for `{target_name}`.")
+
+def _has_target_proof_site(code: str, *, theorem_name: str, target_name: str) -> bool:
+    if _count_standalone_sorries(code) > 0:
+        return True
+    if re.search(rf"(?m)^(theorem|lemma)\s+{re.escape(theorem_name)}\b", code):
+        return True
+    return (
+        re.search(rf"(?m)^\s*have\s+{re.escape(target_name)}\s*:\s*.+:=\s*by\s*$", code)
+        is not None
+    )
 
 def _proof_body_fingerprint(code: str, theorem_name: str) -> str:
     try:
@@ -159,7 +253,13 @@ def _replace_subgoal_with_helper(current_code: str, subgoal_name: str, helper_na
     return current_code[: match.start()] + replacement + current_code[match.end() :]
 
 def _standalone_theorem_code(packet: FormalizationPacket, theorem_name: str, statement: str) -> str:
-    lines = [*(f"import {module}" for module in packet.imports)]
+    imports: list[str] = []
+    for module in [*packet.imports, *packet.selected_imports]:
+        if module and module not in imports:
+            imports.append(module)
+    if packet.claim_type == "mathlib_native" and "Mathlib" not in imports:
+        imports.insert(0, "Mathlib")
+    lines = [*(f"import {module}" for module in imports)]
     if packet.open_statements:
         lines.append("")
         lines.extend(f"open {statement_}" for statement_ in packet.open_statements)
@@ -276,6 +376,8 @@ class ProverExecutionMixin:
         targets = self._build_targets(packet)
         attempted_backends: list[str] = []
         working_code = packet.lean_code
+        if self._normalized_claim_type(packet) == "mathlib_native":
+            working_code = _ensure_mathlib_import(working_code)
         resolved_target_timeouts = self._resolve_target_timeouts(
             timeout=timeout, target_timeouts=target_timeouts
         )
@@ -373,6 +475,9 @@ class ProverExecutionMixin:
                 )
                 target_timeout = self._timeout_for_target(target, resolved_target_timeouts)
                 if target.kind == "subgoal":
+                    target_max_turns = max_turns
+                    if self._normalized_claim_type(packet) == "mathlib_native":
+                        target_max_turns = min(max_turns, MATHLIB_NATIVE_SUBGOAL_MAX_TURNS)
                     helper_name = f"proved_{packet.theorem_name}_{index}"
                     target.helper_theorem_name = helper_name
                     target_code = _standalone_theorem_code(packet, helper_name, target.statement)
@@ -383,7 +488,7 @@ class ProverExecutionMixin:
                         trace=trace,
                         job_id=job_id,
                         attempted_backends=attempted_backends,
-                        max_turns=max_turns,
+                        max_turns=target_max_turns,
                         timeout=target_timeout,
                         target_timeouts=resolved_target_timeouts,
                         allow_decomposition=allow_decomposition,
@@ -394,6 +499,50 @@ class ProverExecutionMixin:
                         on_progress=on_progress,
                     )
                     if not proved:
+                        if (
+                            self._normalized_claim_type(packet) == "mathlib_native"
+                            and any(
+                                remaining.kind == "theorem_body"
+                                for remaining in targets_to_iterate[index:]
+                            )
+                        ):
+                            target.status = "skipped"
+                            self._emit_progress(
+                                on_progress,
+                                "prover_turn",
+                                job_id=job_id,
+                                stage="prover",
+                                status="running_prover",
+                                message=(
+                                    "Mathlib-native subgoal failed; continuing to the main "
+                                    "theorem body."
+                                ),
+                                metadata={
+                                    "target_name": target.name,
+                                    "target_kind": target.kind,
+                                    "failure_code": target_failure.error_code
+                                    if target_failure is not None
+                                    else None,
+                                    "fallback_target": "theorem_body",
+                                },
+                            )
+                            audit_events.append(
+                                AuditEvent(
+                                    stage="prover",
+                                    event_type="mathlib_native_subgoal_bypass",
+                                    provider=self.primary_backend.provider,
+                                    model=self.primary_backend.model,
+                                    success=True,
+                                    metadata={
+                                        "target_name": target.name,
+                                        "failure_code": target_failure.error_code
+                                        if target_failure is not None
+                                        else None,
+                                        "fallback_target": "theorem_body",
+                                    },
+                                )
+                            )
+                            continue
                         target.status = "failed"
                         failure = target_failure
                         break
@@ -958,6 +1107,56 @@ class ProverExecutionMixin:
                             attempted_backends.append(active_backend.name)
                         session.write_code(lsp_closed)
                         return True, session.read_code(), None
+                    if target.kind in {"subgoal", "apollo_lemma"}:
+                        self._emit_progress(
+                            on_progress,
+                            "prover_turn",
+                            job_id=job_id,
+                            stage="prover",
+                            status="running_prover",
+                            message=(
+                                "Mathlib-native helper search exhausted; skipping provider "
+                                "fallback for this helper."
+                            ),
+                            metadata={
+                                "turn": turn,
+                                "target_name": target.name,
+                                "target_kind": target.kind,
+                                "claim_type": direct_close_policy.claim_type,
+                                "mathlib_native_mode": True,
+                            },
+                        )
+                        audit_events.append(
+                            AuditEvent(
+                                stage="prover",
+                                event_type="mathlib_native_helper_search_exhausted",
+                                provider=active_backend.provider,
+                                model=active_backend.model,
+                                success=False,
+                                error_code="native_helper_search_exhausted",
+                                metadata={
+                                    "turn": turn,
+                                    "target_name": target.name,
+                                    "target_kind": target.kind,
+                                },
+                            )
+                        )
+                        return (
+                            False,
+                            session.read_code(),
+                            ProverFailure(
+                                reason="native_helper_search_exhausted",
+                                message=(
+                                    "Validated mathlib-native helper search exhausted before "
+                                    "the provider fallback."
+                                ),
+                                error_code="native_helper_search_exhausted",
+                                target_name=target.name,
+                                turn=turn,
+                                backend=active_backend.name,
+                                lean_feedback=session.get_goals(),
+                            ),
+                        )
 
                 prompt = _build_prompt(
                     packet=packet,
@@ -1424,6 +1623,27 @@ class ProverExecutionMixin:
                         },
                     )
                 )
+                if (
+                    mathlib_native_mode
+                    and action.tool.name == "apply_tactic"
+                    and not tool_result.is_error
+                    and session.solved
+                ):
+                    final_ok, _final_error = self._final_compile_validation(
+                        session=session,
+                        target=target,
+                        turn=turn,
+                        backend=active_backend,
+                        audit_events=audit_events,
+                        job_id=job_id,
+                        on_progress=on_progress,
+                    )
+                    if final_ok:
+                        return True, session.read_code(), None
+                    session.write_code(current_code)
+                    failed_turns += 1
+                    force_deterministic_recovery = True
+                    continue
                 shallow_loop_pattern = self._detect_shallow_loop_pattern(trace=trace, target=target)
                 if shallow_loop_pattern is not None:
                     if pre_tool_structural_state in exhausted_direct_closure_states:
@@ -1739,6 +1959,345 @@ class ProverExecutionMixin:
             ),
         )
 
+    def _record_premise_resolution_events(
+        self,
+        *,
+        resolved_premises: list[ResolvedPremise],
+        audit_events: list[AuditEvent],
+        backend: ProverBackend,
+        turn: int,
+        target: ProverTarget,
+        claim_id: str | None,
+        job_id: str,
+        on_progress: Callable[[str, dict[str, Any]], None] | None,
+    ) -> None:
+        for premise in resolved_premises:
+            event = PremiseResolutionEvent(
+                raw_name=premise.raw_name,
+                resolved_name=premise.lean_name,
+                resolved=premise.resolved,
+                source=premise.source,
+                resolution_method=premise.resolution_method,
+                failure_reason=premise.failure_reason,
+            )
+            payload = event.to_dict()
+            self._emit_progress(
+                on_progress,
+                "premise_resolution_event",
+                job_id=job_id,
+                stage="prover",
+                status="running_prover",
+                message="Recorded PremiseResolutionEvent.",
+                metadata={
+                    "turn": turn,
+                    "target_name": target.name,
+                    "claim_id": claim_id,
+                    "PremiseResolutionEvent": payload,
+                },
+            )
+            audit_events.append(
+                AuditEvent(
+                    stage="prover",
+                    event_type="PremiseResolutionEvent",
+                    provider=backend.provider,
+                    model=backend.model,
+                    success=premise.resolved,
+                    metadata={"turn": turn, "target_name": target.name, **payload},
+                )
+            )
+
+    def _record_candidate_tactic_event(
+        self,
+        *,
+        event: CandidateTacticEvent,
+        audit_events: list[AuditEvent],
+        backend: ProverBackend,
+        turn: int,
+        target: ProverTarget,
+        claim_id: str | None,
+        job_id: str,
+        on_progress: Callable[[str, dict[str, Any]], None] | None,
+    ) -> dict[str, Any]:
+        payload = event.to_dict()
+        self._emit_progress(
+            on_progress,
+            "candidate_tactic_event",
+            job_id=job_id,
+            stage="prover",
+            status="running_prover",
+            message="Recorded CandidateTacticEvent.",
+            metadata={
+                "turn": turn,
+                "target_name": target.name,
+                "claim_id": claim_id,
+                "CandidateTacticEvent": payload,
+            },
+        )
+        audit_events.append(
+            AuditEvent(
+                stage="prover",
+                event_type="CandidateTacticEvent",
+                provider=backend.provider,
+                model=backend.model,
+                success=event.success and event.committed,
+                metadata={"turn": turn, "target_name": target.name, **payload},
+            )
+        )
+        return payload
+
+    def _final_compile_validation(
+        self,
+        *,
+        session: _ActiveProofSession,
+        target: ProverTarget,
+        turn: int,
+        backend: ProverBackend,
+        audit_events: list[AuditEvent],
+        job_id: str,
+        on_progress: Callable[[str, dict[str, Any]], None] | None,
+    ) -> tuple[bool, str]:
+        compile_result = session.compile_current_code()
+        if bool(compile_result.get("success")) and not bool(compile_result.get("has_sorry")):
+            return True, ""
+        error_text = json.dumps(compile_result, ensure_ascii=True)
+        self._emit_progress(
+            on_progress,
+            "repl_compile_disagreement",
+            job_id=job_id,
+            stage="prover",
+            status="running_prover",
+            message="REPL solved the local state, but final materialized compile failed.",
+            metadata={
+                "turn": turn,
+                "target_name": target.name,
+                "error": error_text,
+                "code_hash": stable_hash_text(session.read_code()),
+            },
+        )
+        audit_events.append(
+            AuditEvent(
+                stage="prover",
+                event_type="repl_compile_disagreement",
+                provider=backend.provider,
+                model=backend.model,
+                success=False,
+                metadata={
+                    "turn": turn,
+                    "target_name": target.name,
+                    "error": error_text,
+                    "code_hash": stable_hash_text(session.read_code()),
+                },
+            )
+        )
+        return False, error_text
+
+    def _try_resolved_candidate_tactics(
+        self,
+        *,
+        packet: FormalizationPacket,
+        target: ProverTarget,
+        session: _ActiveProofSession,
+        trace: list[ProverTraceStep],
+        audit_events: list[AuditEvent],
+        backend: ProverBackend,
+        turn: int,
+        before_state: dict[str, Any],
+        candidates: list[TacticCandidate],
+        merged_premises: list[dict[str, Any]],
+        retrieval_payload: dict[str, Any],
+        lean_feedback: list[str],
+        claim_id: str | None,
+        job_id: str,
+        on_progress: Callable[[str, dict[str, Any]], None] | None,
+    ) -> tuple[str | None, bool]:
+        if not candidates:
+            return None, False
+
+        baseline_code = session.read_code()
+        before_hash = str(before_state["state_hash"])
+        target_theorem_name = self._target_theorem_name(packet, target)
+        for candidate in candidates:
+            session.write_code(baseline_code)
+            tool = ProverToolInvocation(
+                name="apply_tactic",
+                arguments={
+                    "tactic": candidate.tactic,
+                    "candidate_origin": candidate.origin,
+                    "candidate_premise_name": candidate.premise_name,
+                },
+            )
+            used_compile_fallback = not session.active_repl
+            if used_compile_fallback:
+                self.budget_tracker.record("compile_check")
+                try:
+                    candidate_code = _replace_target_proof_site(
+                        baseline_code,
+                        theorem_name=target_theorem_name,
+                        target_name=target.name,
+                        replacement=candidate.tactic,
+                    )
+                except ValueError as exc:
+                    compile_result = {"success": False, "errors": [str(exc)]}
+                    candidate_code = baseline_code
+                else:
+                    compile_result = _compat_compile_check(
+                        candidate_code,
+                        timeout=session.timeout,
+                    )
+                compile_success = bool(compile_result.get("success")) and not bool(
+                    compile_result.get("has_sorry")
+                )
+                if compile_success:
+                    session.write_code(candidate_code)
+                    session.solved = True
+                    session.goals = []
+                tool_result = ToolResult(
+                    f"{target.name}:compile_check",
+                    json.dumps(compile_result, ensure_ascii=True),
+                    is_error=not compile_success,
+                )
+            else:
+                tool_result = self._execute_tool(
+                    session=session,
+                    tool=tool,
+                    packet=packet,
+                    target=target,
+                )
+            after_state = self._mathlib_harness_state(session=session, goals=session.get_goals())
+            after_hash = str(after_state["state_hash"])
+            progress_delta = self._progress_delta_from_states(before_state, after_state)
+            committed = not tool_result.is_error and (
+                used_compile_fallback or not progress_delta.stall_detected
+            )
+            final_compile_error: str | None = None
+            if committed and session.solved:
+                final_ok, final_compile_error = self._final_compile_validation(
+                    session=session,
+                    target=target,
+                    turn=turn,
+                    backend=backend,
+                    audit_events=audit_events,
+                    job_id=job_id,
+                    on_progress=on_progress,
+                )
+                committed = final_ok
+
+            premise_match = self._proof_synthesizer.premise_match(
+                candidate.tactic,
+                merged_premises,
+            )
+            state_transition = StateTransition(
+                goal_count_before=len(before_state.get("goals") or []),
+                goal_count_after=len(after_state.get("goals") or []),
+                progress_delta=progress_delta,
+                state_hash_before=before_hash,
+                state_hash_after=after_hash,
+                turn_index=turn,
+            )
+            tool_usage = ToolUsageTrace(
+                tool_name="compile_check" if used_compile_fallback else tool.name,
+                args=tool.arguments,
+                result=tool_result.content,
+                state_hash_before=before_hash,
+                state_hash_after=after_hash,
+                success=not tool_result.is_error,
+            )
+            synthesis_event = SynthesisEvent(
+                tactic=candidate.tactic,
+                referenced_premises=premise_match.referenced_premises,
+                top3_match=premise_match.top3_match,
+                success=not tool_result.is_error,
+                target_name=target.name,
+                claim_id=claim_id,
+                decomposition_depth=target.recursion_depth,
+            )
+            candidate_event = CandidateTacticEvent(
+                tactic=candidate.tactic,
+                origin=candidate.origin,
+                premise_name=candidate.premise_name,
+                success=not tool_result.is_error,
+                committed=committed,
+                progress_delta=progress_delta,
+                error=final_compile_error
+                or (tool_result.content if tool_result.is_error else None),
+            )
+            progress_payload = progress_delta.to_dict()
+            transition_payload = state_transition.to_dict()
+            tool_payload = tool_usage.to_dict()
+            synthesis_payload = synthesis_event.to_dict()
+            candidate_payload = self._record_candidate_tactic_event(
+                event=candidate_event,
+                audit_events=audit_events,
+                backend=backend,
+                turn=turn,
+                target=target,
+                claim_id=claim_id,
+                job_id=job_id,
+                on_progress=on_progress,
+            )
+            self._tool_usage_traces.append(tool_payload)
+            self._state_transitions.append(transition_payload)
+            self._progress_deltas.append(progress_payload)
+            self._synthesis_events.append(synthesis_payload)
+            trace.append(
+                ProverTraceStep(
+                    turn=turn,
+                    backend=backend.name,
+                    target_name=target.name,
+                    action_type="mathlib_native_candidate_search",
+                    success=committed,
+                    rationale="Tried a tactic generated from a resolved retrieved premise.",
+                    tool_name="compile_check" if used_compile_fallback else tool.name,
+                    tool_arguments={
+                        **tool.arguments,
+                        "compile_fallback": used_compile_fallback,
+                        "RetrievalEvent": retrieval_payload,
+                        "ToolUsageTrace": tool_payload,
+                        "StateTransition": transition_payload,
+                        "ProgressDelta": progress_payload,
+                        "SynthesisEvent": synthesis_payload,
+                        "CandidateTacticEvent": candidate_payload,
+                        "retrieved_premises": merged_premises,
+                    },
+                    tool_result=tool_result.content if final_compile_error is None else final_compile_error,
+                    lean_feedback=lean_feedback,
+                    goals=session.get_goals(),
+                    code_snapshot=session.read_code(),
+                    error_code=self._tool_error_code(tool.name, tool_result.content)
+                    if tool_result.is_error
+                    else ("repl_compile_disagreement" if final_compile_error else None),
+                    repl_local_solved=not tool_result.is_error and bool(session.solved),
+                )
+            )
+            for event_name, payload in (
+                ("tool_usage_trace", tool_payload),
+                ("state_transition", transition_payload),
+                ("progress_delta", progress_payload),
+                ("synthesis_event", synthesis_payload),
+            ):
+                self._emit_progress(
+                    on_progress,
+                    event_name,
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message=f"Recorded {payload['event_type']}.",
+                    metadata={
+                        "turn": turn,
+                        "target_name": target.name,
+                        payload["event_type"]: payload,
+                    },
+                )
+
+            if committed:
+                if session.solved:
+                    return session.read_code(), True
+                return None, True
+            session.write_code(baseline_code)
+
+        session.write_code(baseline_code)
+        return None, False
+
     async def _try_mathlib_native_harness_loop(
         self,
         *,
@@ -1764,13 +2323,26 @@ class ProverExecutionMixin:
     ) -> tuple[str | None, ProverFailure | None]:
         before_state = self._mathlib_harness_state(session=session, goals=goals)
         claim_id = packet.theorem_name
+        target_theorem_name = self._target_theorem_name(packet, target)
+        has_proof_site = _has_target_proof_site(
+            session.read_code(),
+            theorem_name=target_theorem_name,
+            target_name=target.name,
+        )
+        can_search_empty_subgoal = bool(
+            target.kind == "subgoal" and has_proof_site and target.statement
+        )
         # Stage 2-followup A: when the harness's probe shows an empty goal
         # state, running the model produces a redundant tactic that the stall
         # detector then flags as failure. Yield to the outer loop's LSP-search
         # fallback (the path that historically closed claims like
         # t2_contraction_mapping_fixed_point) instead of claiming closure —
         # signalling closure here would bypass the final compile check.
-        if not (before_state.get("goals") or []):
+        if (
+            not (before_state.get("goals") or [])
+            and not goals
+            and (session.solved or not can_search_empty_subgoal)
+        ):
             self._emit_progress(
                 on_progress,
                 "harness_skipped_empty_goals",
@@ -1801,8 +2373,13 @@ class ProverExecutionMixin:
                 )
             )
             return None, None
+        effective_state = dict(before_state)
+        if not (effective_state.get("goals") or []) and goals:
+            effective_state["goals"] = list(goals)
+        elif not (effective_state.get("goals") or []) and can_search_empty_subgoal:
+            effective_state["goals"] = [target.statement]
         retrieval_event = self._retrieve_mathlib_premises(
-            before_state.get("goals") or [], k=5, claim_id=claim_id
+            effective_state.get("goals") or [], k=5, claim_id=claim_id
         )
         retrieval_payload = retrieval_event.to_dict()
         self._retrieval_events.append(retrieval_payload)
@@ -1834,7 +2411,7 @@ class ProverExecutionMixin:
         # ── LeanSearch (hybrid second pass) ───────────────────────────────────
         ls_query = self._mathlib_native_search_query(
             packet=packet,
-            goals=before_state.get("goals") or goals,
+            goals=effective_state.get("goals") or goals,
             current_code=session.read_code(),
         )
         ls_event = self._retrieve_lean_search_premises(
@@ -2040,17 +2617,56 @@ class ProverExecutionMixin:
 
         diagnostics = before_state.get("diagnostics")
         code_actions = before_state.get("code_actions")
+        resolved_premises = self._proof_synthesizer.resolve_premises(merged_premises)
+        prompt_premises = self._proof_synthesizer.premise_prompt_records(
+            merged_premises,
+            resolved_premises,
+        )
+        self._record_premise_resolution_events(
+            resolved_premises=resolved_premises,
+            audit_events=audit_events,
+            backend=backend,
+            turn=turn,
+            target=target,
+            claim_id=claim_id,
+            job_id=job_id,
+            on_progress=on_progress,
+        )
         proof_sketch = self._proof_synthesizer.build_sketch(
             packet=packet,
             target=target,
-            state=before_state,
-            premises=merged_premises,
+            state=effective_state,
+            premises=prompt_premises,
         )
+        tactic_candidates = self._proof_synthesizer.tactic_candidates(
+            state=effective_state,
+            premises=resolved_premises,
+            limit=6,
+        )
+        candidate_code, candidate_committed = self._try_resolved_candidate_tactics(
+            packet=packet,
+            target=target,
+            session=session,
+            trace=trace,
+            audit_events=audit_events,
+            backend=backend,
+            turn=turn,
+            before_state=effective_state,
+            candidates=tactic_candidates,
+            merged_premises=prompt_premises,
+            retrieval_payload=retrieval_payload,
+            lean_feedback=lean_feedback,
+            claim_id=claim_id,
+            job_id=job_id,
+            on_progress=on_progress,
+        )
+        if candidate_committed:
+            return candidate_code, None
         prompt = self._build_mathlib_harness_prompt(
             packet=packet,
             target=target,
-            state=before_state,
-            retrieved_premises=merged_premises,
+            state=effective_state,
+            retrieved_premises=prompt_premises,
             diagnostics=diagnostics,
             code_actions=code_actions,
             prior_trace=trace,
@@ -2184,10 +2800,33 @@ class ProverExecutionMixin:
             return None, None
 
         before_hash = str(before_state["state_hash"])
+        provider_tactic_text = str(action.tool.arguments.get("tactic") or "")
+        provider_premise_match = self._proof_synthesizer.premise_match(
+            provider_tactic_text,
+            prompt_premises,
+        )
+        synthesis_candidate_used = False
+        provider_tactic_normalized = provider_tactic_text.strip()
+        fast_provider_tactics = {
+            "assumption",
+            "trivial",
+            "rfl",
+            "simp",
+            "simpa",
+            "exact?",
+            "norm_num",
+            "linarith",
+            "ring",
+        }
+        if not provider_premise_match.matched and provider_tactic_normalized in fast_provider_tactics:
+            provider_premise_match = self._proof_synthesizer.premise_match(
+                provider_tactic_text,
+                prompt_premises,
+            )
         tactic_text = str(action.tool.arguments.get("tactic") or "")
         premise_match = self._proof_synthesizer.premise_match(
             tactic_text,
-            merged_premises,
+            prompt_premises,
         )
         tool_result = self._execute_tool(
             session=session,
@@ -2248,6 +2887,10 @@ class ProverExecutionMixin:
                     "ProgressDelta": progress_payload,
                     "SynthesisEvent": synthesis_payload,
                     "retrieved_premises": retrieval_event.retrieved_premises,
+                    "synthesis_candidate_used": synthesis_candidate_used,
+                    "provider_tactic": provider_tactic_text
+                    if synthesis_candidate_used
+                    else None,
                 },
                 tool_result=tool_result.content,
                 lean_feedback=lean_feedback,
@@ -2296,12 +2939,16 @@ class ProverExecutionMixin:
             )
         )
         if progress_delta.stall_detected:
-            if (
-                MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED
-                and allow_decomposition
-                and target.recursion_depth < max_recursion_depth
-                and self._extracted_lemmas < 3
-            ):
+            helper_skip_reason: str | None = None
+            if not MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED:
+                helper_skip_reason = "helper_lemma_disabled"
+            elif not allow_decomposition:
+                helper_skip_reason = "decomposition_disabled"
+            elif target.recursion_depth >= max_recursion_depth:
+                helper_skip_reason = "max_recursion_depth_reached"
+            elif self._extracted_lemmas >= 3:
+                helper_skip_reason = "helper_lemma_limit_reached"
+            else:
                 helper_action = self._proof_synthesizer.helper_lemma_action(
                     packet=packet,
                     target=target,
@@ -2310,7 +2957,9 @@ class ProverExecutionMixin:
                     premises=merged_premises,
                     index=self._extracted_lemmas + 1,
                 )
-                if helper_action is not None:
+                if helper_action is None:
+                    helper_skip_reason = "no_helper_statement"
+                else:
                     helper_trace_start = len(trace)
                     decomposed, rewritten = await self._run_decomposition(
                         packet=packet,
@@ -2364,6 +3013,37 @@ class ProverExecutionMixin:
                                 )
                             )
                         return rewritten, None
+                    helper_skip_reason = "helper_decomposition_failed"
+            if helper_skip_reason:
+                self._emit_progress(
+                    on_progress,
+                    "mathlib_helper_lemma_skipped",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message="Skipped mathlib helper-lemma extraction after stalled tactic.",
+                    metadata={
+                        "turn": turn,
+                        "target_name": target.name,
+                        "claim_id": claim_id,
+                        "reason": helper_skip_reason,
+                    },
+                )
+                audit_events.append(
+                    AuditEvent(
+                        stage="prover",
+                        event_type="mathlib_helper_lemma_skipped",
+                        provider=backend.provider,
+                        model=backend.model,
+                        success=False,
+                        metadata={
+                            "turn": turn,
+                            "target_name": target.name,
+                            "claim_id": claim_id,
+                            "reason": helper_skip_reason,
+                        },
+                    )
+                )
             return None, ProverFailure(
                 reason="progress_stall",
                 message="Harness apply_tactic left the mathlib-native state and goals unchanged.",
@@ -2374,6 +3054,25 @@ class ProverExecutionMixin:
                 lean_feedback=session.get_goals(),
             )
         if not tool_result.is_error and session.solved:
+            final_ok, final_error = self._final_compile_validation(
+                session=session,
+                target=target,
+                turn=turn,
+                backend=backend,
+                audit_events=audit_events,
+                job_id=job_id,
+                on_progress=on_progress,
+            )
+            if not final_ok:
+                return None, ProverFailure(
+                    reason="repl_compile_disagreement",
+                    message="Harness REPL solved the local goal, but the materialized theorem did not compile.",
+                    error_code="repl_compile_disagreement",
+                    target_name=target.name,
+                    turn=turn,
+                    backend=backend.name,
+                    lean_feedback=[final_error],
+                )
             return session.read_code(), None
         return None, None
 
@@ -2532,16 +3231,40 @@ class ProverExecutionMixin:
         theorem_name = self._target_theorem_name(packet, target)
         compiled_candidate_count = 0
         selected_lemma: str | None = None
+        candidate_failures: list[dict[str, str | None]] = []
         for proof, source, lemma_name in candidates[:MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT]:
             try:
-                candidate_code = _replace_named_theorem_body(code, theorem_name, proof)
-            except ValueError:
+                candidate_code = _replace_target_proof_site(
+                    code,
+                    theorem_name=theorem_name,
+                    target_name=target.name,
+                    replacement=proof,
+                )
+            except ValueError as exc:
+                if len(candidate_failures) < MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT:
+                    candidate_failures.append(
+                        {
+                            "proof": proof,
+                            "source": source,
+                            "lemma_name": lemma_name,
+                            "error": str(exc),
+                        }
+                    )
                 continue
             compiled_candidate_count += 1
             self.budget_tracker.record("compile_check")
             try:
                 result = _compat_compile_check(candidate_code, timeout=attempt_timeout)
-            except Exception:
+            except Exception as exc:
+                if len(candidate_failures) < MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT:
+                    candidate_failures.append(
+                        {
+                            "proof": proof,
+                            "source": source,
+                            "lemma_name": lemma_name,
+                            "error": str(exc),
+                        }
+                    )
                 continue
             if result.get("success"):
                 selected_lemma = lemma_name
@@ -2585,6 +3308,18 @@ class ProverExecutionMixin:
                     metadata={**metadata, "proof": proof},
                 )
                 return candidate_code
+            if len(candidate_failures) < MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT:
+                error_text = "\n".join(str(item) for item in result.get("errors") or [])
+                if not error_text:
+                    error_text = str(result.get("output") or "")[:500]
+                candidate_failures.append(
+                    {
+                        "proof": proof,
+                        "source": source,
+                        "lemma_name": lemma_name,
+                        "error": error_text[:500],
+                    }
+                )
 
         error_code = first_error_code or "lsp_search_exhausted"
         metadata = {
@@ -2597,6 +3332,7 @@ class ProverExecutionMixin:
             "compiled_candidate_count": compiled_candidate_count,
             "selected_lemma": selected_lemma,
             "search_query": search_query,
+            "candidate_failures": candidate_failures,
         }
         self._emit_progress(
             on_progress,
@@ -2835,54 +3571,93 @@ class ProverExecutionMixin:
         compact = self._compact_extreme_value_context(current_code)
         if compact is not None:
             hcompact, hnonempty, hcontinuous, intro_prefix = compact
+            # Generate intro prefix variants: the base prefix and a variant with a
+            # trailing `_` to absorb extra hypotheses (e.g. StrictConcaveOn) that
+            # appear after ContinuousOn in ∀-quantified theorem statements.
+            intro_prefixes = [intro_prefix]
+            if intro_prefix and intro_prefix.rstrip("\n"):
+                intro_prefixes.append(intro_prefix.rstrip("\n") + " _\n")
             if "IsConstrainedMaximum" in current_code:
-                candidates.append(
-                    (
-                        f"{intro_prefix}exact exists_isConstrainedMaximum_of_isCompact_continuousOn {hcompact} {hnonempty} {hcontinuous}",
-                        "lean_leansearch",
-                        "exists_isConstrainedMaximum_of_isCompact_continuousOn",
+                for ip in intro_prefixes:
+                    # Direct bridge via the LeanEcon preamble shortcut (preferred).
+                    candidates.append(
+                        (
+                            f"{ip}exact exists_isConstrainedMaximum_of_isCompact_continuousOn {hcompact} {hnonempty} {hcontinuous}",
+                            "local_heuristic",
+                            "exists_isConstrainedMaximum_of_isCompact_continuousOn",
+                        )
                     )
-                )
-            if (
-                "IsCompact.exists_isMaxOn" not in names
-                and "IsCompact.exists_sSup_image_eq_and_ge" not in names
-            ):
-                return candidates
-            candidates.append(
-                (
-                    f"{intro_prefix}exact IsCompact.exists_isMaxOn {hcompact} {hnonempty} {hcontinuous}",
-                    "lean_leansearch",
-                    "IsCompact.exists_isMaxOn",
-                )
-            )
-            candidates.append(
-                (
-                    "\n".join(
-                        [
-                            f"{intro_prefix}obtain ⟨x, hx, hmax⟩ := IsCompact.exists_isMaxOn {hcompact} {hnonempty} {hcontinuous}",
-                            "exact ⟨x, hx, hmax⟩",
-                        ]
-                    ),
-                    "lean_leansearch",
-                    "IsCompact.exists_isMaxOn",
-                )
-            )
-            candidates.append(
-                (
-                    "\n".join(
-                        [
-                            f"{intro_prefix}obtain ⟨x, hx, _hsup, hmax⟩ := IsCompact.exists_sSup_image_eq_and_ge {hcompact} {hnonempty} {hcontinuous}",
-                            "exact ⟨x, hx, hmax⟩",
-                        ]
-                    ),
-                    "lean_leansearch",
-                    "IsCompact.exists_sSup_image_eq_and_ge",
-                )
-            )
+                    candidates.append(
+                        (
+                            "\n".join(
+                                [
+                                    f"{ip}obtain ⟨x, hx, hmax⟩ := IsCompact.exists_isMaxOn {hcompact} {hnonempty} {hcontinuous}",
+                                    "refine ⟨x, hx, ?_⟩",
+                                    "intro y hy",
+                                    "simpa using hmax hy",
+                                ]
+                            ),
+                            "lean_leansearch",
+                            "IsCompact.exists_isMaxOn",
+                        )
+                    )
+            else:
+                for ip in intro_prefixes:
+                    candidates.append(
+                        (
+                            f"{ip}exact IsCompact.exists_isMaxOn {hcompact} {hnonempty} {hcontinuous}",
+                            "lean_leansearch",
+                            "IsCompact.exists_isMaxOn",
+                        )
+                    )
+                    candidates.append(
+                        (
+                            "\n".join(
+                                [
+                                    f"{ip}obtain ⟨x, hx, hmax⟩ := IsCompact.exists_isMaxOn {hcompact} {hnonempty} {hcontinuous}",
+                                    "exact ⟨x, hx, hmax⟩",
+                                ]
+                            ),
+                            "lean_leansearch",
+                            "IsCompact.exists_isMaxOn",
+                        )
+                    )
+            if not names or "IsCompact.exists_sSup_image_eq_and_ge" in names:
+                for ip in intro_prefixes:
+                    candidates.append(
+                        (
+                            "\n".join(
+                                [
+                                    f"{ip}obtain ⟨x, hx, _hsup, hmax⟩ := IsCompact.exists_sSup_image_eq_and_ge {hcompact} {hnonempty} {hcontinuous}",
+                                    "exact ⟨x, hx, hmax⟩",
+                                ]
+                            ),
+                            "lean_leansearch",
+                            "IsCompact.exists_sSup_image_eq_and_ge",
+                        )
+                    )
+        elif "IsConstrainedMaximum" in current_code:
+            candidates.extend(self._compact_extreme_value_fallback_candidates())
 
         monotone = self._monotone_convergence_context(current_code)
+        if monotone is not None:
+            hmono, hbdd, seq_name = monotone
+            candidates.append(
+                (
+                    f"exact ⟨⨆ i, {seq_name} i, tendsto_atTop_ciSup {hmono} {hbdd}⟩",
+                    "lean_leansearch",
+                    "tendsto_atTop_ciSup",
+                )
+            )
+            candidates.append(
+                (
+                    f"exact tendsto_atTop_ciSup {hmono} {hbdd}",
+                    "lean_leansearch",
+                    "tendsto_atTop_ciSup",
+                )
+            )
         if monotone is not None and "tendsto_of_monotone" in names:
-            hmono, hbdd = monotone
+            hmono, hbdd, _seq_name = monotone
             candidates.append(
                 (
                     "exact (tendsto_of_monotone " + hmono + ").resolve_left " + hbdd,
@@ -2901,6 +3676,127 @@ class ProverExecutionMixin:
                     "tendsto_of_monotone",
                 )
             )
+        elif all(token in current_code for token in ("Monotone", "BddAbove", "Tendsto")):
+            candidates.extend(self._monotone_convergence_fallback_candidates())
+        return candidates
+
+    def _compact_extreme_value_fallback_candidates(self) -> list[tuple[str, str, str | None]]:
+        candidates: list[tuple[str, str, str | None]] = []
+        common_name_sets = [
+            ("hcompact", "hnonempty", "hcontinuous"),
+            ("hcompact", "hne", "hcontinuous"),
+            ("h_compact", "h_nonempty", "h_continuous"),
+            ("hs_compact", "hne", "h_continuous"),
+            ("hcompact", "h_nonempty", "h_continuousOn"),
+            ("h_compact", "hne", "h_continuous_on"),
+        ]
+        prioritized = [
+            ("", *common_name_sets[0]),
+            ("", *common_name_sets[1]),
+            ("", *common_name_sets[2]),
+            ("intro α _ _ _ _ f feasible hcompact hnonempty hcontinuous\n", *common_name_sets[0]),
+            ("intro α _ _ _ _ f feasible hcompact hne hcontinuous\n", *common_name_sets[1]),
+            (
+                "intro α _ _ _ _ f feasible h_compact h_nonempty h_continuous\n",
+                *common_name_sets[2],
+            ),
+            # Variants with trailing `_` to absorb an extra hypothesis (e.g. StrictConcaveOn).
+            ("intro α _ _ _ _ f feasible hcompact hnonempty hcontinuous _\n", *common_name_sets[0]),
+            ("intro α _ _ _ _ f feasible hcompact hne hcontinuous _\n", *common_name_sets[1]),
+            (
+                "intro α _ _ _ _ f feasible h_compact h_nonempty h_continuous _\n",
+                *common_name_sets[2],
+            ),
+            ("", *common_name_sets[3]),
+            ("", *common_name_sets[4]),
+            ("", *common_name_sets[5]),
+        ]
+        for prefix, hcompact, hnonempty, hcontinuous in prioritized:
+            candidates.append(
+                (
+                    "\n".join(
+                        [
+                            f"{prefix}obtain ⟨x, hx, hmax⟩ := IsCompact.exists_isMaxOn {hcompact} {hnonempty} {hcontinuous}",
+                            "refine ⟨x, hx, ?_⟩",
+                            "intro y hy",
+                            "simpa using hmax hy",
+                        ]
+                    ),
+                    "local_heuristic",
+                    "IsCompact.exists_isMaxOn",
+                )
+            )
+        for prefix in (
+            "",
+            "intro α _ _ _ _ f feasible hcompact hnonempty hcontinuous\n",
+            "intro α _ _ _ _ f feasible hcompact hne hcontinuous\n",
+            "intro α _ _ _ _ f feasible h_compact h_nonempty h_continuous\n",
+            "intro α _ _ _ _ f feasible hcompact hnonempty hcontinuous _\n",
+            "intro α _ _ _ _ f feasible hcompact hne hcontinuous _\n",
+        ):
+            for hcompact, hnonempty, hcontinuous in common_name_sets:
+                proof = "\n".join(
+                    [
+                        f"{prefix}obtain ⟨x, hx, hmax⟩ := IsCompact.exists_isMaxOn {hcompact} {hnonempty} {hcontinuous}",
+                        "refine ⟨x, hx, ?_⟩",
+                        "intro y hy",
+                        "simpa using hmax hy",
+                    ]
+                )
+                if any(existing[0] == proof for existing in candidates):
+                    continue
+                candidates.append(
+                    (
+                        proof,
+                        "local_heuristic",
+                        "IsCompact.exists_isMaxOn",
+                    )
+                )
+        return candidates
+
+    def _monotone_convergence_fallback_candidates(self) -> list[tuple[str, str, str | None]]:
+        candidates: list[tuple[str, str, str | None]] = []
+        common_name_sets = [
+            ("u", "h_monotone", "h_bddAbove"),
+            ("u", "hmono", "hbdd"),
+            ("u", "hu_mono", "hu_bdd"),
+            ("u", "h_mono", "h_bounded"),
+            ("seq", "h_monotone", "h_bddAbove"),
+            ("a", "h_monotone", "h_bddAbove"),
+        ]
+        prioritized: list[tuple[str, str, str, str]] = []
+        prioritized.extend(("", *names) for names in common_name_sets[:3])
+        prioritized.extend(("intro", *names) for names in common_name_sets[:3])
+        prioritized.extend(("", *names) for names in common_name_sets[3:])
+        prioritized.extend(("intro", *names) for names in common_name_sets[3:])
+        seen: set[str] = set()
+        for mode, seq_name, hmono, hbdd in prioritized:
+            proof = (
+                f"exact ⟨⨆ i, {seq_name} i, tendsto_atTop_ciSup {hmono} {hbdd}⟩"
+                if mode == ""
+                else (
+                    f"intro {seq_name} {hmono} {hbdd}\n"
+                    f"exact ⟨⨆ i, {seq_name} i, tendsto_atTop_ciSup {hmono} {hbdd}⟩"
+                )
+            )
+            if proof in seen:
+                continue
+            seen.add(proof)
+            candidates.append((proof, "local_heuristic", "tendsto_atTop_ciSup"))
+        for seq_name, hmono, hbdd in common_name_sets:
+            for proof in (
+                f"exact ⟨⨆ i, {seq_name} i, tendsto_atTop_ciSup {hmono} {hbdd}⟩",
+                (
+                    f"intro {seq_name} {hmono} {hbdd}\n"
+                    f"exact ⟨⨆ i, {seq_name} i, tendsto_atTop_ciSup {hmono} {hbdd}⟩"
+                ),
+            ):
+                if proof in seen:
+                    continue
+                seen.add(proof)
+                candidates.append(
+                    (proof, "local_heuristic", "tendsto_atTop_ciSup")
+                )
         return candidates
 
     def _is_contraction_context(self, code: str) -> tuple[str, str] | None:
@@ -2954,7 +3850,7 @@ class ProverExecutionMixin:
             )
         return None
 
-    def _monotone_convergence_context(self, code: str) -> tuple[str, str] | None:
+    def _monotone_convergence_context(self, code: str) -> tuple[str, str, str] | None:
         monotone = re.search(
             r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*Monotone\s+([A-Za-z_][A-Za-z0-9_']*)\s*\)", code
         )
@@ -2969,7 +3865,7 @@ class ProverExecutionMixin:
             bdd = re.search(r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*BddAbove\s+[^)]*\)", code)
         if bdd is None:
             return None
-        return monotone.group(1), bdd.group(1)
+        return monotone.group(1), bdd.group(1), seq_name
 
     def _lemma_application_candidates(
         self,

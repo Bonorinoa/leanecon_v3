@@ -14,6 +14,11 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
         "claims_failed": 1,
         "pass_at_1": 2 / 3,
         "cost_by_stage": {"planner": 0.15, "formalizer": 0.0, "prover": 0.0},
+        "resolved_premise_rate": 1.0,
+        "candidate_attempt_count": 2,
+        "candidate_success_rate": 0.5,
+        "provider_fallback_rate": 1.0,
+        "repl_compile_disagreement_count": 1,
         "synthesis_events": [
             {
                 "event_type": "SynthesisEvent",
@@ -108,6 +113,11 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
                         "decomposition_depth": 2,
                     },
                 ],
+                "resolved_premise_rate": 1.0,
+                "candidate_attempt_count": 2,
+                "candidate_success_rate": 0.5,
+                "provider_fallback_rate": 1.0,
+                "repl_compile_disagreement_count": 1,
                 "claim_set_manifest": {
                     "bucket_counts": {
                         "mathlib_native": 1,
@@ -128,6 +138,8 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
                         "lsp_tool_calls": 5,
                         "native_search_attempts": 2,
                         "mathlib_native_mode_usage": 1,
+                        "synthesis_candidate_used_count": 1,
+                        "provider_fallback_count": 1,
                         "decomposition_depth": 2,
                         "timing_breakdown": {"total_ms": 7000.0},
                         "progress_events": [],
@@ -156,6 +168,15 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
     assert row["avg_decomposition_depth"] == 1.0
     assert row["synthesis_efficiency"] == 0.5
     assert row["premise_match_rate@3"] == 0.5
+    assert row["synthesis_event_count"] == 2
+    assert row["premise_matched_synthesis_event_count"] == 1
+    assert row["premise_top3_synthesis_event_count"] == 1
+    assert row["synthesis_candidate_used_count"] == 1
+    assert row["resolved_premise_rate"] == 1.0
+    assert row["candidate_attempt_count"] == 2
+    assert row["candidate_success_rate"] == 0.5
+    assert row["provider_fallback_rate"] == 1.0
+    assert row["repl_compile_disagreement_count"] == 1
     assert row["avg_decomposition_depth_mathlib"] == 2.0
     assert row["no_progress_stall_count"] == 1
     assert row["schema_invalid_rate"] == 0.333333
@@ -164,6 +185,10 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
     assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["total_lsp_tool_calls"] == 5
     assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["mathlib_native_mode_usage"] == 1
     assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["synthesis_efficiency"] == 0.5
+    assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["synthesis_event_count"] == 2
+    assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["synthesis_candidate_used_count"] == 1
+    assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["resolved_premise_rate"] == 1.0
+    assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["candidate_attempt_count"] == 2
     assert row["bucket_breakdown"]["tier2_frontier_preamble_definable"]["present"] is False
     assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["no_progress_stall_count"] == 1
     assert appended["row_id"] == "run_000001"

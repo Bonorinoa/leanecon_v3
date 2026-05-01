@@ -559,6 +559,63 @@ async def test_claim_type_awareness_logs_for_subgoals_and_theorem_body(
     assert {"h_sub", "theorem_body"} <= awareness_targets
 
 
+@pytest.mark.anyio
+async def test_mathlib_native_failed_subgoal_falls_through_to_theorem_body(
+    tmp_path, monkeypatch
+) -> None:
+    import src.prover.prover as prover_module
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", _fake_compile)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module,
+        "lean_run_code",
+        lambda code, **kwargs: {"success": True, "stdout": "", "stderr": "", "exit_code": 0},
+    )
+
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver(
+            {
+                "theorem_body": [
+                    {
+                        "action_type": "tool",
+                        "rationale": "Close the actual theorem directly.",
+                        "tool": {"name": "apply_tactic", "arguments": {"tactic": "trivial"}},
+                    }
+                ],
+            }
+        ),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
+    )
+
+    result = await prover.prove(
+        _packet(
+            theorem_name="native_subgoal_bypass",
+            claim="A mathlib-native theorem can be proved without a bad extracted helper.",
+            lean_code=(
+                "import Mathlib\n\n"
+                "theorem native_subgoal_bypass : True := by\n"
+                "  have h_bad : False := by\n"
+                "    sorry\n"
+                "  trivial\n"
+            ),
+            subgoals=[{"name": "h_bad", "statement": "False"}],
+            claim_type="mathlib_native",
+        ),
+        "job_native_subgoal_bypass",
+        max_turns=8,
+    )
+
+    assert result.status == "verified"
+    assert any(target.name == "h_bad" for target in result.targets)
+    assert any(step.target_name == "theorem_body" for step in result.trace)
+
+
 def test_mathlib_native_lsp_search_records_subgoal_context_and_tooling(
     tmp_path, monkeypatch
 ) -> None:
@@ -2572,19 +2629,101 @@ async def test_mathlib_native_harness_loop_uses_retrieved_premises_in_prompt(
     )
 
     assert result.status == "verified"
-    assert driver.call_count == 1
-    assert "True.intro" in driver.prompts[0]
-    harness_steps = [
-        step for step in result.trace if step.action_type == "mathlib_native_harness_loop"
+    assert driver.call_count == 0
+    candidate_steps = [
+        step for step in result.trace if step.action_type == "mathlib_native_candidate_search"
     ]
-    assert harness_steps
-    payload = harness_steps[-1].tool_arguments
+    assert candidate_steps
+    payload = candidate_steps[0].tool_arguments
     assert payload["RetrievalEvent"]["retrieved_count"] == 1
     assert payload["ToolUsageTrace"]["state_hash_before"]
     assert payload["ToolUsageTrace"]["state_hash_after"]
-    assert payload["ProgressDelta"]["goals_reduced"] is True
+    assert payload["CandidateTacticEvent"]["premise_name"] == "True.intro"
     ls_events = [e for e in result.retrieval_events if e.get("source") == "lean_leansearch"]
     assert ls_events, "Expected lean_leansearch RetrievalEvent emitted from harness path"
+
+
+@pytest.mark.anyio
+async def test_mathlib_native_harness_tries_resolved_candidate_before_provider(
+    tmp_path, monkeypatch
+) -> None:
+    import src.prover.prover as prover_module
+    import src.retrieval.mathlib_rag as mathlib_rag
+
+    class CandidateReplSession(FakeReplSession):
+        def apply_tactic(self, tactic: str, timeout=None):
+            if tactic == "exact SomeLemma":
+                self.tactics.append(tactic)
+                return SimpleNamespace(
+                    has_errors=lambda: False,
+                    goals=[],
+                    proof_status="Completed",
+                    proof_state=len(self.tactics) + 1,
+                )
+            return super().apply_tactic(tactic, timeout=timeout)
+
+    def compile_with_candidate(code: str, **kwargs):
+        if "exact SomeLemma" in code:
+            return {"success": True, "has_sorry": False, "errors": [], "warnings": []}
+        return _fake_compile(code, **kwargs)
+
+    monkeypatch.setattr(prover_module, "LeanREPLSession", CandidateReplSession)
+    monkeypatch.setattr(prover_module, "compile_check", compile_with_candidate)
+    monkeypatch.setattr(prover_module.Prover, "_try_trivial_shortcut", lambda self, **_: None)
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_try_direct_definable_closure",
+        lambda self, **kwargs: (None, _mathlib_summary(prover_module)),
+    )
+    monkeypatch.setattr(
+        prover_module.Prover,
+        "_apply_deterministic_repair",
+        lambda self, **kwargs: (False, None, None),
+    )
+    monkeypatch.setattr(
+        mathlib_rag,
+        "retrieve_premises",
+        lambda goal_state, k=5: [
+            {
+                "name": "SomeLemma",
+                "statement": goal_state,
+                "score": 0.9,
+                "file_path": "Mathlib/Test.lean",
+            }
+        ],
+    )
+
+    driver = PromptCapturingDriver("bad_tactic")
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=driver,
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
+    )
+
+    result = await prover.prove(
+        _packet(
+        theorem_name="mathlib_harness_candidate",
+        claim="A mathlib-native harness turn should try resolved premise candidates.",
+            lean_code="import Mathlib\n\ntheorem mathlib_harness_candidate : True := by\n  sorry\n",
+            claim_type="mathlib_native",
+        ),
+        "job_mathlib_harness_candidate",
+        max_turns=3,
+        benchmark_mode=True,
+    )
+
+    assert result.status == "verified"
+    candidate_steps = [
+        step for step in result.trace if step.action_type == "mathlib_native_candidate_search"
+    ]
+    payload = candidate_steps[-1].tool_arguments
+    assert payload["tactic"] == "exact SomeLemma"
+    assert payload["CandidateTacticEvent"]["committed"] is True
+    assert payload["CandidateTacticEvent"]["premise_name"] == "SomeLemma"
+    assert payload["SynthesisEvent"]["referenced_premises"] == ["SomeLemma"]
 
 
 @pytest.mark.anyio

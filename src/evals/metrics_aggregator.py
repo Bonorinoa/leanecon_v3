@@ -73,6 +73,27 @@ def build_history_row(
         "avg_decomposition_depth": _average_metric(all_results, "decomposition_depth"),
         "synthesis_efficiency": _synthesis_efficiency(all_results, run_summary),
         "premise_match_rate@3": _premise_match_rate_at_3(all_results, run_summary),
+        "synthesis_event_count": _synthesis_event_count(all_results, run_summary),
+        "premise_matched_synthesis_event_count": _premise_matched_synthesis_event_count(
+            all_results,
+            run_summary,
+        ),
+        "premise_top3_synthesis_event_count": _premise_top3_synthesis_event_count(
+            all_results,
+            run_summary,
+        ),
+        "synthesis_candidate_used_count": _synthesis_candidate_used_count(
+            all_results,
+            run_summary,
+        ),
+        "resolved_premise_rate": _resolved_premise_rate(all_results, run_summary),
+        "candidate_attempt_count": _candidate_attempt_count(all_results, run_summary),
+        "candidate_success_rate": _candidate_success_rate(all_results, run_summary),
+        "provider_fallback_rate": _provider_fallback_rate(all_results, run_summary),
+        "repl_compile_disagreement_count": _repl_compile_disagreement_count(
+            all_results,
+            run_summary,
+        ),
         "avg_decomposition_depth_mathlib": _avg_decomposition_depth_mathlib(
             all_results,
             run_summary,
@@ -134,6 +155,15 @@ def _claim_set_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
             "avg_decomposition_depth": 0.0,
             "synthesis_efficiency": 0.0,
             "premise_match_rate@3": 0.0,
+            "synthesis_event_count": 0,
+            "premise_matched_synthesis_event_count": 0,
+            "premise_top3_synthesis_event_count": 0,
+            "synthesis_candidate_used_count": 0,
+            "resolved_premise_rate": 0.0,
+            "candidate_attempt_count": 0,
+            "candidate_success_rate": 0.0,
+            "provider_fallback_rate": 0.0,
+            "repl_compile_disagreement_count": 0,
             "avg_decomposition_depth_mathlib": 0.0,
             "no_progress_stall_count": 0,
             "schema_invalid_rate": 0.0,
@@ -161,6 +191,21 @@ def _claim_set_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
         "avg_decomposition_depth": _average_metric(results, "decomposition_depth"),
         "synthesis_efficiency": _synthesis_efficiency(results, summary),
         "premise_match_rate@3": _premise_match_rate_at_3(results, summary),
+        "synthesis_event_count": _synthesis_event_count(results, summary),
+        "premise_matched_synthesis_event_count": _premise_matched_synthesis_event_count(
+            results,
+            summary,
+        ),
+        "premise_top3_synthesis_event_count": _premise_top3_synthesis_event_count(
+            results,
+            summary,
+        ),
+        "synthesis_candidate_used_count": _synthesis_candidate_used_count(results, summary),
+        "resolved_premise_rate": _resolved_premise_rate(results, summary),
+        "candidate_attempt_count": _candidate_attempt_count(results, summary),
+        "candidate_success_rate": _candidate_success_rate(results, summary),
+        "provider_fallback_rate": _provider_fallback_rate(results, summary),
+        "repl_compile_disagreement_count": _repl_compile_disagreement_count(results, summary),
         "avg_decomposition_depth_mathlib": _avg_decomposition_depth_mathlib(results, summary),
         "no_progress_stall_count": _no_progress_stall_count(results),
         "schema_invalid_rate": _rate(_schema_invalid_count(results), claims_total),
@@ -225,6 +270,142 @@ def _premise_match_rate_at_3(results: list[dict[str, Any]], summary: dict[str, A
         return 0.0
     matched = sum(1 for event in events if bool(event.get("top3_match")))
     return round(matched / len(events), 6)
+
+
+def _synthesis_event_count(results: list[dict[str, Any]], summary: dict[str, Any]) -> int:
+    if "synthesis_event_count" in summary:
+        return int(summary.get("synthesis_event_count") or 0)
+    return len(_synthesis_event_payloads(results, summary))
+
+
+def _premise_matched_synthesis_event_count(
+    results: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> int:
+    if "premise_matched_synthesis_event_count" in summary:
+        return int(summary.get("premise_matched_synthesis_event_count") or 0)
+    return sum(
+        1
+        for event in _synthesis_event_payloads(results, summary)
+        if event.get("referenced_premises")
+    )
+
+
+def _premise_top3_synthesis_event_count(
+    results: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> int:
+    if "premise_top3_synthesis_event_count" in summary:
+        return int(summary.get("premise_top3_synthesis_event_count") or 0)
+    return sum(
+        1
+        for event in _synthesis_event_payloads(results, summary)
+        if bool(event.get("top3_match"))
+    )
+
+
+def _synthesis_candidate_used_count(
+    results: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> int:
+    if "synthesis_candidate_used_count" in summary:
+        return int(summary.get("synthesis_candidate_used_count") or 0)
+    return _sum_metric(results, "synthesis_candidate_used_count")
+
+
+def _premise_resolution_event_payloads(
+    results: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    payloads = [
+        dict(event)
+        for event in summary.get("premise_resolution_events", [])
+        if isinstance(event, dict)
+    ]
+    for result in results:
+        for event in result.get("trace_events", []):
+            if event.get("event_type") == "PremiseResolutionEvent" and isinstance(
+                event.get("payload"), dict
+            ):
+                payloads.append(dict(event["payload"]))
+        for event in result.get("progress_events", []):
+            payload = (event.get("metadata") or {}).get("PremiseResolutionEvent")
+            if isinstance(payload, dict):
+                payloads.append(dict(payload))
+    return payloads
+
+
+def _candidate_tactic_event_payloads(
+    results: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    payloads = [
+        dict(event)
+        for event in summary.get("candidate_tactic_events", [])
+        if isinstance(event, dict)
+    ]
+    for result in results:
+        for event in result.get("trace_events", []):
+            if event.get("event_type") == "CandidateTacticEvent" and isinstance(
+                event.get("payload"), dict
+            ):
+                payloads.append(dict(event["payload"]))
+        for event in result.get("progress_events", []):
+            payload = (event.get("metadata") or {}).get("CandidateTacticEvent")
+            if isinstance(payload, dict):
+                payloads.append(dict(payload))
+    return payloads
+
+
+def _resolved_premise_rate(results: list[dict[str, Any]], summary: dict[str, Any]) -> float:
+    if "resolved_premise_rate" in summary:
+        return round(float(summary.get("resolved_premise_rate") or 0.0), 6)
+    events = _premise_resolution_event_payloads(results, summary)
+    if not events:
+        return 0.0
+    resolved = sum(1 for event in events if bool(event.get("resolved")))
+    return round(resolved / len(events), 6)
+
+
+def _candidate_attempt_count(results: list[dict[str, Any]], summary: dict[str, Any]) -> int:
+    if "candidate_attempt_count" in summary:
+        return int(summary.get("candidate_attempt_count") or 0)
+    return len(_candidate_tactic_event_payloads(results, summary))
+
+
+def _candidate_success_rate(results: list[dict[str, Any]], summary: dict[str, Any]) -> float:
+    if "candidate_success_rate" in summary:
+        return round(float(summary.get("candidate_success_rate") or 0.0), 6)
+    events = _candidate_tactic_event_payloads(results, summary)
+    if not events:
+        return 0.0
+    successes = sum(1 for event in events if bool(event.get("success")))
+    return round(successes / len(events), 6)
+
+
+def _provider_fallback_rate(results: list[dict[str, Any]], summary: dict[str, Any]) -> float:
+    if "provider_fallback_rate" in summary:
+        return round(float(summary.get("provider_fallback_rate") or 0.0), 6)
+    mathlib_results = [
+        result for result in results if result.get("benchmark_bucket") == "mathlib_native"
+    ]
+    if not mathlib_results:
+        return 0.0
+    fallbacks = sum(
+        1
+        for result in mathlib_results
+        if int(result.get("provider_fallback_count") or 0) > 0
+    )
+    return round(fallbacks / len(mathlib_results), 6)
+
+
+def _repl_compile_disagreement_count(
+    results: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> int:
+    if "repl_compile_disagreement_count" in summary:
+        return int(summary.get("repl_compile_disagreement_count") or 0)
+    return sum(1 for result in results if result.get("failure_code") == "repl_compile_disagreement")
 
 
 def _avg_decomposition_depth_mathlib(

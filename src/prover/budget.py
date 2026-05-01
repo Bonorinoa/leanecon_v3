@@ -51,6 +51,10 @@ MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT = 6
 
 MATHLIB_NATIVE_LSP_SEARCH_RESULTS = 8
 
+# Mathlib-native helper subgoals are formalizer artifacts; if validated search
+# cannot close them quickly, the prover should spend budget on the main theorem.
+MATHLIB_NATIVE_SUBGOAL_MAX_TURNS = 3
+
 MATHLIB_NATIVE_PROMPT_ONLY_TOOLS = frozenset(
     {
         "lean_diagnostic_messages",

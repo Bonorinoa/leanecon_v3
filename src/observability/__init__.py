@@ -5,7 +5,9 @@ from .lean_lsp_client import LeanLSPClient, LeanLSPUnavailableError, default_lea
 from .logging import log_event
 from .models import (
     AuditEvent,
+    CandidateTacticEvent,
     LeanSearchFailureEvent,
+    PremiseResolutionEvent,
     ProgressDelta,
     ProviderCallMetadata,
     RetrievalEvent,
@@ -39,9 +41,11 @@ from .tool_tracker import BudgetTracker
 __all__ = [
     "BudgetTracker",
     "AuditEvent",
+    "CandidateTacticEvent",
     "LeanLSPClient",
     "LeanLSPUnavailableError",
     "LeanSearchFailureEvent",
+    "PremiseResolutionEvent",
     "ProgressDelta",
     "ProviderCallMetadata",
     "RetrievalEvent",

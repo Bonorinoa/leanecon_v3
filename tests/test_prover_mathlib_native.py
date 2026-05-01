@@ -421,14 +421,308 @@ def test_sprint25_harness_prompt_includes_proof_sketch_and_few_shots() -> None:
             "likely_premises": ["tendsto_atTop_ciSup"],
             "subgoal_order": ["prove Tendsto"],
             "tactic_shape": "exact ⟨_, tendsto_atTop_ciSup hmono hbdd⟩",
+            "candidate_tactics": ["exact tendsto_atTop_ciSup hmono hbdd"],
             "source": "unit_test",
         },
     )
 
     body = _json.loads(prompt)
     assert body["proof_sketch"]["likely_premises"] == ["tendsto_atTop_ciSup"]
+    assert body["candidate_tactics"] == body["proof_sketch"]["candidate_tactics"]
     assert len(body["synthesis_few_shots"]) == 3
     assert any("compact" in shot["name"] for shot in body["synthesis_few_shots"])
+
+
+def test_sprint25_proof_sketch_generates_premise_referenced_candidate_tactics() -> None:
+    from src.prover.prover import ProverTarget
+    from src.prover.synthesizer import ProofSynthesizer
+    from tests.test_prover import _packet
+
+    packet = _packet(
+        theorem_name="t",
+        claim="monotone bounded convergence",
+        lean_code="theorem t : True := sorry",
+        claim_type="mathlib_native",
+    )
+    target = ProverTarget(name="t", statement="True", kind="theorem_body", helper_theorem_name="t")
+    sketch = ProofSynthesizer().build_sketch(
+        packet=packet,
+        target=target,
+        state={
+            "goals": [
+                "u : ℕ → ℝ\nhmono : Monotone u\nhbdd : BddAbove (Set.range u)\n"
+                "⊢ ∃ l, Tendsto u atTop (𝓝 l)"
+            ]
+        },
+        premises=[
+            {
+                "name": "tendsto_atTop_ciSup",
+                "full_type_signature": "Monotone u → BddAbove (Set.range u) → Tendsto u atTop (𝓝 _)",
+            }
+        ],
+    )
+
+    assert sketch.candidate_tactics
+    assert any("tendsto_atTop_ciSup" in tactic for tactic in sketch.candidate_tactics)
+    assert any("hmono" in tactic and "hbdd" in tactic for tactic in sketch.candidate_tactics)
+    assert sketch.candidate_tactics[0].startswith("refine ⟨_,"), sketch.candidate_tactics
+
+
+def test_sprint25_resolves_contracting_premises_before_candidate_generation() -> None:
+    from src.prover.synthesizer import ProofSynthesizer
+
+    synthesizer = ProofSynthesizer()
+    resolved = synthesizer.resolve_premises(
+        [
+            {
+                "name": "exists_fixedPoint",
+                "statement": "(hf : ContractingWith K f) : ∃ y, IsFixedPt f y",
+                "file_path": "Mathlib/Topology/MetricSpace/Contracting.lean",
+            },
+            {
+                "name": "IsCompact.exists_isMaxOn",
+                "statement": "IsCompact s → ∃ x, IsMaxOn f s x",
+                "file_path": "Mathlib/Topology/ContinuousFunction/Compact.lean",
+            },
+        ]
+    )
+
+    assert resolved[0].lean_name == "ContractingWith.exists_fixedPoint"
+    assert resolved[0].resolution_method == "mathlib_file_namespace"
+    assert resolved[1].lean_name == "IsCompact.exists_isMaxOn"
+    assert resolved[1].resolution_method == "already_qualified"
+
+
+def test_sprint25_candidate_engine_uses_resolved_names_only() -> None:
+    from src.prover.synthesizer import ProofSynthesizer
+
+    synthesizer = ProofSynthesizer()
+    resolved = synthesizer.resolve_premises(
+        [
+            {
+                "name": "fixedPoint_isFixedPt",
+                "statement": ": IsFixedPt f (fixedPoint f hf)",
+                "file_path": "Mathlib/Topology/MetricSpace/Contracting.lean",
+            }
+        ]
+    )
+    candidates = synthesizer.tactic_candidates(
+        state={"goals": ["hf : ContractingWith K f\n⊢ Function.IsFixedPt f x"]},
+        premises=resolved,
+    )
+
+    assert candidates
+    assert all("fixedPoint_isFixedPt" in candidate.tactic for candidate in candidates)
+    assert any("ContractingWith.fixedPoint_isFixedPt" in candidate.tactic for candidate in candidates)
+    assert all("exact fixedPoint_isFixedPt" != candidate.tactic for candidate in candidates)
+
+
+def test_sprint25_candidate_compile_fallback_replaces_named_theorem_body() -> None:
+    from src.prover.execution import _replace_target_proof_site
+
+    code = (
+        "import Mathlib\n\n"
+        "theorem helper_evt : True := by\n"
+        "  trivial\n\n"
+        "theorem parent : True := by\n"
+        "  exact helper_evt\n"
+    )
+
+    rewritten = _replace_target_proof_site(
+        code,
+        theorem_name="helper_evt",
+        target_name="h_evt",
+        replacement="exact True.intro",
+    )
+
+    assert "exact True.intro" in rewritten
+    assert "trivial" not in rewritten
+    assert "theorem parent : True := by" in rewritten
+
+
+def test_sprint25_candidate_compile_fallback_replaces_named_have_body() -> None:
+    from src.prover.execution import _replace_target_proof_site
+
+    code = (
+        "theorem parent : True := by\n"
+        "  have h_evt : True := by\n"
+        "    trivial\n"
+        "  exact h_evt\n"
+    )
+
+    rewritten = _replace_target_proof_site(
+        code,
+        theorem_name="missing_helper",
+        target_name="h_evt",
+        replacement="exact True.intro",
+    )
+
+    assert "have h_evt : True := by\n    exact True.intro\n  exact h_evt" in rewritten
+
+
+def test_sprint25_standalone_mathlib_subgoals_import_mathlib() -> None:
+    from src.prover.execution import _standalone_theorem_code
+    from tests.test_prover import _packet
+
+    packet = _packet(
+        theorem_name="parent",
+        claim="mathlib native helper",
+        lean_code="theorem parent : True := by\n  sorry\n",
+        claim_type="mathlib_native",
+    ).model_copy(update={"imports": [], "selected_imports": []})
+
+    code = _standalone_theorem_code(
+        packet,
+        "h_helper",
+        "∀ {f : ℝ → ℝ} {s : Set ℝ}, ContinuousOn f s → StrictConcaveOn ℝ s f",
+    )
+
+    assert code.startswith("import Mathlib\n")
+    assert code.count("import Mathlib") == 1
+
+
+def test_sprint25_lsp_heuristics_keep_compact_candidates_without_leansearch() -> None:
+    from tests.test_prover import _packet
+
+    prover = _make_prover(_ScriptedLSPClient())
+    code = (
+        "import Mathlib\n\n"
+        "theorem t {α : Type*} [TopologicalSpace α] {f : α → ℝ} {feasible : Set α}\n"
+        "    (hcompact : IsCompact feasible) (hnonempty : feasible.Nonempty)\n"
+        "    (hcontinuous : ContinuousOn f feasible) :\n"
+        "    ∃ x, IsConstrainedMaximum f feasible x := by\n"
+        "  sorry\n"
+    )
+
+    candidates = prover._mathlib_native_lsp_candidates(
+        packet=_packet(
+            theorem_name="t",
+            claim="compact continuous function attains a maximum",
+            lean_code=code,
+            claim_type="mathlib_native",
+        ),
+        current_code=code,
+        code_actions=None,
+        search_results=None,
+    )
+
+    proofs = [proof for proof, _source, _lemma in candidates]
+    assert any("IsCompact.exists_isMaxOn" in proof for proof in proofs)
+
+
+def test_sprint25_lsp_heuristics_keep_monotone_candidates_without_leansearch() -> None:
+    from tests.test_prover import _packet
+
+    prover = _make_prover(_ScriptedLSPClient())
+    code = (
+        "import Mathlib\n\n"
+        "theorem t (u : ℕ → ℝ) (hmono : Monotone u)\n"
+        "    (hbdd : BddAbove (Set.range u)) :\n"
+        "    ∃ l, Tendsto u atTop (nhds l) := by\n"
+        "  sorry\n"
+    )
+
+    candidates = prover._mathlib_native_lsp_candidates(
+        packet=_packet(
+            theorem_name="t",
+            claim="monotone bounded sequence converges",
+            lean_code=code,
+            claim_type="mathlib_native",
+        ),
+        current_code=code,
+        code_actions=None,
+        search_results=None,
+    )
+
+    proofs = [proof for proof, _source, _lemma in candidates]
+    assert any("tendsto_atTop_ciSup hmono hbdd" in proof for proof in proofs)
+    assert any("⨆ i, u i" in proof for proof in proofs)
+
+
+def test_sprint25_lsp_heuristics_fallback_on_proposition_shaped_extreme_goal() -> None:
+    from tests.test_prover import _packet
+
+    prover = _make_prover(_ScriptedLSPClient())
+    code = (
+        "import Mathlib\n\n"
+        "theorem t : ∃ x, IsConstrainedMaximum f feasible x := by\n"
+        "  sorry\n"
+    )
+
+    candidates = prover._mathlib_native_lsp_candidates(
+        packet=_packet(
+            theorem_name="t",
+            claim="compact continuous function attains a maximum",
+            lean_code=code,
+            claim_type="mathlib_native",
+        ),
+        current_code=code,
+        code_actions=None,
+        search_results=None,
+    )
+
+    first_proof = candidates[0][0]
+    assert "IsCompact.exists_isMaxOn hcompact hnonempty hcontinuous" in first_proof
+    assert "refine ⟨x, hx, ?_⟩" in first_proof
+    assert "simpa using hmax hy" in first_proof
+    assert "exists_isConstrainedMaximum_of_isCompact_continuousOn" not in first_proof
+
+
+def test_sprint25_lsp_heuristics_fallback_on_proposition_shaped_monotone_goal() -> None:
+    from tests.test_prover import _packet
+
+    prover = _make_prover(_ScriptedLSPClient())
+    code = (
+        "import Mathlib\n\n"
+        "theorem t : ∃ l, Tendsto u atTop (nhds l) := by\n"
+        "  -- context: Monotone u, BddAbove (Set.range u)\n"
+        "  sorry\n"
+    )
+
+    candidates = prover._mathlib_native_lsp_candidates(
+        packet=_packet(
+            theorem_name="t",
+            claim="monotone bounded sequence converges",
+            lean_code=code,
+            claim_type="mathlib_native",
+        ),
+        current_code=code,
+        code_actions=None,
+        search_results=None,
+    )
+
+    first_proof = candidates[0][0]
+    assert "exact ⟨⨆ i, u i, tendsto_atTop_ciSup h_monotone h_bddAbove⟩" == first_proof
+
+
+def test_sprint25_helper_lemma_prefers_live_goal_over_planner_text() -> None:
+    from src.prover.prover import ProverTarget
+    from src.prover.synthesizer import ProofSketch, ProofSynthesizer
+    from tests.test_prover import _packet
+
+    packet = _packet(
+        theorem_name="parent",
+        claim="monotone bounded convergence",
+        lean_code="theorem parent : True := sorry",
+        claim_type="mathlib_native",
+    )
+    target = ProverTarget(
+        name="parent",
+        statement="True",
+        kind="theorem_body",
+        helper_theorem_name="parent",
+    )
+    action = ProofSynthesizer().helper_lemma_action(
+        packet=packet,
+        target=target,
+        state={"goals": ["hmono : Monotone u\n⊢ Tendsto u atTop (𝓝 l)"]},
+        sketch=ProofSketch(strategy="s", subgoal_order=["Show that the sequence converges."]),
+        premises=[],
+        index=1,
+    )
+
+    assert action is not None
+    assert action.decomposition_statement == "Tendsto u atTop (𝓝 l)"
 
 
 def test_sprint25_decomposition_hint_triggers_on_compact_and_convergence_markers() -> None:

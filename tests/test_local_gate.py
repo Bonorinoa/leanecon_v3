@@ -279,6 +279,31 @@ class TraceFakeProver(FakeProver):
                         "claim_id": "fake",
                         "decomposition_depth": 1,
                     },
+                    "PremiseResolutionEvent": {
+                        "event_type": "PremiseResolutionEvent",
+                        "raw_name": "tendsto_atTop_ciSup",
+                        "resolved_name": "tendsto_atTop_ciSup",
+                        "resolved": True,
+                        "source": "mathlib_rag",
+                        "resolution_method": "raw_global_candidate",
+                        "failure_reason": None,
+                    },
+                    "CandidateTacticEvent": {
+                        "event_type": "CandidateTacticEvent",
+                        "tactic": "exact tendsto_atTop_ciSup hmono hbdd",
+                        "origin": "resolved_premise_micro_search",
+                        "premise_name": "tendsto_atTop_ciSup",
+                        "success": True,
+                        "committed": True,
+                        "progress_delta": {
+                            "event_type": "ProgressDelta",
+                            "goals_reduced": True,
+                            "complexity_reduced": True,
+                            "stall_detected": False,
+                        },
+                        "error": None,
+                    },
+                    "synthesis_candidate_used": True,
                 },
                 tool_result="All goals solved.",
             )
@@ -581,6 +606,15 @@ def test_local_gate_benchmark_metrics_include_harness_trace_events(monkeypatch) 
     assert summary["avg_tool_calls_mathlib"] == 2.0
     assert summary["synthesis_efficiency"] == 1.0
     assert summary["premise_match_rate@3"] == 1.0
+    assert summary["synthesis_event_count"] == 1
+    assert summary["premise_matched_synthesis_event_count"] == 1
+    assert summary["premise_top3_synthesis_event_count"] == 1
+    assert summary["synthesis_candidate_used_count"] == 3
+    assert summary["resolved_premise_rate"] == 1.0
+    assert summary["candidate_attempt_count"] == 1
+    assert summary["candidate_success_rate"] == 1.0
+    assert summary["provider_fallback_rate"] == 1.0
+    assert summary["repl_compile_disagreement_count"] == 0
     assert summary["avg_decomposition_depth_mathlib"] == 0.0
     assert summary["progress_deltas"]
     assert summary["synthesis_events"]
@@ -588,12 +622,23 @@ def test_local_gate_benchmark_metrics_include_harness_trace_events(monkeypatch) 
     assert combined["avg_tool_calls_mathlib"] == 2.0
     assert combined["synthesis_efficiency"] == 1.0
     assert combined["premise_match_rate@3"] == 1.0
+    assert combined["synthesis_event_count"] == 1
+    assert combined["premise_matched_synthesis_event_count"] == 1
+    assert combined["premise_top3_synthesis_event_count"] == 1
+    assert combined["synthesis_candidate_used_count"] == 3
+    assert combined["resolved_premise_rate"] == 1.0
+    assert combined["candidate_attempt_count"] == 1
+    assert combined["candidate_success_rate"] == 1.0
+    assert combined["provider_fallback_rate"] == 1.0
+    assert combined["repl_compile_disagreement_count"] == 0
     first_result = summary["results"][0]
     assert {event["event_type"] for event in first_result["trace_events"]} >= {
         "RetrievalEvent",
         "ToolUsageTrace",
         "ProgressDelta",
         "SynthesisEvent",
+        "PremiseResolutionEvent",
+        "CandidateTacticEvent",
     }
     assert any(
         (event.get("metadata") or {}).get("RetrievalEvent")
