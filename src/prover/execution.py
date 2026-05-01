@@ -3723,19 +3723,15 @@ class ProverExecutionMixin:
             ("", *common_name_sets[0]),
             ("", *common_name_sets[1]),
             ("", *common_name_sets[2]),
-            ("intro α _ _ _ _ f feasible hcompact hnonempty hcontinuous\n", *common_name_sets[0]),
-            ("intro α _ _ _ _ f feasible hcompact hne hcontinuous\n", *common_name_sets[1]),
-            (
-                "intro α _ _ _ _ f feasible h_compact h_nonempty h_continuous\n",
-                *common_name_sets[2],
-            ),
+            # ∀-form: implicit/instance binders are already in tactic context as outer
+            # theorem arguments; only the explicit proposition arrows need intro.
+            ("intro hcompact hnonempty hcontinuous\n", *common_name_sets[0]),
+            ("intro hcompact hne hcontinuous\n", *common_name_sets[1]),
+            ("intro h_compact h_nonempty h_continuous\n", *common_name_sets[2]),
             # Variants with trailing `_` to absorb an extra hypothesis (e.g. StrictConcaveOn).
-            ("intro α _ _ _ _ f feasible hcompact hnonempty hcontinuous _\n", *common_name_sets[0]),
-            ("intro α _ _ _ _ f feasible hcompact hne hcontinuous _\n", *common_name_sets[1]),
-            (
-                "intro α _ _ _ _ f feasible h_compact h_nonempty h_continuous _\n",
-                *common_name_sets[2],
-            ),
+            ("intro hcompact hnonempty hcontinuous _\n", *common_name_sets[0]),
+            ("intro hcompact hne hcontinuous _\n", *common_name_sets[1]),
+            ("intro h_compact h_nonempty h_continuous _\n", *common_name_sets[2]),
             ("", *common_name_sets[3]),
             ("", *common_name_sets[4]),
             ("", *common_name_sets[5]),
@@ -3757,11 +3753,11 @@ class ProverExecutionMixin:
             )
         for prefix in (
             "",
-            "intro α _ _ _ _ f feasible hcompact hnonempty hcontinuous\n",
-            "intro α _ _ _ _ f feasible hcompact hne hcontinuous\n",
-            "intro α _ _ _ _ f feasible h_compact h_nonempty h_continuous\n",
-            "intro α _ _ _ _ f feasible hcompact hnonempty hcontinuous _\n",
-            "intro α _ _ _ _ f feasible hcompact hne hcontinuous _\n",
+            "intro hcompact hnonempty hcontinuous\n",
+            "intro hcompact hne hcontinuous\n",
+            "intro h_compact h_nonempty h_continuous\n",
+            "intro hcompact hnonempty hcontinuous _\n",
+            "intro hcompact hne hcontinuous _\n",
         ):
             for hcompact, hnonempty, hcontinuous in common_name_sets:
                 proof = "\n".join(
@@ -3871,11 +3867,15 @@ class ProverExecutionMixin:
                 r"ContinuousOn\s+[A-Za-z_][A-Za-z0-9_']*\s+[A-Za-z_][A-Za-z0-9_']*\s*→", code
             )
         ):
+            # In Lean 4, `theorem foo : ∀ {α} [T] {f} {s}, P → Q →` is sugar for
+            # `theorem foo {α} [T] {f} {s} : P → Q →`.  The implicit/instance binders
+            # are already in the tactic context before the proof block starts, so only
+            # the explicit proposition arrows need `intro`.
             return (
                 "hcompact",
                 "hne",
                 "hcontinuous",
-                "intro α _ _ _ _ f feasible hcompact hne hcontinuous\n",
+                "intro hcompact hne hcontinuous\n",
             )
         return None
 
