@@ -109,6 +109,34 @@ def _ensure_mathlib_import(code: str) -> str:
         return code[: first_import.start()] + "import Mathlib\n" + code[first_import.start() :]
     return "import Mathlib\n\n" + code
 
+
+def _fix_concaveon_arg_order(code: str) -> str:
+    """Fix LLM error: (Strict)ConcaveOn ℝ f s → ℝ s f when f is a function parameter.
+
+    Mathlib's ConcaveOn/StrictConcaveOn take (𝕜 s f) — set before function.
+    LLMs regularly swap these, producing ill-typed theorem declarations.
+    """
+    func_vars: set[str] = set(
+        re.findall(
+            r"(?:\{|\()([A-Za-z_][A-Za-z0-9_']*)(?:\s*:[^})\n]+?→[^})\n]+?)(?:\}|\))",
+            code,
+        )
+    )
+    if not func_vars:
+        return code
+
+    def _swap(match: re.Match) -> str:
+        prefix, id1, id2 = match.group(1), match.group(2), match.group(3)
+        if id1 in func_vars and id2 not in func_vars:
+            return f"{prefix} {id2} {id1}"
+        return match.group(0)
+
+    return re.sub(
+        r"((?:Strict)?ConcaveOn\s+ℝ)\s+([A-Za-z_][A-Za-z0-9_']*)\s+([A-Za-z_][A-Za-z0-9_']*)",
+        _swap,
+        code,
+    )
+
 def _replace_last_sorry(code: str, replacement: str) -> str:
     lines = code.splitlines()
     for index in range(len(lines) - 1, -1, -1):
@@ -378,6 +406,7 @@ class ProverExecutionMixin:
         working_code = packet.lean_code
         if self._normalized_claim_type(packet) == "mathlib_native":
             working_code = _ensure_mathlib_import(working_code)
+            working_code = _fix_concaveon_arg_order(working_code)
         resolved_target_timeouts = self._resolve_target_timeouts(
             timeout=timeout, target_timeouts=target_timeouts
         )
