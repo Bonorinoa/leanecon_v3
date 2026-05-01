@@ -69,6 +69,7 @@ from src.prover.retrieval import (
     _query_from_failed_identifier,
 )
 from src.prover.synthesis import ProverSynthesisMixin, _build_prompt
+from src.prover.synthesizer import ProofSynthesizer
 from src.prover.tactics import direct_hypothesis_name, suggest_fast_path_tactics
 from src.tools import ToolRegistry, build_default_registry
 
@@ -157,12 +158,14 @@ class Prover(
         self.trace_store = trace_store or default_trace_store
         self.budget_tracker = budget_tracker or BudgetTracker()
         self.memory_writer = ProverMemoryWriter(self.trace_store)
+        self._proof_synthesizer = ProofSynthesizer()
         self.lsp_client = lsp_client or default_lean_lsp_client
         self._extracted_lemmas = 0
         self._retrieval_events: list[dict[str, Any]] = []
         self._tool_usage_traces: list[dict[str, Any]] = []
         self._state_transitions: list[dict[str, Any]] = []
         self._progress_deltas: list[dict[str, Any]] = []
+        self._synthesis_events: list[dict[str, Any]] = []
         # Stage 2-followup C: track which (claim_id, target_name) pairs have
         # already triggered a second-pass refined retrieval. Ensures we fire
         # at most once per target even after dropping the strict turn==1 gate.

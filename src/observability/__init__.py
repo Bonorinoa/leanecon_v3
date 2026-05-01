@@ -12,6 +12,7 @@ from .models import (
     StageRunResult,
     StageTiming,
     StateTransition,
+    SynthesisEvent,
     TokenUsage,
     ToolUsageTrace,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "StageRunResult",
     "StageTiming",
     "StateTransition",
+    "SynthesisEvent",
     "TokenUsage",
     "ToolUsageTrace",
     "attach_telemetry",

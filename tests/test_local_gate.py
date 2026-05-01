@@ -220,6 +220,27 @@ class TraceFakeProver(FakeProver):
                     },
                 },
             )
+            on_progress(
+                "synthesis_event",
+                {
+                    "event": "synthesis_event",
+                    "stage": "prover",
+                    "status": "running_prover",
+                    "message": "recorded synthesis",
+                    "metadata": {
+                        "SynthesisEvent": {
+                            "event_type": "SynthesisEvent",
+                            "tactic": "exact tendsto_atTop_ciSup hmono hbdd",
+                            "referenced_premises": ["tendsto_atTop_ciSup"],
+                            "top3_match": True,
+                            "success": True,
+                            "target_name": "theorem_body",
+                            "claim_id": "fake",
+                            "decomposition_depth": 1,
+                        }
+                    },
+                },
+            )
         result = await super().prove(*args, **kwargs)
         result.trace = [
             ProverTraceStep(
@@ -248,9 +269,31 @@ class TraceFakeProver(FakeProver):
                         "complexity_reduced": True,
                         "stall_detected": False,
                     },
+                    "SynthesisEvent": {
+                        "event_type": "SynthesisEvent",
+                        "tactic": "exact tendsto_atTop_ciSup hmono hbdd",
+                        "referenced_premises": ["tendsto_atTop_ciSup"],
+                        "top3_match": True,
+                        "success": True,
+                        "target_name": "theorem_body",
+                        "claim_id": "fake",
+                        "decomposition_depth": 1,
+                    },
                 },
                 tool_result="All goals solved.",
             )
+        ]
+        result.synthesis_events = [
+            {
+                "event_type": "SynthesisEvent",
+                "tactic": "exact tendsto_atTop_ciSup hmono hbdd",
+                "referenced_premises": ["tendsto_atTop_ciSup"],
+                "top3_match": True,
+                "success": True,
+                "target_name": "theorem_body",
+                "claim_id": "fake",
+                "decomposition_depth": 1,
+            }
         ]
         result.tool_budget = {
             "total_tool_calls": 2,
@@ -536,14 +579,21 @@ def test_local_gate_benchmark_metrics_include_harness_trace_events(monkeypatch) 
 
     assert summary["retrieval_hit_rate@5"] == 1.0
     assert summary["avg_tool_calls_mathlib"] == 2.0
+    assert summary["synthesis_efficiency"] == 1.0
+    assert summary["premise_match_rate@3"] == 1.0
+    assert summary["avg_decomposition_depth_mathlib"] == 0.0
     assert summary["progress_deltas"]
+    assert summary["synthesis_events"]
     assert combined["retrieval_hit_rate@5"] == 1.0
     assert combined["avg_tool_calls_mathlib"] == 2.0
+    assert combined["synthesis_efficiency"] == 1.0
+    assert combined["premise_match_rate@3"] == 1.0
     first_result = summary["results"][0]
     assert {event["event_type"] for event in first_result["trace_events"]} >= {
         "RetrievalEvent",
         "ToolUsageTrace",
         "ProgressDelta",
+        "SynthesisEvent",
     }
     assert any(
         (event.get("metadata") or {}).get("RetrievalEvent")

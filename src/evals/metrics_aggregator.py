@@ -71,6 +71,12 @@ def build_history_row(
         "total_native_search_attempts": _sum_metric(all_results, "native_search_attempts"),
         "mathlib_native_mode_usage": _sum_metric(all_results, "mathlib_native_mode_usage"),
         "avg_decomposition_depth": _average_metric(all_results, "decomposition_depth"),
+        "synthesis_efficiency": _synthesis_efficiency(all_results, run_summary),
+        "premise_match_rate@3": _premise_match_rate_at_3(all_results, run_summary),
+        "avg_decomposition_depth_mathlib": _avg_decomposition_depth_mathlib(
+            all_results,
+            run_summary,
+        ),
         "no_progress_stall_count": _no_progress_stall_count(all_results),
         "schema_invalid_rate": _rate(_schema_invalid_count(all_results), len(all_results)),
         "schema_invalid_count": _schema_invalid_count(all_results),
@@ -126,6 +132,9 @@ def _claim_set_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
             "total_native_search_attempts": 0,
             "mathlib_native_mode_usage": 0,
             "avg_decomposition_depth": 0.0,
+            "synthesis_efficiency": 0.0,
+            "premise_match_rate@3": 0.0,
+            "avg_decomposition_depth_mathlib": 0.0,
             "no_progress_stall_count": 0,
             "schema_invalid_rate": 0.0,
             "schema_invalid_count": 0,
@@ -150,6 +159,9 @@ def _claim_set_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
         "total_native_search_attempts": _sum_metric(results, "native_search_attempts"),
         "mathlib_native_mode_usage": _sum_metric(results, "mathlib_native_mode_usage"),
         "avg_decomposition_depth": _average_metric(results, "decomposition_depth"),
+        "synthesis_efficiency": _synthesis_efficiency(results, summary),
+        "premise_match_rate@3": _premise_match_rate_at_3(results, summary),
+        "avg_decomposition_depth_mathlib": _avg_decomposition_depth_mathlib(results, summary),
         "no_progress_stall_count": _no_progress_stall_count(results),
         "schema_invalid_rate": _rate(_schema_invalid_count(results), claims_total),
         "schema_invalid_count": _schema_invalid_count(results),
@@ -173,6 +185,64 @@ def _average_metric(results: list[dict[str, Any]], key: str) -> float:
 
 def _sum_metric(results: list[dict[str, Any]], key: str) -> int:
     return sum(int(result.get(key) or 0) for result in results)
+
+
+def _synthesis_event_payloads(results: list[dict[str, Any]], summary: dict[str, Any]) -> list[dict[str, Any]]:
+    payloads = [
+        dict(event)
+        for event in summary.get("synthesis_events", [])
+        if isinstance(event, dict)
+    ]
+    if payloads:
+        return payloads
+    for result in results:
+        for event in result.get("trace_events", []):
+            if event.get("event_type") == "SynthesisEvent" and isinstance(
+                event.get("payload"), dict
+            ):
+                payloads.append(dict(event["payload"]))
+        for event in result.get("synthesis_events", []):
+            if isinstance(event, dict):
+                payloads.append(dict(event))
+    return payloads
+
+
+def _synthesis_efficiency(results: list[dict[str, Any]], summary: dict[str, Any]) -> float:
+    if "synthesis_efficiency" in summary:
+        return round(float(summary.get("synthesis_efficiency") or 0.0), 6)
+    events = _synthesis_event_payloads(results, summary)
+    if not events:
+        return 0.0
+    matched = sum(1 for event in events if event.get("referenced_premises"))
+    return round(matched / len(events), 6)
+
+
+def _premise_match_rate_at_3(results: list[dict[str, Any]], summary: dict[str, Any]) -> float:
+    if "premise_match_rate@3" in summary:
+        return round(float(summary.get("premise_match_rate@3") or 0.0), 6)
+    events = _synthesis_event_payloads(results, summary)
+    if not events:
+        return 0.0
+    matched = sum(1 for event in events if bool(event.get("top3_match")))
+    return round(matched / len(events), 6)
+
+
+def _avg_decomposition_depth_mathlib(
+    results: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> float:
+    if "avg_decomposition_depth_mathlib" in summary:
+        return round(float(summary.get("avg_decomposition_depth_mathlib") or 0.0), 3)
+    mathlib_results = [
+        result for result in results if result.get("benchmark_bucket") == "mathlib_native"
+    ]
+    if not mathlib_results:
+        return 0.0
+    return round(
+        sum(float(result.get("decomposition_depth") or 0.0) for result in mathlib_results)
+        / len(mathlib_results),
+        3,
+    )
 
 
 def _total_cost(summary: dict[str, Any]) -> float:

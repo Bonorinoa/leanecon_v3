@@ -102,6 +102,10 @@ class FormalizationPacket(FormalizerModel):
     open_statements: list[str] = Field(default_factory=list)
     subgoals: list[FormalizerSubgoal] = Field(default_factory=list)
     selected_preamble: list[str] = Field(default_factory=list)
+    planner_plan_paragraph: str = ""
+    planner_textbook_defaults: list[str] = Field(default_factory=list)
+    planner_subgoals: list[str] = Field(default_factory=list)
+    proof_sketch: dict[str, Any] | None = None
     vacuity: dict[str, Any]
     faithfulness: FaithfulnessAssessment
     parse_check: ParseCheck

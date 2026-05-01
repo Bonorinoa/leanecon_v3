@@ -130,6 +130,29 @@ class LeanSearchFailureEvent:
 
 
 @dataclass(frozen=True)
+class SynthesisEvent:
+    tactic: str
+    referenced_premises: list[str] = field(default_factory=list)
+    top3_match: bool = False
+    success: bool = False
+    target_name: str | None = None
+    claim_id: str | None = None
+    decomposition_depth: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": "SynthesisEvent",
+            "tactic": self.tactic,
+            "referenced_premises": list(self.referenced_premises),
+            "top3_match": bool(self.top3_match),
+            "success": bool(self.success),
+            "target_name": self.target_name,
+            "claim_id": self.claim_id,
+            "decomposition_depth": int(self.decomposition_depth),
+        }
+
+
+@dataclass(frozen=True)
 class ProgressDelta:
     goals_reduced: bool = False
     complexity_reduced: bool = False

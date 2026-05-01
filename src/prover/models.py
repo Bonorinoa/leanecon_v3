@@ -114,3 +114,4 @@ class ProverResult(ProverModel):
     tool_usage_traces: list[dict[str, Any]] = Field(default_factory=list)
     state_transitions: list[dict[str, Any]] = Field(default_factory=list)
     progress_deltas: list[dict[str, Any]] = Field(default_factory=list)
+    synthesis_events: list[dict[str, Any]] = Field(default_factory=list)

@@ -12,6 +12,7 @@ from typing import Any
 from src.formalizer.models import FormalizationPacket
 from src.prover.budget import MATHLIB_NATIVE_PROMPT_ONLY_TOOLS
 from src.prover.models import ProverTarget, ProverTraceStep
+from src.prover.synthesizer import MATHLIB_SYNTHESIS_FEW_SHOTS
 from src.prover.tactics import suggest_fast_path_tactics
 
 def _build_prompt(
@@ -51,6 +52,7 @@ def _build_prompt(
         "lean_feedback": lean_feedback,
         "goals": goals,
         "memory_examples": examples,
+        "synthesis_few_shots": [dict(item) for item in MATHLIB_SYNTHESIS_FEW_SHOTS],
         "tools": tool_specs,
         "recent_trace": recent_steps,
         "instructions": {
@@ -95,6 +97,15 @@ class ProverSynthesisMixin:
             limit=2,
             outcome="verified",
         )
+        if not examples and self._normalized_claim_type(packet) == "mathlib_native":
+            query = " ".join([packet.claim, packet.theorem_name])
+            try:
+                examples = self.trace_store.query_mathlib_helpers(
+                    self._proof_synthesizer_keywords(query),
+                    limit=2,
+                )
+            except AttributeError:
+                examples = []
         return [
             {
                 "claim_text": trace.claim_text,
@@ -102,6 +113,7 @@ class ProverSynthesisMixin:
                 "tactic_sequence": trace.tactic_sequence[:4],
                 "lesson_summary": trace.lesson_summary,
                 "outcome": trace.outcome,
+                "trace_metadata": trace.trace_metadata or {},
             }
             for trace in examples
         ]
@@ -134,6 +146,7 @@ class ProverSynthesisMixin:
         diagnostics: Any,
         code_actions: Any,
         prior_trace: list[ProverTraceStep],
+        proof_sketch: dict[str, Any] | None = None,
     ) -> str:
         recent_steps = [
             {
@@ -162,6 +175,15 @@ class ProverSynthesisMixin:
                 "If goal has quantifiers (∀/∃) or conjuncts (∧/↔), start with "
                 "intro (add hypotheses), obtain/cases (existentials), refine (premise "
                 "with holes), or constructor (split) before retrieved premises."
+            )
+            rules.append(
+                "For compact maximum goals, obtain the witness from the compact or "
+                "extreme-value premise before refining the existential target."
+            )
+            rules.append(
+                "For monotone bounded convergence goals, prefer the theorem whose "
+                "conclusion already is `Tendsto`; wrap it in `Exists.intro` only "
+                "when the goal is existential."
             )
             rules.append(
                 "Consider patterns: 1. Quantified: `intro h; obtain ⟨x,hx⟩:=premise h; "
@@ -196,6 +218,8 @@ class ProverSynthesisMixin:
                 "code_actions": code_actions,
                 "file_outline": state.get("file_outline"),
                 "retrieved_premises": prompt_premises,
+                "proof_sketch": proof_sketch,
+                "synthesis_few_shots": self._proof_synthesizer.few_shots(),
                 "recent_trace": recent_steps,
                 "instructions": {
                     "return_json_only": True,
@@ -238,7 +262,36 @@ class ProverSynthesisMixin:
                 text = "\n".join(str(g) for g in goals)
             except TypeError:
                 text = str(goals)
-        return any(marker in text for marker in ("∀", "∃", "∧", "↔"))
+        markers = (
+            "∀",
+            "∃",
+            "∧",
+            "↔",
+            "IsCompact",
+            "CompactSpace",
+            "ContinuousOn",
+            "IsMaxOn",
+            "IsMinOn",
+            "IsConstrainedMaximum",
+            "Monotone",
+            "BddAbove",
+            "Set.range",
+            "Tendsto",
+            "atTop",
+            "sSup",
+            "ciSup",
+        )
+        return any(marker in text for marker in markers)
+
+    @staticmethod
+    def _proof_synthesizer_keywords(text: str) -> list[str]:
+        import re
+
+        return [
+            token
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9_']*", text)
+            if len(token) > 3
+        ][:8]
 
     def _metadata_tactic_hints(self, packet: FormalizationPacket) -> list[str]:
         from src.planner.retrieval import _entry_tactic_hints, _load_metadata

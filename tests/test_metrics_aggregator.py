@@ -14,6 +14,24 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
         "claims_failed": 1,
         "pass_at_1": 2 / 3,
         "cost_by_stage": {"planner": 0.15, "formalizer": 0.0, "prover": 0.0},
+        "synthesis_events": [
+            {
+                "event_type": "SynthesisEvent",
+                "tactic": "exact tendsto_atTop_ciSup hmono hbdd",
+                "referenced_premises": ["tendsto_atTop_ciSup"],
+                "top3_match": True,
+                "success": True,
+                "decomposition_depth": 2,
+            },
+            {
+                "event_type": "SynthesisEvent",
+                "tactic": "exact hallucinated_name h",
+                "referenced_premises": [],
+                "top3_match": False,
+                "success": False,
+                "decomposition_depth": 2,
+            },
+        ],
         "claim_sets": [
             {
                 "claim_set": "tier1_core_preamble_definable",
@@ -72,6 +90,24 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
                 "claims_failed": 1,
                 "pass_at_1": 0.0,
                 "cost_by_stage": {"planner": 0.05},
+                "synthesis_events": [
+                    {
+                        "event_type": "SynthesisEvent",
+                        "tactic": "exact tendsto_atTop_ciSup hmono hbdd",
+                        "referenced_premises": ["tendsto_atTop_ciSup"],
+                        "top3_match": True,
+                        "success": True,
+                        "decomposition_depth": 2,
+                    },
+                    {
+                        "event_type": "SynthesisEvent",
+                        "tactic": "exact hallucinated_name h",
+                        "referenced_premises": [],
+                        "top3_match": False,
+                        "success": False,
+                        "decomposition_depth": 2,
+                    },
+                ],
                 "claim_set_manifest": {
                     "bucket_counts": {
                         "mathlib_native": 1,
@@ -118,12 +154,16 @@ def test_build_history_row_includes_required_rollups(tmp_path) -> None:
     assert row["total_native_search_attempts"] == 2
     assert row["mathlib_native_mode_usage"] == 1
     assert row["avg_decomposition_depth"] == 1.0
+    assert row["synthesis_efficiency"] == 0.5
+    assert row["premise_match_rate@3"] == 0.5
+    assert row["avg_decomposition_depth_mathlib"] == 2.0
     assert row["no_progress_stall_count"] == 1
     assert row["schema_invalid_rate"] == 0.333333
     assert row["claim_type_mix"] == {"preamble_definable": 2, "mathlib_native": 1}
     assert row["bucket_breakdown"]["tier1_core_preamble_definable"]["direct_close_rate"] == 0.5
     assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["total_lsp_tool_calls"] == 5
     assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["mathlib_native_mode_usage"] == 1
+    assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["synthesis_efficiency"] == 0.5
     assert row["bucket_breakdown"]["tier2_frontier_preamble_definable"]["present"] is False
     assert row["bucket_breakdown"]["tier2_frontier_mathlib_native"]["no_progress_stall_count"] == 1
     assert appended["row_id"] == "run_000001"

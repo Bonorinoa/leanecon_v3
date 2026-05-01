@@ -58,6 +58,7 @@ class ProverDriver(Protocol):
         *,
         backend: ProverBackend,
         prompt: str,
+        temperature: float | None = None,
     ) -> ProverAction | tuple[ProverAction, ProviderCallMetadata]:
         """Return the next structured prover action."""
 
@@ -120,6 +121,7 @@ class HuggingFaceProverDriver:
         *,
         client,
         prompt: str,
+        temperature: float | None = None,
     ) -> tuple[ProverAction, ProviderCallMetadata]:
         messages = [
             {"role": "system", "content": "You are a Lean theorem prover. Return only JSON."},
@@ -128,7 +130,7 @@ class HuggingFaceProverDriver:
         raw = client.chat_completion(
             messages,
             max_tokens=800,
-            temperature=0.1,
+            temperature=0.1 if temperature is None else temperature,
         )
         content = raw.choices[0].message.content
         if isinstance(content, list):
@@ -155,11 +157,12 @@ class HuggingFaceProverDriver:
         *,
         client,
         prompt: str,
+        temperature: float | None = None,
     ) -> tuple[ProverAction, ProviderCallMetadata]:
         raw_text = client.text_generation(
             prompt,
             max_new_tokens=800,
-            temperature=0.1,
+            temperature=0.1 if temperature is None else temperature,
             return_full_text=False,
             details=True,
             decoder_input_details=True,
@@ -193,6 +196,7 @@ class HuggingFaceProverDriver:
         *,
         backend: ProverBackend,
         prompt: str,
+        temperature: float | None = None,
     ) -> ProverAction | tuple[ProverAction, ProviderCallMetadata]:
         try:
             from huggingface_hub import InferenceClient
@@ -209,11 +213,19 @@ class HuggingFaceProverDriver:
                 provider=self.inference_provider,
             )
             try:
-                return self._chat_completion(client=client, prompt=prompt)
+                return self._chat_completion(
+                    client=client,
+                    prompt=prompt,
+                    temperature=temperature,
+                )
             except Exception as error:
                 if not self._should_fallback_to_text_generation(error):
                     raise
-                return self._text_generation(client=client, prompt=prompt)
+                return self._text_generation(
+                    client=client,
+                    prompt=prompt,
+                    temperature=temperature,
+                )
         except Exception as error:
             raise ProverDriverError(
                 f"Prover backend invocation failed for {backend.model}: {error}"
@@ -243,6 +255,7 @@ class MistralProverDriver:
         *,
         backend: ProverBackend,
         prompt: str,
+        temperature: float | None = None,
     ) -> ProverAction | tuple[ProverAction, ProviderCallMetadata]:
         if not self.api_key:
             raise ProverDriverError(
@@ -251,7 +264,7 @@ class MistralProverDriver:
         payload = json.dumps(
             {
                 "model": backend.model,
-                "temperature": 0.1,
+                "temperature": 0.1 if temperature is None else temperature,
                 "messages": [
                     {
                         "role": "system",
@@ -348,4 +361,3 @@ def _unwrap_action_response(
     if isinstance(value, tuple) and len(value) == 2 and isinstance(value[1], ProviderCallMetadata):
         return value[0], value[1]
     return value, None
-

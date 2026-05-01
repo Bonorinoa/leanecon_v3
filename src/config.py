@@ -132,13 +132,30 @@ MAX_PROVE_STEPS = int(os.getenv("MAX_PROVE_STEPS", "32"))
 MAX_PROVE_TIMEOUT = int(os.getenv("MAX_PROVE_TIMEOUT", "300"))
 MAX_TOTAL_TOOL_CALLS = int(os.getenv("MAX_TOTAL_TOOL_CALLS", "40"))
 MAX_SEARCH_TOOL_CALLS = int(os.getenv("MAX_SEARCH_TOOL_CALLS", "12"))
-# Sprint 23: hybrid (mathlib-native) mode gets a small budget bump to allow
-# enrichment + second-retrieval rounds without starving the proof stage.
+# Sprint 25: hybrid (mathlib-native) mode gets an explicit synthesis recovery
+# budget for sketching, premise-use recovery, and helper-lemma attempts without
+# changing preamble-definable limits.
+MATHLIB_SYNTHESIS_RECOVERY_SEARCH_BONUS = int(
+    os.getenv("MATHLIB_SYNTHESIS_RECOVERY_SEARCH_BONUS", "4")
+)
+MATHLIB_SYNTHESIS_RECOVERY_STEP_BONUS = int(
+    os.getenv("MATHLIB_SYNTHESIS_RECOVERY_STEP_BONUS", "8")
+)
 MAX_PROVE_STEPS_HYBRID = int(
-    os.getenv("MAX_PROVE_STEPS_HYBRID", str(MAX_PROVE_STEPS + 4))
+    os.getenv(
+        "MAX_PROVE_STEPS_HYBRID",
+        str(MAX_PROVE_STEPS + MATHLIB_SYNTHESIS_RECOVERY_STEP_BONUS),
+    )
 )
 MAX_SEARCH_TOOL_CALLS_HYBRID = int(
-    os.getenv("MAX_SEARCH_TOOL_CALLS_HYBRID", str(MAX_SEARCH_TOOL_CALLS + 2))
+    os.getenv(
+        "MAX_SEARCH_TOOL_CALLS_HYBRID",
+        str(MAX_SEARCH_TOOL_CALLS + MATHLIB_SYNTHESIS_RECOVERY_SEARCH_BONUS),
+    )
+)
+MATHLIB_SYNTHESIS_BEST_OF_N = int(os.getenv("MATHLIB_SYNTHESIS_BEST_OF_N", "1"))
+MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED = (
+    os.getenv("MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED", "true").lower() == "true"
 )
 JOB_TTL_SECONDS = int(os.getenv("JOB_TTL_SECONDS", "3600"))
 JOB_MAX_CONCURRENT = int(os.getenv("JOB_MAX_CONCURRENT", "2"))

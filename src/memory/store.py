@@ -143,6 +143,45 @@ class ProofTraceStore:
             ).fetchall()
         return self._rows_to_traces(rows)
 
+    def query_mathlib_helpers(
+        self,
+        concept_tokens: list[str],
+        limit: int = 2,
+    ) -> list[ProofTrace]:
+        self.initialize()
+        tokens = [token for token in concept_tokens if token]
+        if not tokens:
+            return []
+        like_terms = [f"%{token}%" for token in tokens[:8]]
+        score_expr = " + ".join(
+            "CASE WHEN claim_text LIKE ? OR trace_metadata_json LIKE ? THEN 1 ELSE 0 END"
+            for _ in like_terms
+        )
+        filters = [
+            "outcome = 'verified'",
+            "trace_metadata_json LIKE '%\"memory_kind\": \"mathlib_helper_lemma\"%'",
+            f"({score_expr}) > 0",
+        ]
+        params: list[object] = []
+        for like_term in like_terms:
+            params.extend([like_term, like_term])
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    claim_id, claim_text, preamble_names_json, tactic_sequence_json,
+                    stage_outcomes_json, failure_class, repair_count, outcome,
+                    formalizer_model, timestamp, lesson_summary, full_trace_json,
+                    prover_backend, trace_metadata_json
+                FROM proof_traces
+                WHERE {" AND ".join(filters)}
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            ).fetchall()
+        return self._rows_to_traces(rows)
+
     def list_recent(self, *, limit: int = 10, outcome: str | None = None) -> list[ProofTrace]:
         self.initialize()
         filters: list[str] = []

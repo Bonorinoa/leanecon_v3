@@ -274,7 +274,7 @@ def test_harness_prompt_includes_strengthened_hint_examples_and_refined_query() 
 
 
 def test_hybrid_budget_is_bumped_for_mathlib_native_only() -> None:
-    """Mathlib-native claims get +2 search calls and +4 prove steps; preamble_definable does not."""
+    """Mathlib-native claims get synthesis recovery budget; preamble_definable does not."""
     from src.config import (
         MAX_PROVE_STEPS,
         MAX_PROVE_STEPS_HYBRID,
@@ -282,8 +282,8 @@ def test_hybrid_budget_is_bumped_for_mathlib_native_only() -> None:
         MAX_SEARCH_TOOL_CALLS_HYBRID,
     )
 
-    assert MAX_SEARCH_TOOL_CALLS_HYBRID == MAX_SEARCH_TOOL_CALLS + 2
-    assert MAX_PROVE_STEPS_HYBRID == MAX_PROVE_STEPS + 4
+    assert MAX_SEARCH_TOOL_CALLS_HYBRID == MAX_SEARCH_TOOL_CALLS + 4
+    assert MAX_PROVE_STEPS_HYBRID == MAX_PROVE_STEPS + 8
 
 
 def test_leansearch_failure_is_observable_and_retries_with_refined_query() -> None:
@@ -388,6 +388,121 @@ def test_harness_prompt_includes_premise_utilization_section() -> None:
     joined = "\n".join(util)
     for token in ("full_type_signature", "detailed_docstring", "declaration_location"):
         assert token in joined, f"{token} guidance missing from premise_utilization"
+
+
+def test_sprint25_harness_prompt_includes_proof_sketch_and_few_shots() -> None:
+    import json as _json
+    from src.prover.prover import ProverTarget
+    from tests.test_prover import _packet
+
+    prover = _make_prover(_ScriptedLSPClient())
+    packet = _packet(
+        theorem_name="t",
+        claim="monotone bounded convergence",
+        lean_code="theorem t : True := sorry",
+        claim_type="mathlib_native",
+    )
+    target = ProverTarget(name="t", statement="True", kind="theorem_body", helper_theorem_name="t")
+    prompt = prover._build_mathlib_harness_prompt(
+        packet=packet,
+        target=target,
+        state={"goals": ["⊢ ∃ l, Tendsto u atTop (𝓝 l)"], "code": "..."},
+        retrieved_premises=[
+            {
+                "name": "tendsto_atTop_ciSup",
+                "type": "Monotone u → BddAbove (Set.range u) → Tendsto u atTop (𝓝 _)",
+            }
+        ],
+        diagnostics=None,
+        code_actions=None,
+        prior_trace=[],
+        proof_sketch={
+            "strategy": "Use the Tendsto premise, then wrap the limit witness.",
+            "likely_premises": ["tendsto_atTop_ciSup"],
+            "subgoal_order": ["prove Tendsto"],
+            "tactic_shape": "exact ⟨_, tendsto_atTop_ciSup hmono hbdd⟩",
+            "source": "unit_test",
+        },
+    )
+
+    body = _json.loads(prompt)
+    assert body["proof_sketch"]["likely_premises"] == ["tendsto_atTop_ciSup"]
+    assert len(body["synthesis_few_shots"]) == 3
+    assert any("compact" in shot["name"] for shot in body["synthesis_few_shots"])
+
+
+def test_sprint25_decomposition_hint_triggers_on_compact_and_convergence_markers() -> None:
+    prover = _make_prover(_ScriptedLSPClient())
+
+    assert prover._goals_need_decomposition_hint(
+        ["hcompact : IsCompact s\nhf : ContinuousOn f s\n⊢ ∃ x, IsMaxOn f s x"]
+    )
+    assert prover._goals_need_decomposition_hint(
+        ["hmono : Monotone u\nhbdd : BddAbove (Set.range u)\n⊢ Tendsto u atTop (𝓝 l)"]
+    )
+    assert not prover._goals_need_decomposition_hint(["⊢ P x"])
+
+
+def test_sprint25_synthesis_event_payload_tracks_premise_match() -> None:
+    from src.observability.models import SynthesisEvent
+    from src.prover.synthesizer import ProofSynthesizer
+
+    match = ProofSynthesizer().premise_match(
+        "exact Real.tendsto_of_bddAbove_monotone hbdd hmono",
+        [
+            {"name": "Real.tendsto_of_bddAbove_monotone"},
+            {"name": "tendsto_atTop_ciSup"},
+        ],
+    )
+    payload = SynthesisEvent(
+        tactic="exact Real.tendsto_of_bddAbove_monotone hbdd hmono",
+        referenced_premises=match.referenced_premises,
+        top3_match=match.top3_match,
+        success=True,
+        target_name="h",
+        claim_id="c",
+        decomposition_depth=1,
+    ).to_dict()
+
+    assert payload["event_type"] == "SynthesisEvent"
+    assert payload["referenced_premises"] == ["Real.tendsto_of_bddAbove_monotone"]
+    assert payload["top3_match"] is True
+    assert payload["decomposition_depth"] == 1
+
+
+def test_sprint25_helper_lemma_memory_round_trips(tmp_path) -> None:
+    from src.memory.store import ProofTraceStore
+    from src.prover.memory_writer import ProverMemoryWriter
+    from tests.test_prover import _packet
+
+    store = ProofTraceStore(tmp_path / "proof_traces.sqlite3")
+    packet = _packet(
+        theorem_name="parent",
+        claim="monotone bounded convergence",
+        lean_code="theorem parent : True := sorry",
+        claim_type="mathlib_native",
+    )
+    writer = ProverMemoryWriter(store)
+    writer.record_helper_lemma(
+        packet=packet,
+        lemma_name="apollo_parent_synth_1",
+        lemma_statement="Tendsto u atTop (𝓝 l)",
+        tactic_sequence=["exact tendsto_atTop_ciSup hmono hbdd"],
+        parent_claim_id="parent",
+        retrieved_premises=[{"name": "tendsto_atTop_ciSup"}],
+        prover_backend="leanstral",
+    )
+
+    traces = store.query_mathlib_helpers(["Tendsto", "ciSup"], limit=2)
+    assert len(traces) == 1
+    assert traces[0].claim_id == "apollo_parent_synth_1"
+    assert traces[0].trace_metadata["memory_kind"] == "mathlib_helper_lemma"
+
+
+def test_sprint25_best_of_n_is_disabled_by_default() -> None:
+    from src.config import MATHLIB_SYNTHESIS_BEST_OF_N
+
+    assert MATHLIB_SYNTHESIS_BEST_OF_N == 1
 
 
 def test_harness_prompt_includes_exists_membership_pattern() -> None:
@@ -570,22 +685,35 @@ def test_harness_defers_to_lsp_fallback_on_empty_goals() -> None:
     backend = prover.primary_backend
     audit_events: list = []
 
-    closed, failure = prover._try_mathlib_native_harness_loop(
-        packet=packet,
-        target=target,
-        session=session,
-        trace=[],
-        audit_events=audit_events,
-        backend=backend,
-        attempted_backends=[],
-        turn=2,
-        timeout=30,
-        telemetry=type("T", (), {"record_provider": staticmethod(lambda *a, **k: None)})(),
-        provider_usage=[],
-        lean_feedback=[],
-        goals=[],
-        job_id="job_test",
-        on_progress=None,
+    import asyncio
+    from src.prover.models import ProverTargetTimeouts
+
+    closed, failure = asyncio.run(
+        prover._try_mathlib_native_harness_loop(
+            packet=packet,
+            target=target,
+            session=session,
+            trace=[],
+            audit_events=audit_events,
+            backend=backend,
+            attempted_backends=[],
+            turn=2,
+            timeout=30,
+            telemetry=type("T", (), {"record_provider": staticmethod(lambda *a, **k: None)})(),
+            provider_usage=[],
+            lean_feedback=[],
+            goals=[],
+            job_id="job_test",
+            on_progress=None,
+            target_timeouts=ProverTargetTimeouts(
+                theorem_body=30,
+                subgoal=30,
+                apollo_lemma=30,
+            ),
+            max_turns=2,
+            allow_decomposition=True,
+            max_recursion_depth=1,
+        )
     )
 
     # Critical: must NOT claim closure (would skip downstream LSP fallback +

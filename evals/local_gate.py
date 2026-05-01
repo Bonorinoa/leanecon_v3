@@ -513,12 +513,19 @@ def _trace_events_from_result(prove_result: ProverResult) -> list[dict[str, Any]
         ("tool_usage_traces", "ToolUsageTrace"),
         ("state_transitions", "StateTransition"),
         ("progress_deltas", "ProgressDelta"),
+        ("synthesis_events", "SynthesisEvent"),
     ):
         for payload in getattr(prove_result, attr, []) or []:
             if isinstance(payload, dict):
                 events.append({"event_type": event_type, "payload": payload})
     for step in prove_result.trace:
-        for key in ("RetrievalEvent", "ToolUsageTrace", "StateTransition", "ProgressDelta"):
+        for key in (
+            "RetrievalEvent",
+            "ToolUsageTrace",
+            "StateTransition",
+            "ProgressDelta",
+            "SynthesisEvent",
+        ):
             payload = step.tool_arguments.get(key)
             if isinstance(payload, dict):
                 events.append(
@@ -534,7 +541,13 @@ def _trace_events_from_result(prove_result: ProverResult) -> list[dict[str, Any]
         if not isinstance(event, dict):
             continue
         event_type = str(event.get("event_type") or "")
-        if event_type in {"RetrievalEvent", "ToolUsageTrace", "StateTransition", "ProgressDelta"}:
+        if event_type in {
+            "RetrievalEvent",
+            "ToolUsageTrace",
+            "StateTransition",
+            "ProgressDelta",
+            "SynthesisEvent",
+        }:
             events.append(
                 {
                     "event_type": event_type,
@@ -551,6 +564,30 @@ def _trace_events_from_result(prove_result: ProverResult) -> list[dict[str, Any]
             continue
         seen.add(key)
         deduped.append(event)
+    return deduped
+
+
+def _synthesis_event_payloads(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for result in results:
+        for event in result.get("trace_events", []):
+            if event.get("event_type") == "SynthesisEvent" and isinstance(
+                event.get("payload"), dict
+            ):
+                payloads.append(dict(event["payload"]))
+        for event in result.get("progress_events", []):
+            metadata = event.get("metadata") or {}
+            payload = metadata.get("SynthesisEvent")
+            if isinstance(payload, dict):
+                payloads.append(dict(payload))
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for payload in payloads:
+        key = json.dumps(payload, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(payload)
     return deduped
 
 
@@ -601,6 +638,35 @@ def _avg_tool_calls_mathlib(results: list[dict[str, Any]]) -> float:
         return 0.0
     return round(
         sum(int(result.get("tool_calls") or 0) for result in mathlib_results)
+        / len(mathlib_results),
+        3,
+    )
+
+
+def _synthesis_efficiency(results: list[dict[str, Any]]) -> float:
+    events = _synthesis_event_payloads(results)
+    if not events:
+        return 0.0
+    matched = sum(1 for event in events if event.get("referenced_premises"))
+    return round(matched / len(events), 6)
+
+
+def _premise_match_rate_at_3(results: list[dict[str, Any]]) -> float:
+    events = _synthesis_event_payloads(results)
+    if not events:
+        return 0.0
+    matched = sum(1 for event in events if bool(event.get("top3_match")))
+    return round(matched / len(events), 6)
+
+
+def _avg_decomposition_depth_mathlib(results: list[dict[str, Any]]) -> float:
+    mathlib_results = [
+        result for result in results if result.get("benchmark_bucket") == "mathlib_native"
+    ]
+    if not mathlib_results:
+        return 0.0
+    return round(
+        sum(int(result.get("decomposition_depth") or 0) for result in mathlib_results)
         / len(mathlib_results),
         3,
     )
@@ -832,6 +898,7 @@ async def _run_claim_set_async(
         tool_usage_traces: list[dict[str, Any]] = []
         state_transitions: list[dict[str, Any]] = []
         progress_deltas: list[dict[str, Any]] = []
+        synthesis_events: list[dict[str, Any]] = []
         heartbeat = (
             _ClaimHeartbeatMonitor(
                 claim_set=claim_set,
@@ -901,6 +968,7 @@ async def _run_claim_set_async(
                         "tool_usage_traces": tool_usage_traces,
                         "state_transitions": state_transitions,
                         "progress_deltas": progress_deltas,
+                        "synthesis_events": synthesis_events,
                         "trivial_shortcut": {
                             "hypothesis": shortcut["hypothesis"],
                             "tactic": shortcut["tactic"],
@@ -991,7 +1059,12 @@ async def _run_claim_set_async(
                 update={
                     "claim_type": claim_bucket
                     if claim_bucket in {"preamble_definable", "mathlib_native"}
-                    else None
+                    else None,
+                    "planner_plan_paragraph": plan_result.payload.plan_paragraph,
+                    "planner_textbook_defaults": list(
+                        plan_result.payload.textbook_defaults
+                    ),
+                    "planner_subgoals": list(plan_result.payload.subgoals),
                 }
             )
             prove_result = await prover_instance.prove(
@@ -1034,6 +1107,7 @@ async def _run_claim_set_async(
             tool_usage_traces = list(prove_result.tool_usage_traces or [])
             state_transitions = list(prove_result.state_transitions or [])
             progress_deltas = list(prove_result.progress_deltas or [])
+            synthesis_events = list(prove_result.synthesis_events or [])
             trace_events = _trace_events_from_result(prove_result) if benchmark_mode else []
             record_progress(
                 _progress_event(
@@ -1150,6 +1224,7 @@ async def _run_claim_set_async(
                 "tool_usage_traces": tool_usage_traces,
                 "state_transitions": state_transitions,
                 "progress_deltas": progress_deltas,
+                "synthesis_events": synthesis_events,
                 **(
                     {"raw_planner_response": raw_planner_response} if planner_schema_invalid else {}
                 ),
@@ -1197,6 +1272,7 @@ async def _run_claim_set_async(
         else 0.0
     )
     progress_deltas = _progress_delta_payloads(results)
+    synthesis_events = _synthesis_event_payloads(results)
     return {
         "claim_set": claim_set,
         "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
@@ -1217,7 +1293,11 @@ async def _run_claim_set_async(
         "average_decomposition_depth": average_decomposition_depth,
         "retrieval_hit_rate@5": _retrieval_hit_rate_at_5(results),
         "avg_tool_calls_mathlib": _avg_tool_calls_mathlib(results),
+        "synthesis_efficiency": _synthesis_efficiency(results),
+        "premise_match_rate@3": _premise_match_rate_at_3(results),
+        "avg_decomposition_depth_mathlib": _avg_decomposition_depth_mathlib(results),
         "progress_deltas": progress_deltas,
+        "synthesis_events": synthesis_events,
         "executed": True,
         "readiness": readiness,
         "tokens_by_stage": tokens_by_stage,
@@ -1323,6 +1403,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         int(item.get("mathlib_native_mode_usage") or 0) for item in all_results
     )
     progress_deltas = _progress_delta_payloads(all_results)
+    synthesis_events = _synthesis_event_payloads(all_results)
     return {
         "claim_set": "local_gate",
         "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
@@ -1339,7 +1420,11 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "mathlib_native_mode_usage": mathlib_native_mode_usage,
         "retrieval_hit_rate@5": _retrieval_hit_rate_at_5(all_results),
         "avg_tool_calls_mathlib": _avg_tool_calls_mathlib(all_results),
+        "synthesis_efficiency": _synthesis_efficiency(all_results),
+        "premise_match_rate@3": _premise_match_rate_at_3(all_results),
+        "avg_decomposition_depth_mathlib": _avg_decomposition_depth_mathlib(all_results),
         "progress_deltas": progress_deltas,
+        "synthesis_events": synthesis_events,
         "readiness": {
             "ready": all(bool(summary.get("readiness", {}).get("ready")) for summary in summaries),
             "claim_sets": {

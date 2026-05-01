@@ -13,13 +13,18 @@ import re
 import time
 from typing import Any, Callable
 
-from src.config import BENCHMARK_MAX_RECURSION_DEPTH
+from src.config import (
+    BENCHMARK_MAX_RECURSION_DEPTH,
+    MATHLIB_SYNTHESIS_BEST_OF_N,
+    MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED,
+)
 from src.formalizer.models import FormalizationPacket
 from src.observability import (
     AuditEvent,
     LeanLSPUnavailableError,
     SpanRecorder,
     StateTransition,
+    SynthesisEvent,
     TokenUsage,
     ToolUsageTrace,
     build_progress_event,
@@ -284,6 +289,7 @@ class ProverExecutionMixin:
         self._tool_usage_traces = []
         self._state_transitions = []
         self._progress_deltas = []
+        self._synthesis_events = []
         self._second_retrieval_targets = set()
         self._rescue_retrieval_targets = set()
         self.file_controller.initialize(job_id, working_code)
@@ -490,6 +496,7 @@ class ProverExecutionMixin:
                     tool_usage_traces=list(self._tool_usage_traces),
                     state_transitions=list(self._state_transitions),
                     progress_deltas=list(self._progress_deltas),
+                    synthesis_events=list(self._synthesis_events),
                 )
                 _compat_log_event(
                     "prover.stage_completed",
@@ -574,6 +581,7 @@ class ProverExecutionMixin:
                 tool_usage_traces=list(self._tool_usage_traces),
                 state_transitions=list(self._state_transitions),
                 progress_deltas=list(self._progress_deltas),
+                synthesis_events=list(self._synthesis_events),
             )
             _compat_log_event(
                 "prover.stage_failed",
@@ -903,7 +911,7 @@ class ProverExecutionMixin:
 
                 if mathlib_native_mode and structural_state not in lsp_search_attempted_states:
                     lsp_search_attempted_states.add(structural_state)
-                    harness_closed, harness_failure = self._try_mathlib_native_harness_loop(
+                    harness_closed, harness_failure = await self._try_mathlib_native_harness_loop(
                         packet=packet,
                         target=target,
                         session=session,
@@ -919,6 +927,10 @@ class ProverExecutionMixin:
                         goals=goals,
                         job_id=job_id,
                         on_progress=on_progress,
+                        target_timeouts=target_timeouts,
+                        max_turns=max_turns,
+                        allow_decomposition=allow_decomposition,
+                        max_recursion_depth=max_recursion_depth,
                     )
                     if harness_failure is not None:
                         return False, session.read_code(), harness_failure
@@ -1323,6 +1335,63 @@ class ProverExecutionMixin:
                     ),
                 )
                 trace.append(step)
+                if mathlib_native_mode and action.tool.name == "apply_tactic":
+                    recent_premises: list[dict[str, Any]] = []
+                    seen_premise_names: set[str] = set()
+                    for retrieval_payload in reversed(self._retrieval_events):
+                        for premise in retrieval_payload.get("retrieved_premises") or []:
+                            if not isinstance(premise, dict):
+                                continue
+                            premise_name = str(premise.get("name") or "")
+                            if premise_name in seen_premise_names:
+                                continue
+                            seen_premise_names.add(premise_name)
+                            recent_premises.append(premise)
+                        if len(recent_premises) >= 10:
+                            break
+                    premise_match = self._proof_synthesizer.premise_match(
+                        str(action.tool.arguments.get("tactic") or ""),
+                        recent_premises,
+                    )
+                    synthesis_payload = SynthesisEvent(
+                        tactic=str(action.tool.arguments.get("tactic") or ""),
+                        referenced_premises=premise_match.referenced_premises,
+                        top3_match=premise_match.top3_match,
+                        success=not tool_result.is_error,
+                        target_name=target.name,
+                        claim_id=packet.theorem_name,
+                        decomposition_depth=target.recursion_depth,
+                    ).to_dict()
+                    self._synthesis_events.append(synthesis_payload)
+                    step.tool_arguments["SynthesisEvent"] = synthesis_payload
+                    self._emit_progress(
+                        on_progress,
+                        "synthesis_event",
+                        job_id=job_id,
+                        stage="prover",
+                        status="running_prover",
+                        message="Recorded SynthesisEvent.",
+                        metadata={
+                            "turn": turn,
+                            "target_name": target.name,
+                            "SynthesisEvent": synthesis_payload,
+                        },
+                    )
+                    audit_events.append(
+                        AuditEvent(
+                            stage="prover",
+                            event_type="SynthesisEvent",
+                            provider=active_backend.provider,
+                            model=active_backend.model,
+                            success=bool(synthesis_payload.get("success"))
+                            and bool(synthesis_payload.get("referenced_premises")),
+                            metadata={
+                                "turn": turn,
+                                "target_name": target.name,
+                                **synthesis_payload,
+                            },
+                        )
+                    )
                 self._emit_progress(
                     on_progress,
                     "prover_tool",
@@ -1670,7 +1739,7 @@ class ProverExecutionMixin:
             ),
         )
 
-    def _try_mathlib_native_harness_loop(
+    async def _try_mathlib_native_harness_loop(
         self,
         *,
         packet: FormalizationPacket,
@@ -1688,6 +1757,10 @@ class ProverExecutionMixin:
         goals: list[str],
         job_id: str,
         on_progress: Callable[[str, dict[str, Any]], None] | None,
+        target_timeouts: ProverTargetTimeouts,
+        max_turns: int,
+        allow_decomposition: bool,
+        max_recursion_depth: int,
     ) -> tuple[str | None, ProverFailure | None]:
         before_state = self._mathlib_harness_state(session=session, goals=goals)
         claim_id = packet.theorem_name
@@ -1967,6 +2040,12 @@ class ProverExecutionMixin:
 
         diagnostics = before_state.get("diagnostics")
         code_actions = before_state.get("code_actions")
+        proof_sketch = self._proof_synthesizer.build_sketch(
+            packet=packet,
+            target=target,
+            state=before_state,
+            premises=merged_premises,
+        )
         prompt = self._build_mathlib_harness_prompt(
             packet=packet,
             target=target,
@@ -1975,15 +2054,42 @@ class ProverExecutionMixin:
             diagnostics=diagnostics,
             code_actions=code_actions,
             prior_trace=trace,
+            proof_sketch=proof_sketch.to_dict(),
         )
         provider_started_at = time.perf_counter()
         try:
-            raw_action = self._drivers[backend.provider].next_action(
-                backend=backend,
-                prompt=prompt,
-            )
+            best_of_n = max(int(MATHLIB_SYNTHESIS_BEST_OF_N or 1), 1)
+            if best_of_n > 1:
+                candidates: list[tuple[ProverAction, Any]] = []
+                for _sample_index in range(best_of_n):
+                    raw_candidate = self._drivers[backend.provider].next_action(
+                        backend=backend,
+                        prompt=prompt,
+                        temperature=0.7,
+                    )
+                    candidate_action, candidate_metadata = _unwrap_action_response(raw_candidate)
+                    candidates.append((candidate_action, candidate_metadata))
+                action, metadata = next(
+                    (
+                        (candidate_action, candidate_metadata)
+                        for candidate_action, candidate_metadata in candidates
+                        if candidate_action.action_type == "tool"
+                        and candidate_action.tool is not None
+                        and candidate_action.tool.name == "apply_tactic"
+                        and self._proof_synthesizer.premise_match(
+                            str(candidate_action.tool.arguments.get("tactic") or ""),
+                            merged_premises[:3],
+                        ).matched
+                    ),
+                    candidates[0],
+                )
+            else:
+                raw_action = self._drivers[backend.provider].next_action(
+                    backend=backend,
+                    prompt=prompt,
+                )
+                action, metadata = _unwrap_action_response(raw_action)
             telemetry.record_provider(provider_started_at)
-            action, metadata = _unwrap_action_response(raw_action)
             usage = complete_usage(
                 stage="prover",
                 provider=backend.provider,
@@ -2078,6 +2184,11 @@ class ProverExecutionMixin:
             return None, None
 
         before_hash = str(before_state["state_hash"])
+        tactic_text = str(action.tool.arguments.get("tactic") or "")
+        premise_match = self._proof_synthesizer.premise_match(
+            tactic_text,
+            merged_premises,
+        )
         tool_result = self._execute_tool(
             session=session,
             tool=action.tool,
@@ -2106,9 +2217,20 @@ class ProverExecutionMixin:
         progress_payload = progress_delta.to_dict()
         transition_payload = state_transition.to_dict()
         tool_payload = tool_usage.to_dict()
+        synthesis_event = SynthesisEvent(
+            tactic=tactic_text,
+            referenced_premises=premise_match.referenced_premises,
+            top3_match=premise_match.top3_match,
+            success=not tool_result.is_error,
+            target_name=target.name,
+            claim_id=claim_id,
+            decomposition_depth=target.recursion_depth,
+        )
+        synthesis_payload = synthesis_event.to_dict()
         self._tool_usage_traces.append(tool_payload)
         self._state_transitions.append(transition_payload)
         self._progress_deltas.append(progress_payload)
+        self._synthesis_events.append(synthesis_payload)
         trace.append(
             ProverTraceStep(
                 turn=turn,
@@ -2124,6 +2246,7 @@ class ProverExecutionMixin:
                     "ToolUsageTrace": tool_payload,
                     "StateTransition": transition_payload,
                     "ProgressDelta": progress_payload,
+                    "SynthesisEvent": synthesis_payload,
                     "retrieved_premises": retrieval_event.retrieved_premises,
                 },
                 tool_result=tool_result.content,
@@ -2140,6 +2263,7 @@ class ProverExecutionMixin:
             ("tool_usage_trace", tool_payload),
             ("state_transition", transition_payload),
             ("progress_delta", progress_payload),
+            ("synthesis_event", synthesis_payload),
         ):
             self._emit_progress(
                 on_progress,
@@ -2153,6 +2277,17 @@ class ProverExecutionMixin:
         audit_events.append(
             AuditEvent(
                 stage="prover",
+                event_type="SynthesisEvent",
+                provider=backend.provider,
+                model=backend.model,
+                success=bool(synthesis_payload.get("success"))
+                and bool(synthesis_payload.get("referenced_premises")),
+                metadata={"turn": turn, "target_name": target.name, **synthesis_payload},
+            )
+        )
+        audit_events.append(
+            AuditEvent(
+                stage="prover",
                 event_type="ProgressDelta",
                 provider=backend.provider,
                 model=backend.model,
@@ -2161,6 +2296,74 @@ class ProverExecutionMixin:
             )
         )
         if progress_delta.stall_detected:
+            if (
+                MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED
+                and allow_decomposition
+                and target.recursion_depth < max_recursion_depth
+                and self._extracted_lemmas < 3
+            ):
+                helper_action = self._proof_synthesizer.helper_lemma_action(
+                    packet=packet,
+                    target=target,
+                    state=after_state,
+                    sketch=proof_sketch,
+                    premises=merged_premises,
+                    index=self._extracted_lemmas + 1,
+                )
+                if helper_action is not None:
+                    helper_trace_start = len(trace)
+                    decomposed, rewritten = await self._run_decomposition(
+                        packet=packet,
+                        target=target,
+                        session=session,
+                        trace=trace,
+                        attempted_backends=attempted_backends,
+                        turn=turn,
+                        target_timeouts=target_timeouts,
+                        max_turns=max_turns,
+                        action=helper_action,
+                        job_id=job_id,
+                        max_recursion_depth=max_recursion_depth,
+                        telemetry=telemetry,
+                        provider_usage=provider_usage,
+                        audit_events=audit_events,
+                        on_progress=on_progress,
+                    )
+                    if decomposed:
+                        tactic_sequence = [
+                            str(step.tool_arguments.get("tactic") or "")
+                            for step in trace[helper_trace_start:]
+                            if step.tool_name == "apply_tactic"
+                            and str(step.tool_arguments.get("tactic") or "").strip()
+                        ]
+                        try:
+                            self.memory_writer.record_helper_lemma(
+                                packet=packet,
+                                lemma_name=helper_action.decomposition_name
+                                or f"apollo_{packet.theorem_name}_synth",
+                                lemma_statement=helper_action.decomposition_statement
+                                or target.statement,
+                                tactic_sequence=tactic_sequence,
+                                parent_claim_id=claim_id,
+                                retrieved_premises=merged_premises,
+                                prover_backend=backend.name,
+                            )
+                        except Exception as exc:
+                            audit_events.append(
+                                AuditEvent(
+                                    stage="prover",
+                                    event_type="mathlib_helper_memory_write_failed",
+                                    provider=backend.provider,
+                                    model=backend.model,
+                                    success=False,
+                                    metadata={
+                                        "turn": turn,
+                                        "target_name": target.name,
+                                        "error": str(exc),
+                                    },
+                                )
+                            )
+                        return rewritten, None
             return None, ProverFailure(
                 reason="progress_stall",
                 message="Harness apply_tactic left the mathlib-native state and goals unchanged.",
