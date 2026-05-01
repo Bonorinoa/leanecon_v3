@@ -215,7 +215,7 @@
           "expected_category": "MATHLIB_NATIVE",
           "id": "t2_extreme_value_repair",
           "preamble_pinned": false,
-          "theorem_stub_present": false
+          "theorem_stub_present": true
         },
         {
           "bucket": "mathlib_native",
@@ -232,7 +232,7 @@
       },
       "integrity_status": "focused",
       "pinned_preamble_count": 0,
-      "theorem_stub_count": 0
+      "theorem_stub_count": 1
     },
     {
       "bucket_counts": {
