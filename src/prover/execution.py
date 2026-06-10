@@ -1253,6 +1253,8 @@ class ProverExecutionMixin:
                     prior_trace=trace,
                     examples=self._memory_examples(packet),
                     turn_hints=self._first_turn_hints(packet) if turn == 1 else None,
+                    current_state=self.current_state,
+                    state_config=self.current_state_config,
                 )
 
                 try:

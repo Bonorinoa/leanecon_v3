@@ -15,6 +15,51 @@ from src.prover.models import ProverTarget, ProverTraceStep
 from src.prover.synthesizer import MATHLIB_SYNTHESIS_FEW_SHOTS
 from src.prover.tactics import suggest_fast_path_tactics
 
+
+def _state_config_value(state_config: Any, name: str, default: Any = None) -> Any:
+    if state_config is None:
+        return default
+    return getattr(state_config, name, default)
+
+
+def _state_name_value(current_state: Any) -> str | None:
+    if current_state is None:
+        return None
+    return str(getattr(current_state, "value", current_state))
+
+
+def _is_default_synthesizing_state(
+    *,
+    current_state: Any,
+    state_config: Any,
+) -> bool:
+    prompt_rules = _state_config_value(state_config, "prompt_rules", {}) or {}
+    return (
+        _state_name_value(current_state) in {None, "Synthesizing"}
+        and _state_config_value(state_config, "memory_filter", "broad") == "broad"
+        and prompt_rules.get("mode") in {None, "synthesize"}
+    )
+
+
+def _state_prompt_context(
+    *,
+    current_state: Any,
+    state_config: Any,
+) -> dict[str, Any] | None:
+    if state_config is None or _is_default_synthesizing_state(
+        current_state=current_state,
+        state_config=state_config,
+    ):
+        return None
+    return {
+        "current_state": _state_name_value(current_state),
+        "prompt_rules": dict(_state_config_value(state_config, "prompt_rules", {}) or {}),
+        "memory_filter": _state_config_value(state_config, "memory_filter", "none"),
+        "max_tool_calls": _state_config_value(state_config, "max_tool_calls"),
+        "allow_decompose": _state_config_value(state_config, "allow_decompose", False),
+    }
+
+
 def _build_prompt(
     *,
     packet: FormalizationPacket,
@@ -26,6 +71,8 @@ def _build_prompt(
     prior_trace: list[ProverTraceStep],
     examples: list[dict[str, Any]],
     turn_hints: list[str] | None = None,
+    current_state: Any = None,
+    state_config: Any = None,
 ) -> str:
     preferred_tactics = list(
         dict.fromkeys([*(turn_hints or []), *suggest_fast_path_tactics(current_code)])
@@ -42,6 +89,25 @@ def _build_prompt(
         }
         for step in prior_trace[-3:]
     ]
+    state_context = _state_prompt_context(
+        current_state=current_state,
+        state_config=state_config,
+    )
+    instructions = {
+        "return_json_only": True,
+        "action_type": ["tool", "decompose", "finish"],
+        "preferred_tactics": preferred_tactics,
+        "rules": [
+            "All Lean actions must go through a registered tool.",
+            "Prefer apply_tactic before rewriting full code.",
+            "Do not repeat the same failed tool call twice.",
+            "Use decomposition only when the target is stalled.",
+        ],
+    }
+    if state_context is not None:
+        instructions["state_prompt_rules"] = state_context["prompt_rules"]
+        instructions["state_memory_filter"] = state_context["memory_filter"]
+        instructions["state_guidance"] = state_context["prompt_rules"].get("guidance")
     prompt_payload = {
         "claim": packet.claim,
         "theorem_name": packet.theorem_name,
@@ -55,17 +121,7 @@ def _build_prompt(
         "synthesis_few_shots": [dict(item) for item in MATHLIB_SYNTHESIS_FEW_SHOTS],
         "tools": tool_specs,
         "recent_trace": recent_steps,
-        "instructions": {
-            "return_json_only": True,
-            "action_type": ["tool", "decompose", "finish"],
-            "preferred_tactics": preferred_tactics,
-            "rules": [
-                "All Lean actions must go through a registered tool.",
-                "Prefer apply_tactic before rewriting full code.",
-                "Do not repeat the same failed tool call twice.",
-                "Use decomposition only when the target is stalled.",
-            ],
-        },
+        "instructions": instructions,
         "response_schema": {
             "action_type": "tool|decompose|finish",
             "rationale": "string",
@@ -75,10 +131,12 @@ def _build_prompt(
             "finish_reason": "string when action_type=finish",
         },
     }
+    if state_context is not None:
+        prompt_payload["state_context"] = state_context
     return json.dumps(prompt_payload, ensure_ascii=True, indent=2)
 
-class ProverSynthesisMixin:
 
+class ProverSynthesisMixin:
     """Mixin extracted from the legacy Prover monolith."""
 
     def _selected_preamble_entries(self, packet: FormalizationPacket) -> list[Any]:
@@ -92,20 +150,17 @@ class ProverSynthesisMixin:
         return entries
 
     def _memory_examples(self, packet: FormalizationPacket) -> list[dict[str, Any]]:
-        examples = self.trace_store.query_similar(
-            list(packet.selected_preamble),
-            limit=2,
-            outcome="verified",
-        )
-        if not examples and self._normalized_claim_type(packet) == "mathlib_native":
-            query = " ".join([packet.claim, packet.theorem_name])
-            try:
-                examples = self.trace_store.query_mathlib_helpers(
-                    self._proof_synthesizer_keywords(query),
-                    limit=2,
-                )
-            except AttributeError:
-                examples = []
+        memory_filter = self._state_memory_filter()
+        if memory_filter == "none":
+            examples = []
+        elif memory_filter == "failure_focused":
+            examples = self._failure_focused_memory_examples(packet)
+        elif memory_filter == "subgoal_focused":
+            examples = self._subgoal_focused_memory_examples(packet)
+        elif memory_filter == "rescue_identifier":
+            examples = self._rescue_identifier_memory_examples(packet)
+        else:
+            examples = self._broad_memory_examples(packet)
         return [
             {
                 "claim_text": trace.claim_text,
@@ -117,6 +172,72 @@ class ProverSynthesisMixin:
             }
             for trace in examples
         ]
+
+    def _state_memory_filter(self) -> str:
+        state_config = getattr(self, "current_state_config", None)
+        return str(_state_config_value(state_config, "memory_filter", "broad") or "broad")
+
+    def _broad_memory_examples(self, packet: FormalizationPacket) -> list[Any]:
+        examples = self.trace_store.query_similar(
+            list(packet.selected_preamble),
+            limit=2,
+            outcome="verified",
+        )
+        if not examples and self._normalized_claim_type(packet) == "mathlib_native":
+            examples = self._mathlib_helper_memory_examples(packet, limit=2)
+        return examples
+
+    def _failure_focused_memory_examples(self, packet: FormalizationPacket) -> list[Any]:
+        examples = self.trace_store.query_similar(
+            list(packet.selected_preamble),
+            limit=6,
+            outcome=None,
+        )
+        if not examples and self._normalized_claim_type(packet) == "mathlib_native":
+            examples = self._mathlib_helper_memory_examples(packet, limit=2)
+        ranked_examples = sorted(
+            examples,
+            key=lambda trace: (
+                trace.outcome == "verified",
+                not trace.failure_class,
+                -int(trace.repair_count or 0),
+            ),
+        )
+        return ranked_examples[:2]
+
+    def _subgoal_focused_memory_examples(self, packet: FormalizationPacket) -> list[Any]:
+        if self._normalized_claim_type(packet) == "mathlib_native":
+            examples = self._mathlib_helper_memory_examples(packet, limit=2)
+            if examples:
+                return examples
+        return self._broad_memory_examples(packet)
+
+    def _rescue_identifier_memory_examples(self, packet: FormalizationPacket) -> list[Any]:
+        if self._normalized_claim_type(packet) == "mathlib_native":
+            examples = self._mathlib_helper_memory_examples(packet, limit=1)
+            if examples:
+                return examples
+        examples = self.trace_store.query_similar(
+            list(packet.selected_preamble),
+            limit=1,
+            outcome="verified",
+        )
+        return examples
+
+    def _mathlib_helper_memory_examples(
+        self,
+        packet: FormalizationPacket,
+        *,
+        limit: int,
+    ) -> list[Any]:
+        query = " ".join([packet.claim, packet.theorem_name])
+        try:
+            return self.trace_store.query_mathlib_helpers(
+                self._proof_synthesizer_keywords(query),
+                limit=limit,
+            )
+        except AttributeError:
+            return []
 
     def _tool_specs_for_prompt(self, packet: FormalizationPacket) -> list[dict[str, Any]]:
         mathlib_native_mode = self._normalized_claim_type(packet) == "mathlib_native"
@@ -159,9 +280,7 @@ class ProverSynthesisMixin:
             for step in prior_trace[-3:]
         ]
         # Sprint 23 Task 2: prefer enriched hover signature over thin leansearch payload.
-        prompt_premises = [
-            self._project_premise_for_prompt(p) for p in (retrieved_premises or [])
-        ]
+        prompt_premises = [self._project_premise_for_prompt(p) for p in (retrieved_premises or [])]
         # Stage 1 Task 2: strengthened decomposition hint (actionable tactics) + concise
         # multi-step patterns (consider-this guidance). Aligns with lean4_proving skill:
         # structural decomposition only; trust harness premises; no long inventories.
@@ -170,6 +289,15 @@ class ProverSynthesisMixin:
             "Prefer tactics that reference retrieved Mathlib premises.",
             "Do not rewrite the theorem body in this harness loop.",
         ]
+        state_context = _state_prompt_context(
+            current_state=getattr(self, "current_state", None),
+            state_config=getattr(self, "current_state_config", None),
+        )
+        if state_context is not None:
+            prompt_rules = state_context["prompt_rules"]
+            guidance = prompt_rules.get("guidance")
+            if guidance:
+                rules.append(str(guidance))
         if self._goals_need_decomposition_hint(state.get("goals")):
             rules.append(
                 "If goal has quantifiers (∀/∃) or conjuncts (∧/↔), start with "
@@ -206,39 +334,47 @@ class ProverSynthesisMixin:
             "Prefer premises whose declaration_location lies in a Mathlib namespace "
             "matching your goal's types.",
         ]
-        return json.dumps(
-            {
-                "claim": packet.claim,
-                "theorem_name": packet.theorem_name,
-                "claim_type": "mathlib_native",
-                "target": target.model_dump(mode="json"),
-                "current_code": state.get("code"),
-                "goals": state.get("goals"),
-                "diagnostics": diagnostics,
-                "code_actions": code_actions,
-                "file_outline": state.get("file_outline"),
-                "retrieved_premises": prompt_premises,
-                "proof_sketch": proof_sketch,
-                "candidate_tactics": (proof_sketch or {}).get("candidate_tactics", []),
-                "synthesis_few_shots": self._proof_synthesizer.few_shots(),
-                "recent_trace": recent_steps,
-                "instructions": {
-                    "return_json_only": True,
-                    "only_allowed_tool": "apply_tactic",
-                    "use_retrieved_premises": True,
-                    "rules": rules,
-                    "candidate_tactic_rule": (
-                        "If candidate_tactics is non-empty, try the first candidate that "
-                        "mentions a retrieved premise before inventing a new tactic."
-                    ),
-                    "premise_utilization": premise_utilization,
-                },
-                "response_schema": {
-                    "action_type": "tool",
-                    "rationale": "string",
-                    "tool": {"name": "apply_tactic", "arguments": {"tactic": "Lean tactic"}},
+        prompt_payload = {
+            "claim": packet.claim,
+            "theorem_name": packet.theorem_name,
+            "claim_type": "mathlib_native",
+            "target": target.model_dump(mode="json"),
+            "current_code": state.get("code"),
+            "goals": state.get("goals"),
+            "diagnostics": diagnostics,
+            "code_actions": code_actions,
+            "file_outline": state.get("file_outline"),
+            "retrieved_premises": prompt_premises,
+            "proof_sketch": proof_sketch,
+            "candidate_tactics": (proof_sketch or {}).get("candidate_tactics", []),
+            "synthesis_few_shots": self._proof_synthesizer.few_shots(),
+            "recent_trace": recent_steps,
+            "instructions": {
+                "return_json_only": True,
+                "only_allowed_tool": "apply_tactic",
+                "use_retrieved_premises": True,
+                "rules": rules,
+                "candidate_tactic_rule": (
+                    "If candidate_tactics is non-empty, try the first candidate that "
+                    "mentions a retrieved premise before inventing a new tactic."
+                ),
+                "premise_utilization": premise_utilization,
+            },
+            "response_schema": {
+                "action_type": "tool",
+                "rationale": "string",
+                "tool": {
+                    "name": "apply_tactic",
+                    "arguments": {"tactic": "Lean tactic"},
                 },
             },
+        }
+        if state_context is not None:
+            prompt_payload["state_context"] = state_context
+            prompt_payload["instructions"]["state_prompt_rules"] = state_context["prompt_rules"]
+            prompt_payload["instructions"]["state_memory_filter"] = state_context["memory_filter"]
+        return json.dumps(
+            prompt_payload,
             ensure_ascii=True,
             indent=2,
             default=str,
@@ -292,11 +428,9 @@ class ProverSynthesisMixin:
     def _proof_synthesizer_keywords(text: str) -> list[str]:
         import re
 
-        return [
-            token
-            for token in re.findall(r"[A-Za-z][A-Za-z0-9_']*", text)
-            if len(token) > 3
-        ][:8]
+        return [token for token in re.findall(r"[A-Za-z][A-Za-z0-9_']*", text) if len(token) > 3][
+            :8
+        ]
 
     def _metadata_tactic_hints(self, packet: FormalizationPacket) -> list[str]:
         from src.planner.retrieval import _entry_tactic_hints, _load_metadata
