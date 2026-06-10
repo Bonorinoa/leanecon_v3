@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.observability.models import ProgressDelta
 from src.prover.prover import Prover, ProverState, StateMachine, get_state_config
 
 
@@ -122,3 +123,65 @@ def test_state_machine_returns_current_config_copy() -> None:
         "lean_leansearch",
         "lean_local_search",
     ]
+
+
+def test_mathlib_stall_helpers_round_trip_to_synthesizing() -> None:
+    prover = Prover()
+
+    stalled_config = prover._enter_mathlib_stalled_state(
+        reason="ProgressDelta.stall_detected"
+    )
+    assert prover.current_state is ProverState.Stalled
+    assert stalled_config == get_state_config(ProverState.Stalled)
+
+    recovered_config = prover._recover_mathlib_stall(
+        reason="refined retrieval returned premises"
+    )
+    assert prover.current_state is ProverState.Synthesizing
+    assert recovered_config == get_state_config(ProverState.Synthesizing)
+
+
+def test_mathlib_stall_can_recover_into_decomposition() -> None:
+    prover = Prover()
+
+    prover._enter_mathlib_stalled_state(reason="ProgressDelta.stall_detected")
+    decomposing_config = prover._recover_mathlib_stall(
+        next_state=ProverState.Decomposing,
+        reason="helper lemma decomposition started",
+    )
+
+    assert prover.current_state is ProverState.Decomposing
+    assert decomposing_config == get_state_config(ProverState.Decomposing)
+
+
+def test_mathlib_rescue_helpers_round_trip_to_synthesizing() -> None:
+    prover = Prover()
+
+    rescue_config = prover._enter_mathlib_rescue_state(reason="unknown identifier")
+    assert prover.current_state is ProverState.Rescue
+    assert rescue_config == get_state_config(ProverState.Rescue)
+
+    recovered_config = prover._recover_mathlib_rescue(reason="rescue retrieval completed")
+    assert prover.current_state is ProverState.Synthesizing
+    assert recovered_config == get_state_config(ProverState.Synthesizing)
+
+
+def test_mathlib_stalled_gate_uses_explicit_stall_detected_flag() -> None:
+    prover = Prover()
+    unchanged_but_not_stalled = ProgressDelta(
+        goals_reduced=False,
+        stall_detected=False,
+    )
+    stalled = ProgressDelta(
+        goals_reduced=False,
+        stall_detected=True,
+    )
+
+    assert not prover._should_enter_mathlib_stalled_state(
+        last_delta=unchanged_but_not_stalled,
+        budget_remaining_frac=0.5,
+    )
+    assert prover._should_enter_mathlib_stalled_state(
+        last_delta=stalled,
+        budget_remaining_frac=0.5,
+    )

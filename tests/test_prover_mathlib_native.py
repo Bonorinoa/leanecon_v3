@@ -180,6 +180,25 @@ def test_should_do_second_retrieval_boundary_conditions() -> None:
     assert not prover._should_do_second_retrieval(last_delta=None, budget_remaining_frac=0.5)
 
 
+def test_state_controlled_stall_retrieval_requires_stall_detected() -> None:
+    """The mathlib-native state gate is stricter than the legacy retry heuristic."""
+    from src.observability.models import ProgressDelta
+
+    prover = _make_prover(_ScriptedLSPClient())
+
+    no_goal_reduction = ProgressDelta(goals_reduced=False, stall_detected=False)
+    explicit_stall = ProgressDelta(goals_reduced=False, stall_detected=True)
+
+    assert not prover._should_enter_mathlib_stalled_state(
+        last_delta=no_goal_reduction,
+        budget_remaining_frac=0.5,
+    )
+    assert prover._should_enter_mathlib_stalled_state(
+        last_delta=explicit_stall,
+        budget_remaining_frac=0.5,
+    )
+
+
 def test_decomposition_hint_appears_for_quantified_goal() -> None:
     """Updated (Stage 1 Task 2): strengthened hint with specific tactics + multi-step
     pattern examples now appears for quantified goals (per lean4_proving skill)."""

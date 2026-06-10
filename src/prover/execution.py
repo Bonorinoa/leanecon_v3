@@ -60,7 +60,7 @@ from src.prover.models import (
 )
 from src.prover.retrieval import _contains_lsp_unavailable
 from src.prover.synthesis import _build_prompt
-from src.prover.state_machine import ProverState
+from src.prover.state_machine import ProverState, StateConfig
 from src.prover.tactics import (
     classify_goal_shape,
     direct_hypothesis_name,
@@ -385,6 +385,46 @@ class _ActiveProofSession:
 class ProverExecutionMixin:
 
     """Mixin extracted from the legacy Prover monolith."""
+
+    def _enter_mathlib_stalled_state(self, *, reason: str) -> StateConfig:
+        """Enter the explicit stall-recovery state for mathlib-native search."""
+        self._try_transition_prover_state(ProverState.Stalled, reason=reason)
+        return self.current_state_config
+
+    def _recover_mathlib_stall(
+        self,
+        *,
+        next_state: ProverState = ProverState.Synthesizing,
+        reason: str,
+    ) -> StateConfig:
+        """Leave stall recovery after retrieval/progress makes synthesis viable."""
+        self._try_transition_prover_state(next_state, reason=reason)
+        return self.current_state_config
+
+    def _enter_mathlib_rescue_state(self, *, reason: str) -> StateConfig:
+        """Enter the narrow unknown-identifier rescue state."""
+        self._try_transition_prover_state(ProverState.Rescue, reason=reason)
+        return self.current_state_config
+
+    def _recover_mathlib_rescue(self, *, reason: str) -> StateConfig:
+        """Return to synthesis after the one-shot rescue retrieval."""
+        self._try_transition_prover_state(ProverState.Synthesizing, reason=reason)
+        return self.current_state_config
+
+    def _should_enter_mathlib_stalled_state(
+        self,
+        *,
+        last_delta: Any,
+        budget_remaining_frac: float,
+    ) -> bool:
+        """Return whether the previous progress delta should trigger Stalled."""
+        return bool(
+            getattr(last_delta, "stall_detected", False)
+            and self._should_do_second_retrieval(
+                last_delta=last_delta,
+                budget_remaining_frac=budget_remaining_frac,
+            )
+        )
 
     async def prove(
         self,
@@ -2507,13 +2547,12 @@ class ProverExecutionMixin:
         target_key = (claim_id or "", target.name or "")
         if (
             target_key not in self._second_retrieval_targets
-            and self._should_do_second_retrieval(
+            and self._should_enter_mathlib_stalled_state(
                 last_delta=prev_delta,
                 budget_remaining_frac=self._budget_remaining_frac(),
             )
         ):
-            self._try_transition_prover_state(
-                ProverState.Stalled,
+            self._enter_mathlib_stalled_state(
                 reason="ProgressDelta reported a stalled mathlib-native turn",
             )
             refined_query = self._refined_leansearch_query(before_state)
@@ -2559,8 +2598,7 @@ class ProverExecutionMixin:
                     )
                 )
                 if ls2_event.retrieved_premises:
-                    self._try_transition_prover_state(
-                        ProverState.Synthesizing,
+                    self._recover_mathlib_stall(
                         reason="refined retrieval returned premises after stall",
                     )
                 merged_premises = self._merge_retrieval_premises(
@@ -2580,8 +2618,7 @@ class ProverExecutionMixin:
         ):
             rescue_query = self._rescue_query_from_recent_trace(trace, target.name)
             if rescue_query and rescue_query != ls_query:
-                self._try_transition_prover_state(
-                    ProverState.Rescue,
+                self._enter_mathlib_rescue_state(
                     reason="unknown identifier detected in recent mathlib-native trace",
                 )
                 self._rescue_retrieval_targets.add(target_key)
@@ -2632,10 +2669,7 @@ class ProverExecutionMixin:
                     rescue_event.retrieved_premises,
                     k=10,
                 )
-                self._try_transition_prover_state(
-                    ProverState.Synthesizing,
-                    reason="rescue retrieval completed",
-                )
+                self._recover_mathlib_rescue(reason="rescue retrieval completed")
         if not merged_premises:
             if _contains_lsp_unavailable(
                 before_state.get("diagnostics")
@@ -3007,8 +3041,7 @@ class ProverExecutionMixin:
             )
         )
         if progress_delta.stall_detected:
-            self._try_transition_prover_state(
-                ProverState.Stalled,
+            self._enter_mathlib_stalled_state(
                 reason="ProgressDelta reported unchanged mathlib-native state",
             )
             helper_skip_reason: str | None = None
@@ -3032,8 +3065,8 @@ class ProverExecutionMixin:
                 if helper_action is None:
                     helper_skip_reason = "no_helper_statement"
                 else:
-                    self._try_transition_prover_state(
-                        ProverState.Decomposing,
+                    self._recover_mathlib_stall(
+                        next_state=ProverState.Decomposing,
                         reason="helper lemma decomposition started after stall",
                     )
                     helper_trace_start = len(trace)
@@ -3129,8 +3162,7 @@ class ProverExecutionMixin:
                 backend=backend.name,
                 lean_feedback=session.get_goals(),
             )
-        self._try_transition_prover_state(
-            ProverState.Synthesizing,
+        self._recover_mathlib_stall(
             reason="mathlib-native tactic made progress",
         )
         if not tool_result.is_error and session.solved:
