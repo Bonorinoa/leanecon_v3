@@ -209,14 +209,7 @@ class Prover(
         config = self.current_state_config
         return {
             "current_state": self.current_state.value,
-            "current_state_config": {
-                "allowed_tools": list(config.allowed_tools),
-                "prompt_rules": dict(config.prompt_rules),
-                "memory_filter": config.memory_filter,
-                "max_tool_calls": config.max_tool_calls,
-                "allow_decompose": config.allow_decompose,
-                "terminal": config.terminal,
-            },
+            "current_state_config": config.to_dict(),
         }
 
     def _transition_prover_state(

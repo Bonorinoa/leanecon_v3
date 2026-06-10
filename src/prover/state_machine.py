@@ -28,8 +28,9 @@ class ProverState(Enum):
 class StateConfig:
     """Constraint hints associated with a strategic prover state.
 
-    These configs are intentionally descriptive only. They do not enforce tool,
-    prompt, or memory behavior until later state-machine integration work.
+    The prover currently uses these configs for prompt shaping, memory
+    selection, and observability. Tool lists and per-state call limits remain
+    descriptive constraints until execution-time enforcement is added.
     """
 
     allowed_tools: list[str] = field(default_factory=list)
@@ -46,6 +47,17 @@ class StateConfig:
             allowed_tools=list(self.allowed_tools),
             prompt_rules=dict(self.prompt_rules),
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-ready representation for traces and progress events."""
+        return {
+            "allowed_tools": list(self.allowed_tools),
+            "prompt_rules": dict(self.prompt_rules),
+            "memory_filter": self.memory_filter,
+            "max_tool_calls": self.max_tool_calls,
+            "allow_decompose": self.allow_decompose,
+            "terminal": self.terminal,
+        }
 
 
 _ALL_PROVER_TOOLS = [

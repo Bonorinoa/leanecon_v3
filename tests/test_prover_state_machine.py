@@ -280,6 +280,18 @@ def test_get_state_config_returns_independent_config_copy() -> None:
     assert fresh_config.memory_filter == "failure_focused"
 
 
+def test_state_config_to_dict_is_json_ready_copy() -> None:
+    config = get_state_config(ProverState.Rescue)
+    payload = config.to_dict()
+    payload["allowed_tools"].append("mutated")
+    payload["prompt_rules"]["mode"] = "mutated"
+
+    assert payload["memory_filter"] == "rescue_identifier"
+    assert payload["max_tool_calls"] == 2
+    assert get_state_config(ProverState.Rescue).prompt_rules["mode"] == "rescue"
+    assert "mutated" not in get_state_config(ProverState.Rescue).allowed_tools
+
+
 def test_get_current_config_tracks_transitions_and_reset() -> None:
     machine = StateMachine()
 
