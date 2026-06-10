@@ -7,7 +7,7 @@ import json
 import pytest
 
 from src.memory.models import ProofTrace
-from src.observability.models import ProgressDelta
+from src.observability.models import ProgressDelta, ProverStateTransition
 from src.prover.models import ProverTarget
 from src.prover.prover import Prover, ProverState, StateMachine, get_state_config
 from src.prover.synthesis import _build_prompt
@@ -118,6 +118,69 @@ def test_valid_state_transitions_work() -> None:
     assert machine.transition(ProverState.Verified, reason="goals solved") is ProverState.Verified
 
 
+@pytest.mark.parametrize(
+    ("start", "valid_next_states"),
+    [
+        (
+            ProverState.Synthesizing,
+            {
+                ProverState.Synthesizing,
+                ProverState.Stalled,
+                ProverState.Rescue,
+                ProverState.Verified,
+                ProverState.Failed,
+            },
+        ),
+        (
+            ProverState.Stalled,
+            {
+                ProverState.Synthesizing,
+                ProverState.Stalled,
+                ProverState.Decomposing,
+                ProverState.Rescue,
+                ProverState.Failed,
+            },
+        ),
+        (
+            ProverState.Decomposing,
+            {
+                ProverState.Decomposing,
+                ProverState.Verified,
+                ProverState.Failed,
+            },
+        ),
+        (
+            ProverState.Rescue,
+            {
+                ProverState.Synthesizing,
+                ProverState.Rescue,
+                ProverState.Failed,
+            },
+        ),
+        (ProverState.Verified, {ProverState.Verified}),
+        (ProverState.Failed, {ProverState.Failed}),
+    ],
+)
+def test_state_transition_matrix_is_enforced(
+    start: ProverState,
+    valid_next_states: set[ProverState],
+) -> None:
+    all_states = set(ProverState)
+
+    for next_state in valid_next_states:
+        machine = StateMachine(start)
+        assert machine.transition(next_state, reason="matrix check") is next_state
+
+    for next_state in all_states - valid_next_states:
+        machine = StateMachine(start)
+        assert not machine.can_transition(next_state)
+        with pytest.raises(
+            ValueError,
+            match=f"{start.value} -> {next_state.value}",
+        ):
+            machine.transition(next_state, reason="matrix check")
+
+
 def test_invalid_state_transition_raises_clear_error() -> None:
     machine = StateMachine()
 
@@ -194,13 +257,72 @@ def test_state_machine_returns_current_config_copy() -> None:
     machine = StateMachine(ProverState.Rescue)
     config = machine.get_current_config()
     config.allowed_tools.append("mutated")
+    config.prompt_rules["mode"] = "mutated"
 
-    assert machine.get_current_config().allowed_tools == [
+    current_config = machine.get_current_config()
+    assert current_config.allowed_tools == [
         "apply_tactic",
         "get_goals",
         "lean_leansearch",
         "lean_local_search",
     ]
+    assert current_config.prompt_rules["mode"] == "rescue"
+
+
+def test_get_state_config_returns_independent_config_copy() -> None:
+    config = get_state_config(ProverState.Stalled)
+    config.allowed_tools.clear()
+    config.prompt_rules["mode"] = "mutated"
+
+    fresh_config = get_state_config(ProverState.Stalled)
+    assert "apply_tactic" in fresh_config.allowed_tools
+    assert fresh_config.prompt_rules["mode"] == "recover_from_stall"
+    assert fresh_config.memory_filter == "failure_focused"
+
+
+def test_get_current_config_tracks_transitions_and_reset() -> None:
+    machine = StateMachine()
+
+    assert machine.get_current_config() == get_state_config(ProverState.Synthesizing)
+    machine.transition(ProverState.Stalled, reason="stall detected")
+    assert machine.get_current_config() == get_state_config(ProverState.Stalled)
+    machine.reset(ProverState.Rescue)
+    assert machine.current_state is ProverState.Rescue
+    assert machine.get_current_config() == get_state_config(ProverState.Rescue)
+
+
+def test_prover_state_transition_creation_and_fields() -> None:
+    config = get_state_config(ProverState.Stalled)
+
+    transition = ProverStateTransition(
+        from_state=ProverState.Synthesizing.value,
+        to_state=ProverState.Stalled.value,
+        reason="stall detected",
+        current_state_config={
+            "memory_filter": config.memory_filter,
+            "prompt_rules": config.prompt_rules,
+        },
+        timestamp="2026-06-10T00:00:00+00:00",
+    )
+    payload = transition.to_dict()
+
+    assert payload == {
+        "event_type": "ProverStateTransition",
+        "from_state": "Synthesizing",
+        "to_state": "Stalled",
+        "reason": "stall detected",
+        "timestamp": "2026-06-10T00:00:00+00:00",
+        "current_state": "Stalled",
+        "current_state_config": {
+            "memory_filter": "failure_focused",
+            "prompt_rules": {
+                "mode": "recover_from_stall",
+                "guidance": (
+                    "Inspect the current goal and recent failure before trying a new tactic."
+                ),
+            },
+        },
+    }
 
 
 def test_mathlib_stall_helpers_round_trip_to_synthesizing() -> None:
