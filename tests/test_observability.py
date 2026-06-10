@@ -6,9 +6,11 @@ from src.api.jobs import JobStore
 from src.observability.models import (
     AuditEvent,
     ProgressDelta,
+    ProverStateTransition,
     RetrievalEvent,
     StageTiming,
     StateTransition,
+    SynthesisEvent,
     ToolUsageTrace,
 )
 from src.observability.pricing import complete_usage, lookup_pricing
@@ -210,3 +212,30 @@ def test_state_transition_and_progress_delta_schema() -> None:
     assert inner["event_type"] == "ProgressDelta"
     assert inner["goals_reduced"] is True
     assert inner["stall_detected"] is False
+
+
+def test_synthesis_event_includes_current_state() -> None:
+    payload = SynthesisEvent(
+        tactic="exact h",
+        success=True,
+        target_name="theorem_body",
+        current_state="Synthesizing",
+    ).to_dict()
+
+    assert payload["event_type"] == "SynthesisEvent"
+    assert payload["current_state"] == "Synthesizing"
+
+
+def test_prover_state_transition_schema() -> None:
+    payload = ProverStateTransition(
+        from_state="Synthesizing",
+        to_state="Stalled",
+        reason="ProgressDelta reported unchanged mathlib-native state",
+    ).to_dict()
+
+    assert payload["event_type"] == "ProverStateTransition"
+    assert payload["from_state"] == "Synthesizing"
+    assert payload["to_state"] == "Stalled"
+    assert payload["current_state"] == "Stalled"
+    assert payload["reason"] == "ProgressDelta reported unchanged mathlib-native state"
+    assert payload["timestamp"]

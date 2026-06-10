@@ -20,6 +20,7 @@ from src.observability import (
     BudgetTracker,
     LeanLSPClient,
     LeanLSPUnavailableError,
+    ProverStateTransition,
     build_progress_event,
     default_lean_lsp_client,
     log_event,
@@ -170,8 +171,12 @@ class Prover(
         self._retrieval_events: list[dict[str, Any]] = []
         self._tool_usage_traces: list[dict[str, Any]] = []
         self._state_transitions: list[dict[str, Any]] = []
+        self._prover_state_transitions: list[dict[str, Any]] = []
         self._progress_deltas: list[dict[str, Any]] = []
         self._synthesis_events: list[dict[str, Any]] = []
+        self._prover_progress_callback: Any | None = None
+        self._current_prover_job_id: str | None = None
+        self._current_prover_claim_id: str | None = None
         # Stage 2-followup C: track which (claim_id, target_name) pairs have
         # already triggered a second-pass refined retrieval. Ensures we fire
         # at most once per target even after dropping the strict turn==1 gate.
@@ -199,6 +204,21 @@ class Prover(
         """Reset the lightweight prover state machine before a new run."""
         self._state_machine.reset()
 
+    def _prover_state_metadata(self) -> dict[str, Any]:
+        """Return state context suitable for trace/progress metadata."""
+        config = self.current_state_config
+        return {
+            "current_state": self.current_state.value,
+            "current_state_config": {
+                "allowed_tools": list(config.allowed_tools),
+                "prompt_rules": dict(config.prompt_rules),
+                "memory_filter": config.memory_filter,
+                "max_tool_calls": config.max_tool_calls,
+                "allow_decompose": config.allow_decompose,
+                "terminal": config.terminal,
+            },
+        }
+
     def _transition_prover_state(
         self,
         next_state: ProverState,
@@ -211,7 +231,40 @@ class Prover(
         ``Sprint26_StateMachine_Design.md``. To preserve existing successful
         paths, no tactic execution or prompt behavior depends on this state yet.
         """
-        return self._state_machine.transition(next_state, reason=reason)
+        from_state = self.current_state
+        result = self._state_machine.transition(next_state, reason=reason)
+        if result == from_state:
+            return result
+
+        transition_payload = ProverStateTransition(
+            from_state=from_state.value,
+            to_state=result.value,
+            reason=reason,
+        ).to_dict()
+        self._prover_state_transitions.append(transition_payload)
+
+        callback = self._prover_progress_callback
+        if callback is not None and self._current_prover_job_id is not None:
+            metadata = {
+                **self._prover_state_metadata(),
+                "ProverStateTransition": transition_payload,
+            }
+            callback(
+                "prover_state_transition",
+                build_progress_event(
+                    "prover_state_transition",
+                    job_id=self._current_prover_job_id,
+                    claim_id=self._current_prover_claim_id,
+                    stage="prover",
+                    status="running_prover",
+                    message=(
+                        "Prover state changed "
+                        f"{from_state.value} -> {result.value}."
+                    ),
+                    metadata=metadata,
+                ),
+            )
+        return result
 
     def _try_transition_prover_state(
         self,

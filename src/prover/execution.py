@@ -460,10 +460,14 @@ class ProverExecutionMixin:
         self._retrieval_events = []
         self._tool_usage_traces = []
         self._state_transitions = []
+        self._prover_state_transitions = []
         self._progress_deltas = []
         self._synthesis_events = []
         self._second_retrieval_targets = set()
         self._rescue_retrieval_targets = set()
+        self._prover_progress_callback = on_progress
+        self._current_prover_job_id = job_id
+        self._current_prover_claim_id = packet.theorem_name
         self._reset_prover_state()
         self.file_controller.initialize(job_id, working_code)
 
@@ -725,6 +729,7 @@ class ProverExecutionMixin:
                     retrieval_events=list(self._retrieval_events),
                     tool_usage_traces=list(self._tool_usage_traces),
                     state_transitions=list(self._state_transitions),
+                    prover_state_transitions=list(self._prover_state_transitions),
                     progress_deltas=list(self._progress_deltas),
                     synthesis_events=list(self._synthesis_events),
                 )
@@ -814,6 +819,7 @@ class ProverExecutionMixin:
                 retrieval_events=list(self._retrieval_events),
                 tool_usage_traces=list(self._tool_usage_traces),
                 state_transitions=list(self._state_transitions),
+                prover_state_transitions=list(self._prover_state_transitions),
                 progress_deltas=list(self._progress_deltas),
                 synthesis_events=list(self._synthesis_events),
             )
@@ -836,6 +842,9 @@ class ProverExecutionMixin:
                 self.memory_writer.record(packet, result)
             return result
         finally:
+            self._prover_progress_callback = None
+            self._current_prover_job_id = None
+            self._current_prover_claim_id = None
             if benchmark_mode:
                 self.file_controller.cleanup(job_id)
 
@@ -1052,7 +1061,10 @@ class ProverExecutionMixin:
                                     success=True,
                                     rationale="Rebuild the theorem context before treating the disagreement as fatal.",
                                     tool_name="apply_tactic",
-                                    tool_arguments={"tactic": repeated_solved},
+                                    tool_arguments={
+                                        "tactic": repeated_solved,
+                                        "current_state": self.current_state.value,
+                                    },
                                     tool_result=f"Soft-repaired REPL/global compile disagreement after `{repeated_solved}`.",
                                     lean_feedback=lean_feedback,
                                     goals=goals,
@@ -1357,6 +1369,11 @@ class ProverExecutionMixin:
                             action_type="provider_error",
                             success=False,
                             rationale="Provider invocation failed.",
+                            tool_arguments=(
+                                {"current_state": self.current_state.value}
+                                if mathlib_native_mode
+                                else {}
+                            ),
                             tool_result=str(exc),
                             lean_feedback=lean_feedback,
                             goals=goals,
@@ -1429,7 +1446,14 @@ class ProverExecutionMixin:
                             success=False,
                             rationale=action.rationale,
                             tool_name=action.tool.name if action.tool is not None else None,
-                            tool_arguments=action.tool.arguments if action.tool is not None else {},
+                            tool_arguments={
+                                **(action.tool.arguments if action.tool is not None else {}),
+                                **(
+                                    {"current_state": self.current_state.value}
+                                    if mathlib_native_mode
+                                    else {}
+                                ),
+                            },
                             tool_result=validation_error,
                             lean_feedback=lean_feedback,
                             goals=goals,
@@ -1606,7 +1630,14 @@ class ProverExecutionMixin:
                     success=not tool_result.is_error,
                     rationale=action.rationale,
                     tool_name=action.tool.name,
-                    tool_arguments=action.tool.arguments,
+                    tool_arguments={
+                        **action.tool.arguments,
+                        **(
+                            {"current_state": self.current_state.value}
+                            if mathlib_native_mode
+                            else {}
+                        ),
+                    },
                     tool_result=tool_result.content,
                     lean_feedback=lean_feedback,
                     goals=session.get_goals(),
@@ -1647,6 +1678,7 @@ class ProverExecutionMixin:
                         target_name=target.name,
                         claim_id=packet.theorem_name,
                         decomposition_depth=target.recursion_depth,
+                        current_state=self.current_state.value,
                     ).to_dict()
                     self._synthesis_events.append(synthesis_payload)
                     step.tool_arguments["SynthesisEvent"] = synthesis_payload
@@ -2034,6 +2066,12 @@ class ProverExecutionMixin:
     ) -> None:
         if callback is None:
             return
+        enriched_metadata = dict(metadata or {})
+        state_metadata = self._prover_state_metadata()
+        enriched_metadata.setdefault("current_state", state_metadata["current_state"])
+        enriched_metadata.setdefault(
+            "current_state_config", state_metadata["current_state_config"]
+        )
         callback(
             event,
             build_progress_event(
@@ -2042,7 +2080,7 @@ class ProverExecutionMixin:
                 stage=stage,
                 status=status,
                 message=message,
-                metadata=metadata,
+                metadata=enriched_metadata,
             ),
         )
 
@@ -2297,6 +2335,7 @@ class ProverExecutionMixin:
                 target_name=target.name,
                 claim_id=claim_id,
                 decomposition_depth=target.recursion_depth,
+                current_state=self.current_state.value,
             )
             candidate_event = CandidateTacticEvent(
                 tactic=candidate.tactic,
@@ -2312,7 +2351,6 @@ class ProverExecutionMixin:
             transition_payload = state_transition.to_dict()
             tool_payload = tool_usage.to_dict()
             synthesis_payload = synthesis_event.to_dict()
-            synthesis_payload["current_state"] = self.current_state.value
             candidate_payload = self._record_candidate_tactic_event(
                 event=candidate_event,
                 audit_events=audit_events,
@@ -2338,6 +2376,7 @@ class ProverExecutionMixin:
                     tool_name="compile_check" if used_compile_fallback else tool.name,
                     tool_arguments={
                         **tool.arguments,
+                        "current_state": self.current_state.value,
                         "compile_fallback": used_compile_fallback,
                         "RetrievalEvent": retrieval_payload,
                         "ToolUsageTrace": tool_payload,
@@ -2708,7 +2747,11 @@ class ProverExecutionMixin:
                     success=False,
                     rationale="Hybrid retrieval (local RAG + LeanSearch) returned no premises; falling back to bounded LSP search.",
                     tool_name="retrieve_premises",
-                    tool_arguments={"RetrievalEvent": retrieval_payload, "LeanSearchRetrievalEvent": ls_payload},
+                    tool_arguments={
+                        "current_state": self.current_state.value,
+                        "RetrievalEvent": retrieval_payload,
+                        "LeanSearchRetrievalEvent": ls_payload,
+                    },
                     tool_result="No retrieved premises.",
                     lean_feedback=lean_feedback,
                     goals=goals,
@@ -2862,7 +2905,10 @@ class ProverExecutionMixin:
                     success=False,
                     rationale="Harness provider invocation failed; falling back to bounded LSP search.",
                     tool_name="provider_turn",
-                    tool_arguments={"RetrievalEvent": retrieval_payload},
+                    tool_arguments={
+                        "current_state": self.current_state.value,
+                        "RetrievalEvent": retrieval_payload,
+                    },
                     tool_result=str(exc),
                     lean_feedback=lean_feedback,
                     goals=goals,
@@ -2890,6 +2936,7 @@ class ProverExecutionMixin:
                     rationale="Harness loop only accepts provider `apply_tactic` actions.",
                     tool_name=action.tool.name if action.tool is not None else None,
                     tool_arguments={
+                        "current_state": self.current_state.value,
                         "RetrievalEvent": retrieval_payload,
                         "provider_action": action.model_dump(mode="json"),
                     },
@@ -2967,9 +3014,9 @@ class ProverExecutionMixin:
             target_name=target.name,
             claim_id=claim_id,
             decomposition_depth=target.recursion_depth,
+            current_state=self.current_state.value,
         )
         synthesis_payload = synthesis_event.to_dict()
-        synthesis_payload["current_state"] = self.current_state.value
         self._tool_usage_traces.append(tool_payload)
         self._state_transitions.append(transition_payload)
         self._progress_deltas.append(progress_payload)
@@ -2985,6 +3032,7 @@ class ProverExecutionMixin:
                 tool_name=action.tool.name,
                 tool_arguments={
                     **action.tool.arguments,
+                    "current_state": self.current_state.value,
                     "RetrievalEvent": retrieval_payload,
                     "ToolUsageTrace": tool_payload,
                     "StateTransition": transition_payload,
@@ -3508,7 +3556,10 @@ class ProverExecutionMixin:
                 success=success,
                 rationale="Use bounded lean-lsp-mcp search for a mathlib-native claim.",
                 tool_name="mathlib_native_lsp_search",
-                tool_arguments=metadata,
+                tool_arguments={
+                    "current_state": self.current_state.value,
+                    **metadata,
+                },
                 tool_result=message,
                 lean_feedback=lean_feedback,
                 goals=goals,
@@ -4275,6 +4326,11 @@ class ProverExecutionMixin:
                     "claim_type_policy": claim_type_policy,
                     "preamble_shortcuts_enabled": preamble_shortcuts_enabled,
                     "mathlib_native_mode": mathlib_native_mode,
+                    **(
+                        {"current_state": self.current_state.value}
+                        if mathlib_native_mode
+                        else {}
+                    ),
                 },
                 tool_result=f"Closed via `{proof.splitlines()[0]}` using `{source}`.",
                 lean_feedback=lean_feedback,
@@ -4634,6 +4690,8 @@ class ProverExecutionMixin:
             "mathlib_native_mode": mathlib_native_mode,
             "target_kind": target.kind,
         }
+        if mathlib_native_mode:
+            metadata["current_state"] = self.current_state.value
         if mathlib_native_mode:
             message = "claim_type = mathlib_native; mathlib_native_mode=True; skipping preamble-derived direct-close candidates."
             rationale = "Use the benchmark claim type to avoid spending prover turns on preamble-only shortcuts."

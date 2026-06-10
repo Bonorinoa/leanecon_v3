@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
 
@@ -138,6 +139,7 @@ class SynthesisEvent:
     target_name: str | None = None
     claim_id: str | None = None
     decomposition_depth: int = 0
+    current_state: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -149,6 +151,7 @@ class SynthesisEvent:
             "target_name": self.target_name,
             "claim_id": self.claim_id,
             "decomposition_depth": int(self.decomposition_depth),
+            "current_state": self.current_state,
         }
 
 
@@ -239,6 +242,26 @@ class StateTransition:
             "state_hash_before": self.state_hash_before,
             "state_hash_after": self.state_hash_after,
             "progress_delta": self.progress_delta.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class ProverStateTransition:
+    from_state: str
+    to_state: str
+    reason: str | None = None
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_type": "ProverStateTransition",
+            "from_state": self.from_state,
+            "to_state": self.to_state,
+            "reason": self.reason,
+            "timestamp": self.timestamp,
+            "current_state": self.to_state,
         }
 
 

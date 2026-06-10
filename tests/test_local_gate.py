@@ -221,6 +221,26 @@ class TraceFakeProver(FakeProver):
                 },
             )
             on_progress(
+                "prover_state_transition",
+                {
+                    "event": "prover_state_transition",
+                    "stage": "prover",
+                    "status": "running_prover",
+                    "message": "state changed",
+                    "metadata": {
+                        "current_state": "Stalled",
+                        "ProverStateTransition": {
+                            "event_type": "ProverStateTransition",
+                            "from_state": "Synthesizing",
+                            "to_state": "Stalled",
+                            "reason": "test stall",
+                            "timestamp": "2026-01-01T00:00:00+00:00",
+                            "current_state": "Stalled",
+                        },
+                    },
+                },
+            )
+            on_progress(
                 "synthesis_event",
                 {
                     "event": "synthesis_event",
@@ -237,6 +257,7 @@ class TraceFakeProver(FakeProver):
                             "target_name": "theorem_body",
                             "claim_id": "fake",
                             "decomposition_depth": 1,
+                            "current_state": "Synthesizing",
                         }
                     },
                 },
@@ -278,6 +299,7 @@ class TraceFakeProver(FakeProver):
                         "target_name": "theorem_body",
                         "claim_id": "fake",
                         "decomposition_depth": 1,
+                        "current_state": "Synthesizing",
                     },
                     "PremiseResolutionEvent": {
                         "event_type": "PremiseResolutionEvent",
@@ -318,6 +340,17 @@ class TraceFakeProver(FakeProver):
                 "target_name": "theorem_body",
                 "claim_id": "fake",
                 "decomposition_depth": 1,
+                "current_state": "Synthesizing",
+            }
+        ]
+        result.prover_state_transitions = [
+            {
+                "event_type": "ProverStateTransition",
+                "from_state": "Synthesizing",
+                "to_state": "Stalled",
+                "reason": "test stall",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "current_state": "Stalled",
             }
         ]
         result.tool_budget = {
@@ -617,7 +650,9 @@ def test_local_gate_benchmark_metrics_include_harness_trace_events(monkeypatch) 
     assert summary["repl_compile_disagreement_count"] == 0
     assert summary["avg_decomposition_depth_mathlib"] == 0.0
     assert summary["progress_deltas"]
+    assert summary["prover_state_transitions"]
     assert summary["synthesis_events"]
+    assert summary["synthesis_events"][0]["current_state"] == "Synthesizing"
     assert combined["retrieval_hit_rate@5"] == 1.0
     assert combined["avg_tool_calls_mathlib"] == 2.0
     assert combined["synthesis_efficiency"] == 1.0
@@ -631,17 +666,23 @@ def test_local_gate_benchmark_metrics_include_harness_trace_events(monkeypatch) 
     assert combined["candidate_success_rate"] == 1.0
     assert combined["provider_fallback_rate"] == 1.0
     assert combined["repl_compile_disagreement_count"] == 0
+    assert combined["prover_state_transitions"]
     first_result = summary["results"][0]
     assert {event["event_type"] for event in first_result["trace_events"]} >= {
         "RetrievalEvent",
         "ToolUsageTrace",
         "ProgressDelta",
+        "ProverStateTransition",
         "SynthesisEvent",
         "PremiseResolutionEvent",
         "CandidateTacticEvent",
     }
     assert any(
         (event.get("metadata") or {}).get("RetrievalEvent")
+        for event in first_result["progress_events"]
+    )
+    assert any(
+        (event.get("metadata") or {}).get("ProverStateTransition")
         for event in first_result["progress_events"]
     )
 

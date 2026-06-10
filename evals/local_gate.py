@@ -512,6 +512,7 @@ def _trace_events_from_result(prove_result: ProverResult) -> list[dict[str, Any]
         ("retrieval_events", "RetrievalEvent"),
         ("tool_usage_traces", "ToolUsageTrace"),
         ("state_transitions", "StateTransition"),
+        ("prover_state_transitions", "ProverStateTransition"),
         ("progress_deltas", "ProgressDelta"),
         ("synthesis_events", "SynthesisEvent"),
     ):
@@ -524,6 +525,7 @@ def _trace_events_from_result(prove_result: ProverResult) -> list[dict[str, Any]
             "ToolUsageTrace",
             "StateTransition",
             "ProgressDelta",
+            "ProverStateTransition",
             "SynthesisEvent",
             "PremiseResolutionEvent",
             "CandidateTacticEvent",
@@ -548,6 +550,7 @@ def _trace_events_from_result(prove_result: ProverResult) -> list[dict[str, Any]
             "ToolUsageTrace",
             "StateTransition",
             "ProgressDelta",
+            "ProverStateTransition",
             "SynthesisEvent",
             "PremiseResolutionEvent",
             "CandidateTacticEvent",
@@ -609,6 +612,33 @@ def _progress_delta_payloads(results: list[dict[str, Any]]) -> list[dict[str, An
             if isinstance(payload, dict):
                 payloads.append(dict(payload))
     return payloads
+
+
+def _prover_state_transition_payloads(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for result in results:
+        for payload in result.get("prover_state_transitions", []):
+            if isinstance(payload, dict):
+                payloads.append(dict(payload))
+        for event in result.get("trace_events", []):
+            if event.get("event_type") == "ProverStateTransition" and isinstance(
+                event.get("payload"), dict
+            ):
+                payloads.append(dict(event["payload"]))
+        for event in result.get("progress_events", []):
+            metadata = event.get("metadata") or {}
+            payload = metadata.get("ProverStateTransition")
+            if isinstance(payload, dict):
+                payloads.append(dict(payload))
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for payload in payloads:
+        key = json.dumps(payload, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(payload)
+    return deduped
 
 
 def _retrieval_hit_rate_at_5(results: list[dict[str, Any]]) -> float:
@@ -1010,6 +1040,7 @@ async def _run_claim_set_async(
         retrieval_events: list[dict[str, Any]] = []
         tool_usage_traces: list[dict[str, Any]] = []
         state_transitions: list[dict[str, Any]] = []
+        prover_state_transitions: list[dict[str, Any]] = []
         progress_deltas: list[dict[str, Any]] = []
         synthesis_events: list[dict[str, Any]] = []
         heartbeat = (
@@ -1080,6 +1111,7 @@ async def _run_claim_set_async(
                         "retrieval_events": retrieval_events,
                         "tool_usage_traces": tool_usage_traces,
                         "state_transitions": state_transitions,
+                        "prover_state_transitions": prover_state_transitions,
                         "progress_deltas": progress_deltas,
                         "synthesis_events": synthesis_events,
                         "trivial_shortcut": {
@@ -1229,6 +1261,7 @@ async def _run_claim_set_async(
             retrieval_events = list(prove_result.retrieval_events or [])
             tool_usage_traces = list(prove_result.tool_usage_traces or [])
             state_transitions = list(prove_result.state_transitions or [])
+            prover_state_transitions = list(prove_result.prover_state_transitions or [])
             progress_deltas = list(prove_result.progress_deltas or [])
             synthesis_events = list(prove_result.synthesis_events or [])
             trace_events = _trace_events_from_result(prove_result) if benchmark_mode else []
@@ -1348,6 +1381,7 @@ async def _run_claim_set_async(
                 "retrieval_events": retrieval_events,
                 "tool_usage_traces": tool_usage_traces,
                 "state_transitions": state_transitions,
+                "prover_state_transitions": prover_state_transitions,
                 "progress_deltas": progress_deltas,
                 "synthesis_events": synthesis_events,
                 **(
@@ -1397,6 +1431,7 @@ async def _run_claim_set_async(
         else 0.0
     )
     progress_deltas = _progress_delta_payloads(results)
+    prover_state_transitions = _prover_state_transition_payloads(results)
     synthesis_events = _synthesis_event_payloads(results)
     synthesis_counts = _synthesis_event_counts(results)
     return {
@@ -1430,6 +1465,7 @@ async def _run_claim_set_async(
         "repl_compile_disagreement_count": _repl_compile_disagreement_count(results),
         "avg_decomposition_depth_mathlib": _avg_decomposition_depth_mathlib(results),
         "progress_deltas": progress_deltas,
+        "prover_state_transitions": prover_state_transitions,
         "synthesis_events": synthesis_events,
         "executed": True,
         "readiness": readiness,
@@ -1536,6 +1572,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         int(item.get("mathlib_native_mode_usage") or 0) for item in all_results
     )
     progress_deltas = _progress_delta_payloads(all_results)
+    prover_state_transitions = _prover_state_transition_payloads(all_results)
     synthesis_events = _synthesis_event_payloads(all_results)
     synthesis_counts = _synthesis_event_counts(all_results)
     return {
@@ -1565,6 +1602,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "repl_compile_disagreement_count": _repl_compile_disagreement_count(all_results),
         "avg_decomposition_depth_mathlib": _avg_decomposition_depth_mathlib(all_results),
         "progress_deltas": progress_deltas,
+        "prover_state_transitions": prover_state_transitions,
         "synthesis_events": synthesis_events,
         "readiness": {
             "ready": all(bool(summary.get("readiness", {}).get("ready")) for summary in summaries),

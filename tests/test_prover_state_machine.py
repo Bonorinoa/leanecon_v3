@@ -215,6 +215,32 @@ def test_mathlib_stall_helpers_round_trip_to_synthesizing() -> None:
     assert recovered_config == get_state_config(ProverState.Synthesizing)
 
 
+def test_prover_state_transition_observability_payload_is_recorded() -> None:
+    prover = Prover()
+    emitted: list[tuple[str, dict[str, object]]] = []
+    prover._prover_progress_callback = (
+        lambda event, payload: emitted.append((event, payload))
+    )
+    prover._current_prover_job_id = "job_state"
+    prover._current_prover_claim_id = "claim_state"
+
+    prover._enter_mathlib_stalled_state(reason="ProgressDelta.stall_detected")
+
+    assert prover._prover_state_transitions
+    transition = prover._prover_state_transitions[-1]
+    assert transition["event_type"] == "ProverStateTransition"
+    assert transition["from_state"] == "Synthesizing"
+    assert transition["to_state"] == "Stalled"
+    assert transition["reason"] == "ProgressDelta.stall_detected"
+    assert transition["current_state"] == "Stalled"
+    assert emitted
+    event_name, progress = emitted[-1]
+    assert event_name == "prover_state_transition"
+    metadata = progress["metadata"]
+    assert metadata["current_state"] == "Stalled"
+    assert metadata["ProverStateTransition"] == transition
+
+
 def test_mathlib_stall_can_recover_into_decomposition() -> None:
     prover = Prover()
 
