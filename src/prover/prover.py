@@ -68,7 +68,7 @@ from src.prover.retrieval import (
     _extract_unknown_identifier,
     _query_from_failed_identifier,
 )
-from src.prover.state_machine import ProverState, StateMachine
+from src.prover.state_machine import ProverState, StateConfig, StateMachine, get_state_config
 from src.prover.synthesis import ProverSynthesisMixin, _build_prompt
 from src.prover.synthesizer import ProofSynthesizer
 from src.prover.tactics import direct_hypothesis_name, suggest_fast_path_tactics
@@ -95,6 +95,7 @@ __all__ = [
     "ProverFailure",
     "ProverResult",
     "ProverState",
+    "StateConfig",
     "ProverTarget",
     "ProverTargetTimeouts",
     "ProverToolInvocation",
@@ -117,6 +118,7 @@ __all__ = [
     "build_progress_event",
     "compile_check",
     "direct_hypothesis_name",
+    "get_state_config",
     "lean_run_code",
     "log_event",
     "suggest_fast_path_tactics",
@@ -187,6 +189,11 @@ class Prover(
     def current_state(self) -> ProverState:
         """Current Sprint 26 prover state for the mathlib-native harness."""
         return self._state_machine.current_state
+
+    @property
+    def current_state_config(self) -> StateConfig:
+        """Descriptive config for the current Sprint 26 prover state."""
+        return self._state_machine.get_current_config()
 
     def _reset_prover_state(self) -> None:
         """Reset the lightweight prover state machine before a new run."""
