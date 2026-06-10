@@ -32,6 +32,8 @@ from .prover import (
     ProverBackend,
     ProverDriver,
     ProverDriverError,
+    ProverState,
+    StateMachine,
 )
 from .tactics import direct_hypothesis_name, suggest_fast_path_tactics
 
@@ -48,9 +50,11 @@ __all__ = [
     "ProverFailure",
     "ProverMemoryWriter",
     "ProverResult",
+    "ProverState",
     "ProverTarget",
     "ProverTargetTimeouts",
     "ProverTraceStep",
+    "StateMachine",
     "direct_hypothesis_name",
     "suggest_fast_path_tactics",
 ]

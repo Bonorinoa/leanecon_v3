@@ -68,6 +68,7 @@ from src.prover.retrieval import (
     _extract_unknown_identifier,
     _query_from_failed_identifier,
 )
+from src.prover.state_machine import ProverState, StateMachine
 from src.prover.synthesis import ProverSynthesisMixin, _build_prompt
 from src.prover.synthesizer import ProofSynthesizer
 from src.prover.tactics import direct_hypothesis_name, suggest_fast_path_tactics
@@ -93,10 +94,12 @@ __all__ = [
     "ProverDriverError",
     "ProverFailure",
     "ProverResult",
+    "ProverState",
     "ProverTarget",
     "ProverTargetTimeouts",
     "ProverToolInvocation",
     "ProverTraceStep",
+    "StateMachine",
     "_ActiveProofSession",
     "_build_prompt",
     "_contains_lsp_unavailable",
@@ -159,6 +162,7 @@ class Prover(
         self.budget_tracker = budget_tracker or BudgetTracker()
         self.memory_writer = ProverMemoryWriter(self.trace_store)
         self._proof_synthesizer = ProofSynthesizer()
+        self._state_machine = StateMachine()
         self.lsp_client = lsp_client or default_lean_lsp_client
         self._extracted_lemmas = 0
         self._retrieval_events: list[dict[str, Any]] = []
@@ -178,5 +182,42 @@ class Prover(
         # The cache is constructed lazily via ``_get_lsp_cache`` because
         # ``self.lsp_client`` may be swapped by tests *after* ``__init__``.
         self._lsp_cache: LSPCache | None = None
+
+    @property
+    def current_state(self) -> ProverState:
+        """Current Sprint 26 prover state for the mathlib-native harness."""
+        return self._state_machine.current_state
+
+    def _reset_prover_state(self) -> None:
+        """Reset the lightweight prover state machine before a new run."""
+        self._state_machine.reset()
+
+    def _transition_prover_state(
+        self,
+        next_state: ProverState,
+        *,
+        reason: str | None = None,
+    ) -> ProverState:
+        """Apply a validated prover-state transition.
+
+        The transition graph is intentionally minimal and follows
+        ``Sprint26_StateMachine_Design.md``. To preserve existing successful
+        paths, no tactic execution or prompt behavior depends on this state yet.
+        """
+        return self._state_machine.transition(next_state, reason=reason)
+
+    def _try_transition_prover_state(
+        self,
+        next_state: ProverState,
+        *,
+        reason: str | None = None,
+    ) -> ProverState:
+        """Best-effort state update for instrumentation-only integration."""
+        if (
+            next_state == self.current_state
+            or self._state_machine.can_transition(next_state)
+        ):
+            return self._transition_prover_state(next_state, reason=reason)
+        return self.current_state
 
 DEFAULT_PROVER = Prover()

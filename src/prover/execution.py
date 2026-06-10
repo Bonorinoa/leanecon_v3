@@ -60,6 +60,7 @@ from src.prover.models import (
 )
 from src.prover.retrieval import _contains_lsp_unavailable
 from src.prover.synthesis import _build_prompt
+from src.prover.state_machine import ProverState
 from src.prover.tactics import (
     classify_goal_shape,
     direct_hypothesis_name,
@@ -423,6 +424,7 @@ class ProverExecutionMixin:
         self._synthesis_events = []
         self._second_retrieval_targets = set()
         self._rescue_retrieval_targets = set()
+        self._reset_prover_state()
         self.file_controller.initialize(job_id, working_code)
 
         try:
@@ -625,6 +627,16 @@ class ProverExecutionMixin:
             }
 
             if failure is None and final_compile["success"]:
+                if self._normalized_claim_type(packet) == "mathlib_native":
+                    if self.current_state in {ProverState.Stalled, ProverState.Rescue}:
+                        self._try_transition_prover_state(
+                            ProverState.Synthesizing,
+                            reason="final compile validated recovered mathlib-native proof",
+                        )
+                    self._try_transition_prover_state(
+                        ProverState.Verified,
+                        reason="final compile validated mathlib-native proof",
+                    )
                 audit_events.append(
                     AuditEvent(
                         stage="prover",
@@ -709,6 +721,10 @@ class ProverExecutionMixin:
                 )
             if self._normalized_claim_type(packet) == "mathlib_native":
                 failure = self._normalize_mathlib_progress_failure(failure)
+                self._try_transition_prover_state(
+                    ProverState.Failed,
+                    reason=failure.reason,
+                )
             audit_events.append(
                 AuditEvent(
                     stage="prover",
@@ -2254,6 +2270,7 @@ class ProverExecutionMixin:
             transition_payload = state_transition.to_dict()
             tool_payload = tool_usage.to_dict()
             synthesis_payload = synthesis_event.to_dict()
+            synthesis_payload["current_state"] = self.current_state.value
             candidate_payload = self._record_candidate_tactic_event(
                 event=candidate_event,
                 audit_events=audit_events,
@@ -2319,6 +2336,10 @@ class ProverExecutionMixin:
                 )
 
             if committed:
+                self._try_transition_prover_state(
+                    ProverState.Verified if session.solved else ProverState.Synthesizing,
+                    reason="resolved mathlib-native candidate committed",
+                )
                 if session.solved:
                     return session.read_code(), True
                 return None, True
@@ -2491,6 +2512,10 @@ class ProverExecutionMixin:
                 budget_remaining_frac=self._budget_remaining_frac(),
             )
         ):
+            self._try_transition_prover_state(
+                ProverState.Stalled,
+                reason="ProgressDelta reported a stalled mathlib-native turn",
+            )
             refined_query = self._refined_leansearch_query(before_state)
             if refined_query and refined_query != ls_query:
                 self._second_retrieval_targets.add(target_key)
@@ -2533,6 +2558,11 @@ class ProverExecutionMixin:
                         },
                     )
                 )
+                if ls2_event.retrieved_premises:
+                    self._try_transition_prover_state(
+                        ProverState.Synthesizing,
+                        reason="refined retrieval returned premises after stall",
+                    )
                 merged_premises = self._merge_retrieval_premises(
                     merged_premises,
                     ls2_event.retrieved_premises,
@@ -2550,6 +2580,10 @@ class ProverExecutionMixin:
         ):
             rescue_query = self._rescue_query_from_recent_trace(trace, target.name)
             if rescue_query and rescue_query != ls_query:
+                self._try_transition_prover_state(
+                    ProverState.Rescue,
+                    reason="unknown identifier detected in recent mathlib-native trace",
+                )
                 self._rescue_retrieval_targets.add(target_key)
                 rescue_event = self._retrieve_lean_search_premises(
                     rescue_query,
@@ -2597,6 +2631,10 @@ class ProverExecutionMixin:
                     merged_premises,
                     rescue_event.retrieved_premises,
                     k=10,
+                )
+                self._try_transition_prover_state(
+                    ProverState.Synthesizing,
+                    reason="rescue retrieval completed",
                 )
         if not merged_premises:
             if _contains_lsp_unavailable(
@@ -2895,6 +2933,7 @@ class ProverExecutionMixin:
             decomposition_depth=target.recursion_depth,
         )
         synthesis_payload = synthesis_event.to_dict()
+        synthesis_payload["current_state"] = self.current_state.value
         self._tool_usage_traces.append(tool_payload)
         self._state_transitions.append(transition_payload)
         self._progress_deltas.append(progress_payload)
@@ -2968,6 +3007,10 @@ class ProverExecutionMixin:
             )
         )
         if progress_delta.stall_detected:
+            self._try_transition_prover_state(
+                ProverState.Stalled,
+                reason="ProgressDelta reported unchanged mathlib-native state",
+            )
             helper_skip_reason: str | None = None
             if not MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED:
                 helper_skip_reason = "helper_lemma_disabled"
@@ -2989,6 +3032,10 @@ class ProverExecutionMixin:
                 if helper_action is None:
                     helper_skip_reason = "no_helper_statement"
                 else:
+                    self._try_transition_prover_state(
+                        ProverState.Decomposing,
+                        reason="helper lemma decomposition started after stall",
+                    )
                     helper_trace_start = len(trace)
                     decomposed, rewritten = await self._run_decomposition(
                         packet=packet,
@@ -3082,6 +3129,10 @@ class ProverExecutionMixin:
                 backend=backend.name,
                 lean_feedback=session.get_goals(),
             )
+        self._try_transition_prover_state(
+            ProverState.Synthesizing,
+            reason="mathlib-native tactic made progress",
+        )
         if not tool_result.is_error and session.solved:
             final_ok, final_error = self._final_compile_validation(
                 session=session,
@@ -3102,6 +3153,10 @@ class ProverExecutionMixin:
                     backend=backend.name,
                     lean_feedback=[final_error],
                 )
+            self._try_transition_prover_state(
+                ProverState.Verified,
+                reason="mathlib-native harness tactic passed final validation",
+            )
             return session.read_code(), None
         return None, None
 
