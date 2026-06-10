@@ -233,11 +233,14 @@ def test_prover_state_transition_observability_payload_is_recorded() -> None:
     assert transition["to_state"] == "Stalled"
     assert transition["reason"] == "ProgressDelta.stall_detected"
     assert transition["current_state"] == "Stalled"
+    assert transition["current_state_config"]["memory_filter"] == "failure_focused"
+    assert transition["current_state_config"]["prompt_rules"]["mode"] == "recover_from_stall"
     assert emitted
     event_name, progress = emitted[-1]
     assert event_name == "prover_state_transition"
     metadata = progress["metadata"]
     assert metadata["current_state"] == "Stalled"
+    assert metadata["current_state_config"] == transition["current_state_config"]
     assert metadata["ProverStateTransition"] == transition
 
 

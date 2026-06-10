@@ -1063,7 +1063,7 @@ class ProverExecutionMixin:
                                     tool_name="apply_tactic",
                                     tool_arguments={
                                         "tactic": repeated_solved,
-                                        "current_state": self.current_state.value,
+                                        **self._prover_state_metadata(),
                                     },
                                     tool_result=f"Soft-repaired REPL/global compile disagreement after `{repeated_solved}`.",
                                     lean_feedback=lean_feedback,
@@ -1370,7 +1370,7 @@ class ProverExecutionMixin:
                             success=False,
                             rationale="Provider invocation failed.",
                             tool_arguments=(
-                                {"current_state": self.current_state.value}
+                                self._prover_state_metadata()
                                 if mathlib_native_mode
                                 else {}
                             ),
@@ -1449,7 +1449,7 @@ class ProverExecutionMixin:
                             tool_arguments={
                                 **(action.tool.arguments if action.tool is not None else {}),
                                 **(
-                                    {"current_state": self.current_state.value}
+                                    self._prover_state_metadata()
                                     if mathlib_native_mode
                                     else {}
                                 ),
@@ -1633,7 +1633,7 @@ class ProverExecutionMixin:
                     tool_arguments={
                         **action.tool.arguments,
                         **(
-                            {"current_state": self.current_state.value}
+                            self._prover_state_metadata()
                             if mathlib_native_mode
                             else {}
                         ),
@@ -1679,6 +1679,9 @@ class ProverExecutionMixin:
                         claim_id=packet.theorem_name,
                         decomposition_depth=target.recursion_depth,
                         current_state=self.current_state.value,
+                        current_state_config=self._prover_state_metadata()[
+                            "current_state_config"
+                        ],
                     ).to_dict()
                     self._synthesis_events.append(synthesis_payload)
                     step.tool_arguments["SynthesisEvent"] = synthesis_payload
@@ -2336,6 +2339,7 @@ class ProverExecutionMixin:
                 claim_id=claim_id,
                 decomposition_depth=target.recursion_depth,
                 current_state=self.current_state.value,
+                current_state_config=self._prover_state_metadata()["current_state_config"],
             )
             candidate_event = CandidateTacticEvent(
                 tactic=candidate.tactic,
@@ -2376,7 +2380,7 @@ class ProverExecutionMixin:
                     tool_name="compile_check" if used_compile_fallback else tool.name,
                     tool_arguments={
                         **tool.arguments,
-                        "current_state": self.current_state.value,
+                        **self._prover_state_metadata(),
                         "compile_fallback": used_compile_fallback,
                         "RetrievalEvent": retrieval_payload,
                         "ToolUsageTrace": tool_payload,
@@ -2748,7 +2752,7 @@ class ProverExecutionMixin:
                     rationale="Hybrid retrieval (local RAG + LeanSearch) returned no premises; falling back to bounded LSP search.",
                     tool_name="retrieve_premises",
                     tool_arguments={
-                        "current_state": self.current_state.value,
+                        **self._prover_state_metadata(),
                         "RetrievalEvent": retrieval_payload,
                         "LeanSearchRetrievalEvent": ls_payload,
                     },
@@ -2906,7 +2910,7 @@ class ProverExecutionMixin:
                     rationale="Harness provider invocation failed; falling back to bounded LSP search.",
                     tool_name="provider_turn",
                     tool_arguments={
-                        "current_state": self.current_state.value,
+                        **self._prover_state_metadata(),
                         "RetrievalEvent": retrieval_payload,
                     },
                     tool_result=str(exc),
@@ -2936,7 +2940,7 @@ class ProverExecutionMixin:
                     rationale="Harness loop only accepts provider `apply_tactic` actions.",
                     tool_name=action.tool.name if action.tool is not None else None,
                     tool_arguments={
-                        "current_state": self.current_state.value,
+                        **self._prover_state_metadata(),
                         "RetrievalEvent": retrieval_payload,
                         "provider_action": action.model_dump(mode="json"),
                     },
@@ -3015,6 +3019,7 @@ class ProverExecutionMixin:
             claim_id=claim_id,
             decomposition_depth=target.recursion_depth,
             current_state=self.current_state.value,
+            current_state_config=self._prover_state_metadata()["current_state_config"],
         )
         synthesis_payload = synthesis_event.to_dict()
         self._tool_usage_traces.append(tool_payload)
@@ -3032,7 +3037,7 @@ class ProverExecutionMixin:
                 tool_name=action.tool.name,
                 tool_arguments={
                     **action.tool.arguments,
-                    "current_state": self.current_state.value,
+                    **self._prover_state_metadata(),
                     "RetrievalEvent": retrieval_payload,
                     "ToolUsageTrace": tool_payload,
                     "StateTransition": transition_payload,
@@ -3557,7 +3562,7 @@ class ProverExecutionMixin:
                 rationale="Use bounded lean-lsp-mcp search for a mathlib-native claim.",
                 tool_name="mathlib_native_lsp_search",
                 tool_arguments={
-                    "current_state": self.current_state.value,
+                    **self._prover_state_metadata(),
                     **metadata,
                 },
                 tool_result=message,
@@ -4327,7 +4332,7 @@ class ProverExecutionMixin:
                     "preamble_shortcuts_enabled": preamble_shortcuts_enabled,
                     "mathlib_native_mode": mathlib_native_mode,
                     **(
-                        {"current_state": self.current_state.value}
+                        self._prover_state_metadata()
                         if mathlib_native_mode
                         else {}
                     ),
@@ -4691,7 +4696,7 @@ class ProverExecutionMixin:
             "target_kind": target.kind,
         }
         if mathlib_native_mode:
-            metadata["current_state"] = self.current_state.value
+            metadata.update(self._prover_state_metadata())
         if mathlib_native_mode:
             message = "claim_type = mathlib_native; mathlib_native_mode=True; skipping preamble-derived direct-close candidates."
             rationale = "Use the benchmark claim type to avoid spending prover turns on preamble-only shortcuts."

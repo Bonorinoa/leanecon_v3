@@ -215,27 +215,33 @@ def test_state_transition_and_progress_delta_schema() -> None:
 
 
 def test_synthesis_event_includes_current_state() -> None:
+    config = {"prompt_rules": {"mode": "synthesize"}, "memory_filter": "broad"}
     payload = SynthesisEvent(
         tactic="exact h",
         success=True,
         target_name="theorem_body",
         current_state="Synthesizing",
+        current_state_config=config,
     ).to_dict()
 
     assert payload["event_type"] == "SynthesisEvent"
     assert payload["current_state"] == "Synthesizing"
+    assert payload["current_state_config"] == config
 
 
 def test_prover_state_transition_schema() -> None:
+    config = {"prompt_rules": {"mode": "recover_from_stall"}, "memory_filter": "failure_focused"}
     payload = ProverStateTransition(
         from_state="Synthesizing",
         to_state="Stalled",
         reason="ProgressDelta reported unchanged mathlib-native state",
+        current_state_config=config,
     ).to_dict()
 
     assert payload["event_type"] == "ProverStateTransition"
     assert payload["from_state"] == "Synthesizing"
     assert payload["to_state"] == "Stalled"
     assert payload["current_state"] == "Stalled"
+    assert payload["current_state_config"] == config
     assert payload["reason"] == "ProgressDelta reported unchanged mathlib-native state"
     assert payload["timestamp"]

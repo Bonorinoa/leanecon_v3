@@ -185,6 +185,14 @@ class FakeProver:
 class TraceFakeProver(FakeProver):
     async def prove(self, *args, **kwargs):
         on_progress = kwargs.get("on_progress")
+        synthesizing_config = {
+            "prompt_rules": {"mode": "synthesize"},
+            "memory_filter": "broad",
+        }
+        stalled_config = {
+            "prompt_rules": {"mode": "recover_from_stall"},
+            "memory_filter": "failure_focused",
+        }
         if on_progress is not None:
             on_progress(
                 "retrieval_event",
@@ -229,6 +237,7 @@ class TraceFakeProver(FakeProver):
                     "message": "state changed",
                     "metadata": {
                         "current_state": "Stalled",
+                        "current_state_config": stalled_config,
                         "ProverStateTransition": {
                             "event_type": "ProverStateTransition",
                             "from_state": "Synthesizing",
@@ -236,6 +245,7 @@ class TraceFakeProver(FakeProver):
                             "reason": "test stall",
                             "timestamp": "2026-01-01T00:00:00+00:00",
                             "current_state": "Stalled",
+                            "current_state_config": stalled_config,
                         },
                     },
                 },
@@ -258,6 +268,7 @@ class TraceFakeProver(FakeProver):
                             "claim_id": "fake",
                             "decomposition_depth": 1,
                             "current_state": "Synthesizing",
+                            "current_state_config": synthesizing_config,
                         }
                     },
                 },
@@ -272,6 +283,8 @@ class TraceFakeProver(FakeProver):
                 success=True,
                 tool_name="apply_tactic",
                 tool_arguments={
+                    "current_state": "Synthesizing",
+                    "current_state_config": synthesizing_config,
                     "RetrievalEvent": {
                         "event_type": "RetrievalEvent",
                         "retrieved_count": 1,
@@ -300,6 +313,7 @@ class TraceFakeProver(FakeProver):
                         "claim_id": "fake",
                         "decomposition_depth": 1,
                         "current_state": "Synthesizing",
+                        "current_state_config": synthesizing_config,
                     },
                     "PremiseResolutionEvent": {
                         "event_type": "PremiseResolutionEvent",
@@ -341,6 +355,7 @@ class TraceFakeProver(FakeProver):
                 "claim_id": "fake",
                 "decomposition_depth": 1,
                 "current_state": "Synthesizing",
+                "current_state_config": synthesizing_config,
             }
         ]
         result.prover_state_transitions = [
@@ -351,6 +366,7 @@ class TraceFakeProver(FakeProver):
                 "reason": "test stall",
                 "timestamp": "2026-01-01T00:00:00+00:00",
                 "current_state": "Stalled",
+                "current_state_config": stalled_config,
             }
         ]
         result.tool_budget = {
@@ -653,6 +669,7 @@ def test_local_gate_benchmark_metrics_include_harness_trace_events(monkeypatch) 
     assert summary["prover_state_transitions"]
     assert summary["synthesis_events"]
     assert summary["synthesis_events"][0]["current_state"] == "Synthesizing"
+    assert summary["synthesis_events"][0]["current_state_config"]["memory_filter"] == "broad"
     assert combined["retrieval_hit_rate@5"] == 1.0
     assert combined["avg_tool_calls_mathlib"] == 2.0
     assert combined["synthesis_efficiency"] == 1.0
@@ -667,6 +684,10 @@ def test_local_gate_benchmark_metrics_include_harness_trace_events(monkeypatch) 
     assert combined["provider_fallback_rate"] == 1.0
     assert combined["repl_compile_disagreement_count"] == 0
     assert combined["prover_state_transitions"]
+    assert (
+        combined["prover_state_transitions"][0]["current_state_config"]["prompt_rules"]["mode"]
+        == "recover_from_stall"
+    )
     first_result = summary["results"][0]
     assert {event["event_type"] for event in first_result["trace_events"]} >= {
         "RetrievalEvent",
@@ -684,6 +705,22 @@ def test_local_gate_benchmark_metrics_include_harness_trace_events(monkeypatch) 
     assert any(
         (event.get("metadata") or {}).get("ProverStateTransition")
         for event in first_result["progress_events"]
+    )
+    transition_event = next(
+        event
+        for event in first_result["progress_events"]
+        if (event.get("metadata") or {}).get("ProverStateTransition")
+    )
+    transition_metadata = transition_event["metadata"]
+    assert transition_metadata["current_state"] == "Stalled"
+    assert transition_metadata["current_state_config"]["memory_filter"] == "failure_focused"
+    synthesis_trace_event = next(
+        event for event in first_result["trace_events"] if event["event_type"] == "SynthesisEvent"
+    )
+    assert synthesis_trace_event["payload"]["current_state"] == "Synthesizing"
+    assert (
+        synthesis_trace_event["payload"]["current_state_config"]["memory_filter"]
+        == "broad"
     )
 
 

@@ -140,6 +140,7 @@ class SynthesisEvent:
     claim_id: str | None = None
     decomposition_depth: int = 0
     current_state: str | None = None
+    current_state_config: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +153,11 @@ class SynthesisEvent:
             "claim_id": self.claim_id,
             "decomposition_depth": int(self.decomposition_depth),
             "current_state": self.current_state,
+            "current_state_config": (
+                dict(self.current_state_config)
+                if self.current_state_config is not None
+                else None
+            ),
         }
 
 
@@ -250,6 +256,7 @@ class ProverStateTransition:
     from_state: str
     to_state: str
     reason: str | None = None
+    current_state_config: dict[str, Any] | None = None
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -262,6 +269,11 @@ class ProverStateTransition:
             "reason": self.reason,
             "timestamp": self.timestamp,
             "current_state": self.to_state,
+            "current_state_config": (
+                dict(self.current_state_config)
+                if self.current_state_config is not None
+                else None
+            ),
         }
 
 

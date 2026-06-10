@@ -236,17 +236,19 @@ class Prover(
         if result == from_state:
             return result
 
+        state_metadata = self._prover_state_metadata()
         transition_payload = ProverStateTransition(
             from_state=from_state.value,
             to_state=result.value,
             reason=reason,
+            current_state_config=state_metadata["current_state_config"],
         ).to_dict()
         self._prover_state_transitions.append(transition_payload)
 
         callback = self._prover_progress_callback
         if callback is not None and self._current_prover_job_id is not None:
             metadata = {
-                **self._prover_state_metadata(),
+                **state_metadata,
                 "ProverStateTransition": transition_payload,
             }
             callback(
