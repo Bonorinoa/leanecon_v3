@@ -1,4 +1,4 @@
-"""Claim scope and frontier failure classification for Sprint 28."""
+"""Claim scope and frontier failure classification for LeanEcon alpha."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ FRONTIER_COLLECT = "frontier_collect"
 OUT_OF_SCOPE = "out_of_scope"
 FRONTIER_RECORD_SCHEMA_VERSION = 1
 
-SPRINT29_RELEASE_RELIABLE_PREAMBLE_ENTRIES = frozenset(
+ALPHA_RELEASE_RELIABLE_PREAMBLE_ENTRIES = frozenset(
     {
         "bellman_operator",
         "constrained_optimization",
@@ -109,7 +109,7 @@ def classify_claim_scope(
     missing_definitions: list[str] | tuple[str, ...] | None = None,
     missing_lemmas: list[str] | tuple[str, ...] | None = None,
 ) -> ScopeClassification:
-    """Classify a claim into the release/frontier surfaces used by Sprint 28."""
+    """Classify a claim into the alpha release/frontier surfaces."""
 
     selected = tuple(str(item) for item in (selected_preamble_entries or ()) if str(item).strip())
     missing_defs = tuple(str(item) for item in (missing_definitions or ()) if str(item).strip())
@@ -152,7 +152,7 @@ def classify_claim_scope(
             reason=f"Missing preamble lemmas: {', '.join(missing_thms)}.",
         )
     unknown_release_entries = tuple(
-        entry for entry in selected if entry not in SPRINT29_RELEASE_RELIABLE_PREAMBLE_ENTRIES
+        entry for entry in selected if entry not in ALPHA_RELEASE_RELIABLE_PREAMBLE_ENTRIES
     )
     if (
         normalized_claim_type == "preamble_definable"
@@ -167,7 +167,7 @@ def classify_claim_scope(
             required_primitives=required,
             theorem_shape_recommendation="theorem_stub_direct_closure",
             assumption_audit=audit,
-            reason="Preamble-backed claim uses the frozen Sprint 29 release surface with an authoritative theorem stub.",
+            reason="Preamble-backed claim uses the frozen alpha release surface with an authoritative theorem stub.",
         )
     if normalized_claim_type == "preamble_definable" and unknown_release_entries:
         return ScopeClassification(
@@ -178,7 +178,7 @@ def classify_claim_scope(
             theorem_shape_recommendation="planner_formalizer_supported_attempt",
             assumption_audit=audit,
             reason=(
-                "Preamble-backed claim uses entries outside the frozen Sprint 29 "
+                "Preamble-backed claim uses entries outside the frozen alpha "
                 f"release-reliable surface: {', '.join(unknown_release_entries)}."
             ),
         )

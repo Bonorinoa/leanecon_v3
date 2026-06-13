@@ -301,7 +301,7 @@ def test_formalizer_stub_authoritative_skips_llm_and_preserves_stub() -> None:
     assert RejectingDriver.calls == []
 
 
-def test_sprint28_release_reliable_claim_uses_preamble_template_before_llm() -> None:
+def test_release_reliable_claim_uses_preamble_template_before_llm() -> None:
     class RejectingDriver:
         calls: list[dict[str, object]] = []
 

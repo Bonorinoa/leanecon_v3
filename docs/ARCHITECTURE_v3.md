@@ -6,7 +6,7 @@
 > Integrity note (April 22, 2026): repository code, tests, and checked-in manifests override any overstated readiness or benchmark claims elsewhere in the docs.
 > Sprint 20 update (April 24, 2026): mathlib-native proving is now a first-class route. `mathlib_native_mode` gates preamble shortcuts, exposes `lean-lsp-mcp` tools to Leanstral, and records LSP/native-search usage in benchmark traces.
 > Sprint 24 update (April 27, 2026): The cumulative hybrid retrieval pipeline is described across §4A (Sprint 20 LSP surface + Sprint 22 LeanSearch merge) and §4B (Sprints 21–24: harness RAG, semantic embedding, seed expansion, enrichment, stall recovery, observable failures, rescue retrieval). Headline `tier2_frontier_mathlib_native` pass rate has held at 1/3 across Sprints 20–24 — the synthesis bottleneck is now isolated and the Sprint 25 work plan attacks it from the prover side.
-> Sprint 29 update (June 13, 2026): The alpha release denominator is frozen to `tier1_core_preamble_definable` scoped as `release_reliable`. `tier2_frontier_mathlib_native` and `tier2_frontier_preamble_definable` remain standard benchmark artifacts, but they are frontier/attempt surfaces and are excluded from `release_reliable_metrics`.
+> Alpha checkpoint update (June 13, 2026): The alpha release denominator is frozen to `tier1_core_preamble_definable` scoped as `release_reliable`. `tier2_frontier_mathlib_native` and `tier2_frontier_preamble_definable` remain standard benchmark artifacts, but they are frontier/attempt surfaces and are excluded from `release_reliable_metrics`.
 
 ## 1. High-Level Flow (Matches Your Hand-Drawn Sketch)
 ```
@@ -65,7 +65,7 @@ Python harness is deliberately minimal.
 - **src/planner/** — HILBERT informal reasoner (clarifying questions, textbook defaults, plan sketch). Uses strongest HF model.
 - **src/formalizer/** — Driver protocol (Leanstral / Goedel-Prover-V2 / future). Structured context builders (role-labeled: defs, lemmas, templates, tactic_hints). New semantic-frame faithfulness scorer.
 - **src/prover/** — Claim-type-aware prover. Preamble-definable claims use bounded direct closure against LeanEcon metadata. Mathlib-native claims enter `mathlib_native_mode`, cap preamble-style direct closure, and invoke bounded `lean-lsp-mcp` inspection/search before provider turns. APOLLO recursive decomposition remains available when the target has a real structural boundary.
-- **src/claim_scope.py** — Sprint 28 scope and failure classifier. It separates `release_reliable`, `supported_attempt`, `frontier_collect`, and `out_of_scope` claims, maps failed attempts to roadmap next actions, and produces frontier queue records for benchmark/local-gate artifacts.
+- **src/claim_scope.py** — Scope and failure classifier. It separates `release_reliable`, `supported_attempt`, `frontier_collect`, and `out_of_scope` claims, maps failed attempts to roadmap next actions, and produces frontier queue records for benchmark/local-gate artifacts.
 - **src/guardrails/** — Vacuity rejection, semantic faithfulness (new frame-based), compile check, repair history.
 - **src/memory/** — SQLite + vector index (episodic proof traces, successful/failed tactics, retrieval for Planner/Prover).
 - **src/observability/** — SSE streaming, typed progress events, cost tracking, tool budgets, provenance, `/health` + `/metrics`. Tool budgets now report total tool calls, LSP tool calls, native search attempts, and `mathlib_native_mode` uses.
@@ -101,7 +101,7 @@ Python harness is deliberately minimal.
 - **Job Store**: SQLite (async verification, SSE subscribers, review state).
 - **Memory**: SQLite + sentence-transformers embeddings (local or HF) for semantic retrieval of past traces.
 - **Preamble**: Lean source of truth + JSON metadata index (versioned, reproducible lake build).
-- **Benchmarks**: `evals/claim_sets/` + `benchmark_baselines/v3_alpha/` (pinned model SHAs, exact prompts). The Sprint 29 alpha release denominator is `tier1_core_preamble_definable` after scope classification as `release_reliable`; `tier2_frontier_preamble_definable` and `tier2_frontier_mathlib_native` remain frontier/attempt artifacts and do not count against release reliability.
+- **Benchmarks**: `evals/claim_sets/` + `benchmark_baselines/v3_alpha/` (pinned model SHAs, exact prompts). The alpha release denominator is `tier1_core_preamble_definable` after scope classification as `release_reliable`; `tier2_frontier_preamble_definable` and `tier2_frontier_mathlib_native` remain frontier/attempt artifacts and do not count against release reliability.
 
 ---
 
@@ -114,9 +114,9 @@ The prover receives `claim_type` from the benchmark manifest/formalization packe
 - `preamble_definable`: LeanEcon Preamble metadata and proven lemmas are trusted as the first search surface. Direct closure remains enabled up to the normal bounded cap.
 - `mathlib_native`: the prover sets `mathlib_native_mode=True`, disables Preamble-derived shortcut use, allows only a tiny compile-checked direct-close budget, and then uses `lean-lsp-mcp` to inspect the proof state and search Mathlib.
 
-Sprint 28 adds `claim_scope` alongside `claim_type`:
+The alpha contract carries `claim_scope` alongside `claim_type`:
 
-- `release_reliable`: preamble-backed claims on the frozen Sprint 29 surface with an authoritative benchmark theorem stub; these are counted in the reliable surface.
+- `release_reliable`: preamble-backed claims on the frozen release surface with an authoritative benchmark theorem stub; these are counted in the reliable surface.
 - `supported_attempt`: attemptable claims excluded from the release-reliable denominator.
 - `frontier_collect`: research/mathlib-native or missing-surface claims that should produce structured frontier records.
 - `out_of_scope`: broad claims outside the current LeanEcon release surface.

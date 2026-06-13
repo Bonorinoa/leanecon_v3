@@ -193,12 +193,12 @@ class Prover(
 
     @property
     def current_state(self) -> ProverState:
-        """Current Sprint 26 prover state for the mathlib-native harness."""
+        """Current strategic prover state for the mathlib-native harness."""
         return self._state_machine.current_state
 
     @property
     def current_state_config(self) -> StateConfig:
-        """Descriptive config for the current Sprint 26 prover state."""
+        """Execution config for the current strategic prover state."""
         return self._state_machine.get_current_config()
 
     def _reset_prover_state(self) -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from src.claim_scope import (
-    SPRINT29_RELEASE_RELIABLE_PREAMBLE_ENTRIES,
+    ALPHA_RELEASE_RELIABLE_PREAMBLE_ENTRIES,
     build_frontier_record,
     classify_claim_scope,
     classify_failure,
@@ -9,7 +9,7 @@ from src.claim_scope import (
 )
 
 
-def test_sprint28_scope_classifier_separates_release_reliable_from_mathlib_frontier() -> None:
+def test_scope_classifier_separates_release_reliable_from_mathlib_frontier() -> None:
     reliable = classify_claim_scope(
         raw_claim="A monotone real sequence bounded above converges.",
         claim_type="preamble_definable",
@@ -29,7 +29,7 @@ def test_sprint28_scope_classifier_separates_release_reliable_from_mathlib_front
     assert frontier.claim_type == "mathlib_native"
 
 
-def test_sprint29_scope_classifier_requires_frozen_release_surface_and_stub() -> None:
+def test_scope_classifier_requires_frozen_release_surface_and_stub() -> None:
     supported_without_stub = classify_claim_scope(
         raw_claim="A constrained maximizer is feasible.",
         claim_type="preamble_definable",
@@ -47,10 +47,10 @@ def test_sprint29_scope_classifier_requires_frozen_release_surface_and_stub() ->
     assert supported_without_stub.theorem_shape_recommendation == "theorem_stub_required_for_release"
     assert "authoritative theorem stub" in supported_without_stub.reason
     assert supported_unknown_entry.scope == "supported_attempt"
-    assert "outside the frozen Sprint 29" in supported_unknown_entry.reason
+    assert "outside the frozen alpha" in supported_unknown_entry.reason
 
 
-def test_sprint28_scope_classifier_marks_broad_missing_surface_out_of_scope() -> None:
+def test_scope_classifier_marks_broad_missing_surface_out_of_scope() -> None:
     classified = classify_claim_scope(
         raw_claim="Prove the full Arrow-Debreu existence theorem.",
         claim_type="mathlib_native",
@@ -60,7 +60,7 @@ def test_sprint28_scope_classifier_marks_broad_missing_surface_out_of_scope() ->
     assert "outside" in classified.reason
 
 
-def test_sprint28_failure_classifier_recommends_next_actions() -> None:
+def test_failure_classifier_recommends_next_actions() -> None:
     missing_definition = classify_failure(
         scope="frontier_collect",
         claim_type="preamble_definable",
@@ -81,7 +81,7 @@ def test_sprint28_failure_classifier_recommends_next_actions() -> None:
     assert proof_search.next_action == "improve_proof_search"
 
 
-def test_sprint28_frontier_record_contains_contract_fields() -> None:
+def test_frontier_record_contains_contract_fields() -> None:
     scope = classify_claim_scope(
         raw_claim="A monotone real sequence bounded above converges.",
         claim_type="mathlib_native",
@@ -113,7 +113,7 @@ def test_sprint28_frontier_record_contains_contract_fields() -> None:
     assert record["recommended_next_action"] == "add_retrieval_premise"
 
 
-def test_sprint28_metrics_by_scope_separates_reliable_and_frontier() -> None:
+def test_metrics_by_scope_separates_reliable_and_frontier() -> None:
     metrics = metrics_by_scope(
         [
             {"claim_scope": "release_reliable", "status": "verified"},
@@ -127,8 +127,8 @@ def test_sprint28_metrics_by_scope_separates_reliable_and_frontier() -> None:
     assert metrics["frontier_collect"]["claims_total"] == 1
 
 
-def test_sprint29_release_reliable_entry_set_is_frozen() -> None:
-    assert SPRINT29_RELEASE_RELIABLE_PREAMBLE_ENTRIES == frozenset(
+def test_alpha_release_reliable_entry_set_is_frozen() -> None:
+    assert ALPHA_RELEASE_RELIABLE_PREAMBLE_ENTRIES == frozenset(
         {
             "bellman_operator",
             "constrained_optimization",

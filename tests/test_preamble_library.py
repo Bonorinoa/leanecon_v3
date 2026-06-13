@@ -32,12 +32,12 @@ def test_sprint20_gap_queries_retrieve_new_entries() -> None:
     assert any(entry.name == "monotone_sequence" for entry, _score in sequence_hits[:5])
 
 
-def test_sprint28_every_registered_preamble_entry_has_existing_lean_file() -> None:
+def test_every_registered_preamble_entry_has_existing_lean_file() -> None:
     missing = [entry.name for entry in PREAMBLE_LIBRARY.values() if not entry.lean_path.exists()]
     assert missing == []
 
 
-def test_sprint28_registered_definitions_and_lemmas_are_in_lean_source() -> None:
+def test_registered_definitions_and_lemmas_are_in_lean_source() -> None:
     missing: list[tuple[str, str]] = []
     for entry in PREAMBLE_LIBRARY.values():
         source = entry.lean_path.read_text(encoding="utf-8")
@@ -48,7 +48,7 @@ def test_sprint28_registered_definitions_and_lemmas_are_in_lean_source() -> None
     assert missing == []
 
 
-def test_sprint28_metadata_json_files_are_accounted_for_by_registry() -> None:
+def test_metadata_json_files_are_accounted_for_by_registry() -> None:
     registry_by_id = {entry.name: entry for entry in PREAMBLE_LIBRARY.values()}
     metadata_paths = sorted((LEAN_WORKSPACE / "LeanEcon/Preamble").rglob("*.metadata.json"))
     assert metadata_paths
@@ -71,7 +71,7 @@ def test_sprint28_metadata_json_files_are_accounted_for_by_registry() -> None:
     assert mismatches == []
 
 
-def test_sprint28_metadata_json_lemmas_match_registry_or_source() -> None:
+def test_metadata_json_lemmas_match_registry_or_source() -> None:
     missing: list[tuple[str, str]] = []
     for entry in PREAMBLE_LIBRARY.values():
         metadata_path = entry.lean_path.with_suffix(".metadata.json")

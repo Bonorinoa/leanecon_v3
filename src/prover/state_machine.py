@@ -1,9 +1,8 @@
 """Minimal finite-state machine for the mathlib-native prover path.
 
-This module implements the Sprint 26 state set from
-``Sprint26_StateMachine_Design.md``. The state machine is intentionally small:
-it tracks the current strategic prover state, validates explicit transitions,
-and exposes state-specific configuration for later prompt/tool constraints.
+The state machine is intentionally small: it tracks the current strategic
+prover state, validates explicit transitions, and exposes state-specific
+configuration for prompt shaping and execution policy.
 """
 
 from __future__ import annotations
@@ -172,8 +171,7 @@ def get_state_config(state: ProverState) -> StateConfig:
 class StateMachine:
     """Validate and track prover state transitions.
 
-    The allowed transitions mirror the initial rules in the Sprint 26 design:
-    stalls move synthesis into recovery, rescue is a one-shot detour back to
+    Stalls move synthesis into recovery, rescue is a one-shot detour back to
     synthesis, verified/failed are terminal, and failure is allowed from any
     non-terminal state.
     """

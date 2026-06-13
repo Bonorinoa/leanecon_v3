@@ -1,121 +1,83 @@
-# Sprint 30 Plan: Redeployable Alpha Checkpoint
+# Sprint 30: Redeployable Alpha Checkpoint
 
-**Theme:** Publishable LeanEcon v3 alpha.  
-**Primary outcome:** A working system capable of advanced undergraduate mathematical economics within explicit scope boundaries.
+**Theme:** local release candidate first, hosted redeploy second.  
+**Primary outcome:** decide whether LeanEcon v3 alpha is ready to publish.
 
-## Goal
+## Starting Point
 
-Sprint 30 is the checkpoint for cleanup, release validation, and redeployment.
+The Sprint 26-29 working docs have been replaced by stable checkpoint docs:
 
-The core goal is:
+- `docs/ALPHA_CHECKPOINT.md`
+- `docs/ROADMAP_SPRINTS_30_35.md`
+- `docs/ARCHITECTURE_v3.md`
+- `docs/PROVER_STATE_MACHINE.md`
 
-> Ship an honest alpha, not a research prototype with inflated claims.
+The current release denominator is `tier1_core_preamble_definable` scoped as
+`release_reliable`. Frontier sets remain diagnostic and are excluded from
+release reliability.
 
-## Workstreams
+## Required Local Gates
 
-### 1. Final Audit
+Run these before any deployment work:
 
-Audit:
-
-- code quality,
-- API behavior,
-- docs,
-- benchmark artifacts,
-- release examples,
-- scope classification,
-- frontier data capture,
-- local deployment path.
-
-Target result:
-
-- no known critical mismatch between docs and behavior.
-
-### 2. Release Gate
-
-Required checks:
-
-- full Python tests,
-- Lean build,
-- deterministic CI smoke,
-- release benchmark,
-- local deployment smoke,
-- API health and metrics,
-- no accidental baseline mutation.
-
-Target result:
-
-- release decision is evidence-based.
-
-### 3. Polish And Commit
-
-Before redeployment:
-
-- remove stale generated files,
-- update changelog or engineering log,
-- ensure docs link to the right commands,
-- commit coherent changes,
-- push only after tests pass.
-
-Target result:
-
-- repository state is clean and explainable.
-
-### 4. Railway Redeploy
-
-Only after local gates pass:
-
-- recreate Railway service,
-- configure secrets,
-- validate `/health`,
-- validate `/metrics`,
-- run a small API proof smoke,
-- record deployment status and limitations.
-
-Target result:
-
-- hosted alpha exists and reflects the documented scope.
-
-## Sprint 30 Release Criteria
-
-LeanEcon v3 alpha is publishable if:
-
-- release-reliable undergraduate claims reach the agreed pass-rate target,
-- frontier claims are classified and collected separately,
-- failed release-reliable claims have clear failure classes,
-- API and local deployment are stable,
-- docs clearly state limitations,
-- hosted deployment passes smoke checks.
-
-## Sprint 30 Non-Goals
-
-- Do not make last-minute broad architecture changes.
-- Do not expand frontier capability to rescue release metrics.
-- Do not deploy if local gates are red.
-
-## Codex Goal Prompt Draft
-
-```text
-/goal Complete Sprint 30 redeployable alpha checkpoint for LeanEcon v3.
-
-Assume Sprints 27-29 are complete. Focus on final audit, release gates, cleanup, commit readiness, and Railway redeployment only if gates pass.
-
-Primary objectives:
-1. Run a final code/docs/benchmark/deployment audit.
-2. Run full tests, Lean build, deterministic CI smoke, release benchmark, and local deployment smoke.
-3. Fix only release-blocking issues; avoid broad new architecture work.
-4. Clean generated artifacts and prepare coherent commit-ready changes.
-5. If all gates pass, redeploy with Railway and validate health, metrics, and a small API proof smoke.
-6. Update docs with final alpha status, limitations, and deployment notes.
-
-Constraints:
-- Do not redeploy with failing local gates.
-- Do not count frontier claims against release-reliable pass rate.
-- Do not make undocumented provider or credential assumptions.
-
-Before final response:
-- Report exact commands run and outcomes.
-- Report release benchmark result by scope tier.
-- Report deployment URL only if Railway redeployment succeeds.
-- Report remaining limitations candidly.
+```bash
+./.venv/bin/python -m pytest -o addopts=''
+lake env lean LeanEcon.lean
+./.venv/bin/python -m evals.local_gate --claim-set tier1_core_preamble_definable --output-dir /private/tmp/leanecon-s30-tier1 --allow-unready
 ```
 
+Then run frontier diagnostics if the release gates are green:
+
+```bash
+./.venv/bin/python -m evals.local_gate --claim-set tier2_frontier_preamble_definable --output-dir /private/tmp/leanecon-s30-tier2-preamble --allow-unready
+./.venv/bin/python -m evals.local_gate --claim-set tier2_frontier_mathlib_native --output-dir /private/tmp/leanecon-s30-tier2-mathlib --allow-unready
+```
+
+Treat the full `lake build LeanEcon` as a release-image or infrastructure gate.
+It is too expensive and noisy to be the normal local edit-loop gate until Lake
+and Mathlib caching are improved.
+
+## Release Criteria
+
+LeanEcon v3 alpha is publishable when:
+
+- deterministic Python tests pass
+- the fast Lean root check passes
+- tier 1 release-reliable claims meet the agreed pass-rate target
+- release and frontier metrics are separated in outputs
+- frontier failures produce queue records with failure classes and next actions
+- API health, metrics, and bounded job behavior pass a local smoke test
+- docs clearly state scope, limits, and deployment status
+
+## Non-Goals
+
+- Do not broaden the release denominator to improve headline capability.
+- Do not count frontier claims against release reliability.
+- Do not do broad architecture rewrites.
+- Do not redeploy while local release gates are red.
+
+## Suggested Sprint 30 Goal Prompt
+
+```text
+/goal Complete the Sprint 30 local release-candidate audit for LeanEcon v3.
+
+Read docs/ALPHA_CHECKPOINT.md, docs/ROADMAP_SPRINTS_30_35.md,
+docs/ARCHITECTURE_v3.md, docs/PROVER_STATE_MACHINE.md, and this file.
+
+Objectives:
+1. Run deterministic Python tests, the fast Lean root check, and the tier1_core_preamble_definable local gate.
+2. If those pass, run tier2_frontier_preamble_definable and tier2_frontier_mathlib_native as diagnostics only.
+3. Inspect outputs for scope-separated metrics, frontier queue records, latency, timeout behavior, and generated-artifact hygiene.
+4. Fix only release-blocking bugs, severe documentation mismatches, or small maintainability issues.
+5. Run a local API smoke if the release gates are green.
+6. Report whether Railway redeploy should proceed or remain deferred.
+
+Constraints:
+- Do not expand the economics preamble.
+- Do not merge frontier claims into the release denominator.
+- Do not redeploy unless local gates justify it.
+- Treat full lake build as an infrastructure/release-image gate unless cache state makes it practical.
+
+Before final response, report exact commands, pass/fail results, output paths,
+release metrics by scope, frontier diagnostics, and remaining blockers.
+```

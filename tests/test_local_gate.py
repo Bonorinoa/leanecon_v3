@@ -7,7 +7,7 @@ from evals.benchmark_manifest import MANIFEST_PATH, build_manifest
 from evals.benchmark_manifest import classify_claim
 from evals.common import FRONTIER_BENCHMARK_CLAIM_SETS, load_claims
 from evals.local_gate import _combine_summaries, run_claim_set
-from src.claim_scope import SPRINT29_RELEASE_RELIABLE_PREAMBLE_ENTRIES
+from src.claim_scope import ALPHA_RELEASE_RELIABLE_PREAMBLE_ENTRIES
 from src.observability.models import ProviderCallMetadata
 from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, ParseCheck
 from src.planner import PlannerLLMResponse, PlannerService
@@ -878,7 +878,7 @@ def test_local_gate_limit_zero_defaults_to_temp_output(monkeypatch, tmp_path) ->
     assert all(output_dir == expected_output_dir for output_dir in output_dirs)
 
 
-def test_sprint28_local_gate_tier_scope_classification() -> None:
+def test_local_gate_tier_scope_classification() -> None:
     import evals.local_gate as local_gate_module
 
     reliable = local_gate_module._classify_gate_claim(
@@ -911,7 +911,7 @@ def test_sprint28_local_gate_tier_scope_classification() -> None:
     assert "frontier benchmark set" in supported_frontier_preamble.reason
 
 
-def test_sprint29_release_denominator_manifest_audit() -> None:
+def test_alpha_release_denominator_manifest_audit() -> None:
     import evals.local_gate as local_gate_module
 
     release_claims = load_claims("tier1_core_preamble_definable")
@@ -923,7 +923,7 @@ def test_sprint29_release_denominator_manifest_audit() -> None:
         assert str(claim.get("theorem_stub") or "").strip()
         preamble_names = [str(name) for name in claim.get("preamble_names") or [] if str(name).strip()]
         assert preamble_names
-        assert set(preamble_names) <= SPRINT29_RELEASE_RELIABLE_PREAMBLE_ENTRIES
+        assert set(preamble_names) <= ALPHA_RELEASE_RELIABLE_PREAMBLE_ENTRIES
 
         classified = local_gate_module._classify_gate_claim(
             claim_set="tier1_core_preamble_definable",
@@ -948,7 +948,7 @@ def test_sprint29_release_denominator_manifest_audit() -> None:
             assert classified.scope != "release_reliable"
 
 
-def test_sprint28_frontier_queue_written_to_explicit_output_dir(tmp_path) -> None:
+def test_frontier_queue_written_to_explicit_output_dir(tmp_path) -> None:
     import evals.local_gate as local_gate_module
 
     records = [

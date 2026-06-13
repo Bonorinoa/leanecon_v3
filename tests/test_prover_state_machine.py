@@ -1,4 +1,4 @@
-"""Sprint 26 tests for the minimal mathlib-native prover state machine."""
+"""Tests for the minimal mathlib-native prover state machine."""
 
 from __future__ import annotations
 
