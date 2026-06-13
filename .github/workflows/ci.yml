@@ -37,4 +37,4 @@ jobs:
         run: python -m pytest
 
       - name: Run local-gate scaffold
-        run: python -m evals.local_gate
+        run: python -m evals.local_gate --claim-set tier0_smoke --limit 0

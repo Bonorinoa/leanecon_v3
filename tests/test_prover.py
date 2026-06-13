@@ -222,6 +222,7 @@ async def test_prover_benchmark_mode_uses_direct_definable_closure_for_preamble_
         mistral_driver=ScriptedDriver({}),
         file_controller=ProofFileController(workspace_root=tmp_path),
         trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
     )
 
     result = await prover.prove(
@@ -293,6 +294,7 @@ async def test_prover_reports_no_progress_stall_for_unchanged_repl_state(
         mistral_driver=ScriptedDriver({}),
         file_controller=ProofFileController(workspace_root=tmp_path),
         trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
     )
 
     result = await prover.prove(
@@ -533,6 +535,7 @@ async def test_claim_type_awareness_logs_for_subgoals_and_theorem_body(
         mistral_driver=ScriptedDriver({}),
         file_controller=ProofFileController(workspace_root=tmp_path),
         trace_store=ProofTraceStore(tmp_path / "memory.db"),
+        lsp_client=FakeLSPClient(),
     )
 
     result = await prover.prove(
