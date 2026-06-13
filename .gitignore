@@ -8,6 +8,7 @@
 __pycache__/
 *.pyc
 lean_workspace/.lake/
+/lean_workspace.lock
 lean_workspace/LeanEcon/*-*-*-*-*.lean
 lean_workspace/LeanEcon/local_gate_*.lean
 lean_workspace/_v2_check_*.lean

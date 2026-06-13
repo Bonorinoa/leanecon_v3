@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import threading
 from typing import Any
@@ -27,6 +28,41 @@ class LeanLSPClient:
         self._request_id = 0
         self._started = False
         self._unavailable_reason: str | None = None
+
+    def status(self) -> dict[str, Any]:
+        """Return readiness without starting ``lean-lsp-mcp``."""
+        local_binary = PROJECT_ROOT / ".venv" / "bin" / "lean-lsp-mcp"
+        uvx_path = shutil.which("uvx")
+        binary = str(local_binary) if local_binary.exists() else "uvx lean-lsp-mcp"
+        binary_available = local_binary.exists() or uvx_path is not None
+        workspace_available = self.lean_project_path.exists()
+        process_running = self._process is not None and self._process.poll() is None
+        if self._unavailable_reason is not None:
+            state = "unavailable"
+            reason = self._unavailable_reason
+        elif process_running and self._started:
+            state = "ready"
+            reason = None
+        elif not workspace_available:
+            state = "unavailable"
+            reason = f"Lean workspace not found: {self.lean_project_path}"
+        elif not binary_available:
+            state = "unavailable"
+            reason = "lean-lsp-mcp is not installed and uvx is not available."
+        else:
+            state = "ready"
+            reason = None
+        return {
+            "name": "lean_lsp",
+            "state": state,
+            "binary": binary,
+            "binary_available": binary_available,
+            "workspace_available": workspace_available,
+            "available": state == "ready",
+            "benchmark_ready": state == "ready",
+            "reason": reason,
+            "process_running": process_running,
+        }
 
     def close(self) -> None:
         with self._lock:
@@ -284,4 +320,48 @@ class LeanLSPClient:
             return str(resolved)
 
 
-default_lean_lsp_client = LeanLSPClient()
+class NullLeanLSPClient:
+    """Explicit disabled Lean LSP client for deterministic unit/CI paths."""
+
+    def __init__(self, *, reason: str = "Lean LSP is disabled.") -> None:
+        self.reason = reason
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "name": "lean_lsp",
+            "state": "disabled",
+            "binary": None,
+            "binary_available": False,
+            "workspace_available": LEAN_WORKSPACE.exists(),
+            "available": False,
+            "benchmark_ready": False,
+            "reason": self.reason,
+            "process_running": False,
+        }
+
+    def close(self) -> None:
+        return None
+
+    def _raise(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise LeanLSPUnavailableError(self.reason)
+
+    lean_goal = _raise
+    lean_code_actions = _raise
+    lean_hover_info = _raise
+    lean_diagnostic_messages = _raise
+    lean_leansearch = _raise
+    lean_local_search = _raise
+    lean_file_outline = _raise
+    lean_loogle = _raise
+
+
+def build_default_lean_lsp_client() -> LeanLSPClient | NullLeanLSPClient:
+    mode = os.getenv("LEANECON_LEAN_LSP_MODE", "auto").strip().lower()
+    if mode in {"disabled", "off", "0", "false", "none"}:
+        return NullLeanLSPClient(
+            reason="Lean LSP disabled by LEANECON_LEAN_LSP_MODE."
+        )
+    return LeanLSPClient()
+
+
+default_lean_lsp_client = build_default_lean_lsp_client()

@@ -8,9 +8,10 @@ import pytest
 
 from src.memory.models import ProofTrace
 from src.observability.models import ProgressDelta, ProverStateTransition
-from src.prover.models import ProverTarget
+from src.prover.models import ProverAction, ProverTarget, ProverToolInvocation
 from src.prover.prover import Prover, ProverState, StateMachine, get_state_config
 from src.prover.synthesis import _build_prompt
+from src.prover.tactics import should_decompose
 from tests.test_prover import _packet
 
 
@@ -625,3 +626,101 @@ def test_decomposing_and_rescue_memory_use_narrow_helper_retrieval() -> None:
     assert rescue_examples[0]["trace_metadata"]["memory_kind"] == "mathlib_helper_lemma"
     assert store.helper_calls[0]["limit"] == 2
     assert store.helper_calls[1]["limit"] == 1
+
+
+def test_state_aware_tool_specs_follow_current_state_allowlist() -> None:
+    prover = Prover()
+    packet = _packet(
+        theorem_name="t",
+        claim="simple claim",
+        lean_code="theorem t : True := by trivial",
+        claim_type="mathlib_native",
+    )
+
+    prover._enter_mathlib_rescue_state(reason="unknown identifier")
+    tool_names = {spec["name"] for spec in prover._tool_specs_for_prompt(packet)}
+
+    assert tool_names == set(get_state_config(ProverState.Rescue).allowed_tools)
+
+
+def test_state_policy_blocks_disallowed_tool_before_budget_recording() -> None:
+    prover = Prover()
+    target = ProverTarget(
+        name="theorem_body",
+        statement="True",
+        kind="theorem_body",
+        helper_theorem_name="t",
+    )
+    packet = _packet(
+        theorem_name="t",
+        claim="simple claim",
+        lean_code="theorem t : True := by trivial",
+        claim_type="mathlib_native",
+    )
+
+    prover._enter_mathlib_rescue_state(reason="unknown identifier")
+    result = prover._execute_tool(
+        session=object(),  # type: ignore[arg-type]
+        tool=ProverToolInvocation(name="write_current_code", arguments={"code": ""}),
+        packet=packet,
+        target=target,
+    )
+
+    assert result.is_error is True
+    assert "state_policy_violation" in result.content
+    assert prover.budget_tracker.tool_history == []
+
+
+def test_state_max_tool_calls_blocks_allowed_tool_after_state_budget_spent() -> None:
+    prover = Prover()
+    target = ProverTarget(
+        name="theorem_body",
+        statement="True",
+        kind="theorem_body",
+        helper_theorem_name="t",
+    )
+    packet = _packet(
+        theorem_name="t",
+        claim="simple claim",
+        lean_code="theorem t : True := by trivial",
+        claim_type="mathlib_native",
+    )
+
+    prover._enter_mathlib_rescue_state(reason="unknown identifier")
+    prover.budget_tracker.tool_history.extend(["apply_tactic", "get_goals"])
+    prover.budget_tracker.total_tool_calls = 2
+    result = prover._execute_tool(
+        session=object(),  # type: ignore[arg-type]
+        tool=ProverToolInvocation(name="lean_leansearch", arguments={"query": "true"}),
+        packet=packet,
+        target=target,
+    )
+
+    assert result.is_error is True
+    assert "state_tool_budget_exhausted" in result.content
+    assert prover.budget_tracker.tool_history == ["apply_tactic", "get_goals"]
+
+
+def test_rescue_state_blocks_decomposition_gate() -> None:
+    prover = Prover()
+    prover._enter_mathlib_rescue_state(reason="unknown identifier")
+    action = ProverAction.model_validate(
+        {
+            "action_type": "decompose",
+            "rationale": "try a helper",
+            "decomposition_name": "helper",
+            "decomposition_statement": "True",
+        }
+    )
+
+    assert not prover._state_allows_decomposition(allow_decomposition=True)
+    assert not should_decompose(
+        failed_turns_for_target=2,
+        action=action,
+        allow_decomposition=prover._state_allows_decomposition(allow_decomposition=True),
+        current_depth=0,
+        total_extracted=0,
+        no_progress_streak=1,
+        direct_candidates_available=False,
+        max_recursion_depth=3,
+    )

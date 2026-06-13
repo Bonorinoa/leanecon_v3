@@ -15,7 +15,12 @@ from typing import Any
 
 import pytest
 
-from src.observability.lean_lsp_client import LeanLSPClient, LeanLSPUnavailableError
+from src.observability.lean_lsp_client import (
+    LeanLSPClient,
+    LeanLSPUnavailableError,
+    NullLeanLSPClient,
+    build_default_lean_lsp_client,
+)
 
 
 class _FakeProcess:
@@ -189,3 +194,37 @@ def test_extract_text_combines_text_chunks():
 def test_extract_text_returns_none_when_no_textual_content():
     assert LeanLSPClient._extract_text({"content": []}) is None
     assert LeanLSPClient._extract_text({}) is None
+
+
+def test_lsp_status_does_not_spawn_subprocess(monkeypatch, tmp_path):
+    def fail_popen(*_args, **_kwargs):
+        raise AssertionError("status() must not spawn lean-lsp-mcp")
+
+    monkeypatch.setattr("subprocess.Popen", fail_popen)
+    client = LeanLSPClient(lean_project_path=tmp_path)
+
+    status = client.status()
+
+    assert status["name"] == "lean_lsp"
+    assert status["state"] in {"ready", "unavailable"}
+    assert status["process_running"] is False
+
+
+def test_null_lsp_client_reports_disabled_and_raises():
+    client = NullLeanLSPClient(reason="disabled for test")
+
+    status = client.status()
+
+    assert status["state"] == "disabled"
+    assert status["available"] is False
+    with pytest.raises(LeanLSPUnavailableError, match="disabled for test"):
+        client.lean_leansearch("query")
+
+
+def test_default_lsp_client_can_be_disabled_by_env(monkeypatch):
+    monkeypatch.setenv("LEANECON_LEAN_LSP_MODE", "disabled")
+
+    client = build_default_lean_lsp_client()
+
+    assert isinstance(client, NullLeanLSPClient)
+    assert client.status()["state"] == "disabled"

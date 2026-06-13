@@ -13,6 +13,11 @@ STANDARD_BENCHMARK_CLAIM_SETS = (
     "tier2_frontier_mathlib_native",
     "tier2_frontier_preamble_definable",
 )
+RELEASE_RELIABLE_CLAIM_SETS = ("tier1_core_preamble_definable",)
+FRONTIER_BENCHMARK_CLAIM_SETS = (
+    "tier2_frontier_mathlib_native",
+    "tier2_frontier_preamble_definable",
+)
 LOCAL_GATE_DEFAULT_CLAIM_SETS = ("tier0_smoke", *STANDARD_BENCHMARK_CLAIM_SETS)
 LEGACY_HISTORICAL_CLAIM_SETS = ("tier1_core", "tier2_frontier")
 REGRESSION_CLAIM_SETS = ("prover_easy_definable",)

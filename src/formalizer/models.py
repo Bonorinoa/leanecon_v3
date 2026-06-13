@@ -44,6 +44,17 @@ class FormalizerContext(FormalizerModel):
     textbook_defaults: list[str] = Field(default_factory=list)
     planner_subgoals: list[str] = Field(default_factory=list)
     selected_preamble: list[str] = Field(default_factory=list)
+    claim_scope: Literal[
+        "release_reliable",
+        "supported_attempt",
+        "frontier_collect",
+        "out_of_scope",
+    ] = "supported_attempt"
+    claim_type: Literal["preamble_definable", "mathlib_native"] | None = None
+    required_primitives: list[str] = Field(default_factory=list)
+    theorem_shape_recommendation: str = ""
+    assumption_audit: list[str] = Field(default_factory=list)
+    scope_reason: str = ""
     imports: list[str] = Field(default_factory=list)
     open_statements: list[str] = Field(default_factory=list)
     preamble_entries: list[PreambleContextEntry] = Field(default_factory=list)
@@ -97,6 +108,17 @@ class FormalizationPacket(FormalizerModel):
     # Claim type is policy metadata for the prover, not a proof hint:
     # mathlib-native claims should not be closed by LeanEcon Preamble shortcuts.
     claim_type: Literal["preamble_definable", "mathlib_native"] | None = None
+    claim_scope: Literal[
+        "release_reliable",
+        "supported_attempt",
+        "frontier_collect",
+        "out_of_scope",
+    ] = "supported_attempt"
+    required_primitives: list[str] = Field(default_factory=list)
+    theorem_shape_recommendation: str = ""
+    assumption_audit: list[str] = Field(default_factory=list)
+    scope_reason: str = ""
+    formalization_source: Literal["theorem_stub", "preamble_template", "llm_generation"] = "llm_generation"
     imports: list[str] = Field(default_factory=list)
     selected_imports: list[str] = Field(default_factory=list)
     open_statements: list[str] = Field(default_factory=list)

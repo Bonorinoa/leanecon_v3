@@ -8,7 +8,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from evals.common import STANDARD_BENCHMARK_CLAIM_SETS, load_summary
+from evals.common import (
+    FRONTIER_BENCHMARK_CLAIM_SETS,
+    RELEASE_RELIABLE_CLAIM_SETS,
+    STANDARD_BENCHMARK_CLAIM_SETS,
+    load_summary,
+)
+from src.claim_scope import metrics_by_scope
 
 
 def _format_percent(value: float) -> str:
@@ -92,6 +98,42 @@ def _compute_retrieval_metrics(progress_jsonl: Path) -> dict[str, float]:
     }
 
 
+def _empty_scope_metrics() -> dict[str, dict[str, Any]]:
+    return {
+        scope: {"claims_total": 0, "claims_passed": 0, "claims_failed": 0, "pass_at_1": 0.0}
+        for scope in ("release_reliable", "supported_attempt", "frontier_collect", "out_of_scope")
+    }
+
+
+def _summary_scope_metrics(claim_set: str, summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    scoped = summary.get("metrics_by_scope")
+    if isinstance(scoped, dict) and any(
+        int((payload or {}).get("claims_total") or 0) > 0 for payload in scoped.values()
+    ):
+        return scoped
+    results = list(summary.get("results", []))
+    if any(result.get("claim_scope") for result in results if isinstance(result, dict)):
+        return metrics_by_scope(results)
+
+    fallback = _empty_scope_metrics()
+    total = int(summary.get("claims_total") or 0)
+    passed = int(summary.get("claims_passed") or 0)
+    failed = int(summary.get("claims_failed") or max(total - passed, 0))
+    if claim_set in RELEASE_RELIABLE_CLAIM_SETS:
+        target_scope = "release_reliable"
+    elif claim_set in FRONTIER_BENCHMARK_CLAIM_SETS:
+        target_scope = "frontier_collect"
+    else:
+        target_scope = "supported_attempt"
+    fallback[target_scope] = {
+        "claims_total": total,
+        "claims_passed": passed,
+        "claims_failed": failed,
+        "pass_at_1": round(passed / total, 6) if total else 0.0,
+    }
+    return fallback
+
+
 def load_benchmark_summaries(
     *,
     output_dir: Path | None = None,
@@ -116,6 +158,8 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
     tooling_rows: list[list[str]] = []
     latency_rows: list[list[str]] = []
     retrieval_rows: list[list[str]] = []
+    scope_rows: list[list[str]] = []
+    overall_scoped_metrics = _empty_scope_metrics()
     failure_counts: Counter[str] = Counter()
     failure_by_tier: dict[str, Counter[str]] = {}
 
@@ -168,6 +212,30 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
                 _format_percent(rm.get("enriched_leansearch_hit_rate", 0.0)),
             ]
         )
+        scoped_metrics = _summary_scope_metrics(claim_set, summary)
+        for scope_name, payload in scoped_metrics.items():
+            overall_payload = overall_scoped_metrics[scope_name]
+            overall_payload["claims_total"] += int((payload or {}).get("claims_total") or 0)
+            overall_payload["claims_passed"] += int((payload or {}).get("claims_passed") or 0)
+            overall_payload["claims_failed"] += int((payload or {}).get("claims_failed") or 0)
+        reliable = scoped_metrics.get("release_reliable", {})
+        frontier_total = sum(
+            int((scoped_metrics.get(scope) or {}).get("claims_total") or 0)
+            for scope in ("supported_attempt", "frontier_collect", "out_of_scope")
+        )
+        frontier_passed = sum(
+            int((scoped_metrics.get(scope) or {}).get("claims_passed") or 0)
+            for scope in ("supported_attempt", "frontier_collect", "out_of_scope")
+        )
+        scope_rows.append(
+            [
+                claim_set,
+                _format_percent(float(reliable.get("pass_at_1") or 0.0)),
+                f"{int(reliable.get('claims_passed') or 0)}/{int(reliable.get('claims_total') or 0)}",
+                _format_percent((frontier_passed / frontier_total) if frontier_total else 0.0),
+                f"{frontier_passed}/{frontier_total}",
+            ]
+        )
 
     overall_pass = (claims_passed / claims_total) if claims_total else 0.0
     overview_rows.append(
@@ -207,6 +275,28 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
         ]
     )
     all_results = [result for summary in summaries for result in summary.get("results", [])]
+    for payload in overall_scoped_metrics.values():
+        total = int(payload.get("claims_total") or 0)
+        passed = int(payload.get("claims_passed") or 0)
+        payload["pass_at_1"] = round(passed / total, 6) if total else 0.0
+    reliable = overall_scoped_metrics.get("release_reliable", {})
+    frontier_total = sum(
+        int((overall_scoped_metrics.get(scope) or {}).get("claims_total") or 0)
+        for scope in ("supported_attempt", "frontier_collect", "out_of_scope")
+    )
+    frontier_passed = sum(
+        int((overall_scoped_metrics.get(scope) or {}).get("claims_passed") or 0)
+        for scope in ("supported_attempt", "frontier_collect", "out_of_scope")
+    )
+    scope_rows.append(
+        [
+            "overall",
+            _format_percent(float(reliable.get("pass_at_1") or 0.0)),
+            f"{int(reliable.get('claims_passed') or 0)}/{int(reliable.get('claims_total') or 0)}",
+            _format_percent((frontier_passed / frontier_total) if frontier_total else 0.0),
+            f"{frontier_passed}/{frontier_total}",
+        ]
+    )
     tooling_rows.append(
         [
             "overall",
@@ -223,6 +313,8 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
         f"Source directory: `{source_dir}`",
         "",
         f"- Overall pass@1: {_format_percent(overall_pass)} ({claims_passed}/{claims_total})",
+        "- Release-reliable pass@1 is computed only from `release_reliable` scoped claims; "
+        "`supported_attempt`, `frontier_collect`, and `out_of_scope` claims are excluded from that denominator.",
         f"- Total estimated cost: {_format_usd(total_cost)}",
         "",
         "## Overview",
@@ -235,6 +327,19 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
         "## Average Latency By Stage",
         "",
         _render_markdown_table(["Claim Set", "Planner", "Formalizer", "Prover", "Total"], latency_rows),
+        "",
+        "## Scope-Separated Metrics",
+        "",
+        _render_markdown_table(
+            [
+                "Claim Set",
+                "Release-Reliable Pass@1",
+                "Release-Reliable Passed",
+                "Frontier/Attempt Pass@1",
+                "Frontier/Attempt Passed",
+            ],
+            scope_rows,
+        ),
         "",
         "## Tooling Observability",
         "",

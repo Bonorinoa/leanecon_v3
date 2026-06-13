@@ -92,6 +92,15 @@ class ProverResult(ProverModel):
     status: Literal["verified", "failed"]
     theorem_name: str = Field(min_length=1)
     claim: str = Field(min_length=1)
+    claim_scope: Literal[
+        "release_reliable",
+        "supported_attempt",
+        "frontier_collect",
+        "out_of_scope",
+    ] = "supported_attempt"
+    claim_type: Literal["preamble_definable", "mathlib_native"] | None = None
+    failure_class: str | None = None
+    recommended_next_action: str | None = None
     benchmark_mode: bool = False
     verified_via: Literal["full_pipeline", "trivial_shortcut"] = "full_pipeline"
     verified_code: str | None = None

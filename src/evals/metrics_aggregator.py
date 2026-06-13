@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from evals.common import STANDARD_BENCHMARK_CLAIM_SETS
+from src.claim_scope import metrics_by_scope, scope_counts
 from src.config import BENCHMARK_BASELINE_DIR
 
 HISTORY_FILENAME = "benchmark_history.jsonl"
@@ -102,6 +103,13 @@ def build_history_row(
         "schema_invalid_rate": _rate(_schema_invalid_count(all_results), len(all_results)),
         "schema_invalid_count": _schema_invalid_count(all_results),
         "claim_type_mix": _claim_type_mix(claim_set_summaries),
+        "claim_scope_counts": scope_counts(all_results),
+        "metrics_by_scope": metrics_by_scope(all_results),
+        "release_reliable_metrics": metrics_by_scope(all_results)["release_reliable"],
+        "frontier_metrics": {
+            key: metrics_by_scope(all_results)[key]
+            for key in ("supported_attempt", "frontier_collect", "out_of_scope")
+        },
         "bucket_breakdown": bucket_breakdown,
     }
 
@@ -169,6 +177,13 @@ def _claim_set_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
             "schema_invalid_rate": 0.0,
             "schema_invalid_count": 0,
             "claim_type_mix": {"preamble_definable": 0, "mathlib_native": 0},
+            "claim_scope_counts": {
+                "release_reliable": 0,
+                "supported_attempt": 0,
+                "frontier_collect": 0,
+                "out_of_scope": 0,
+            },
+            "metrics_by_scope": metrics_by_scope([]),
         }
     results = [dict(item) for item in summary.get("results", [])]
     claims_total = int(summary.get("claims_total") or len(results))
@@ -211,6 +226,8 @@ def _claim_set_metrics(summary: dict[str, Any] | None) -> dict[str, Any]:
         "schema_invalid_rate": _rate(_schema_invalid_count(results), claims_total),
         "schema_invalid_count": _schema_invalid_count(results),
         "claim_type_mix": _claim_type_mix([summary]),
+        "claim_scope_counts": scope_counts(results),
+        "metrics_by_scope": metrics_by_scope(results),
     }
 
 

@@ -13,18 +13,33 @@ import random
 import re
 import shutil
 import sys
+import tempfile
 import threading
 import time
 from typing import Any
 
 from evals.benchmark_manifest import build_claim_set_manifest, classify_claim
 from evals.common import (
+    FRONTIER_BENCHMARK_CLAIM_SETS,
     LOCAL_GATE_DEFAULT_CLAIM_SETS,
     append_progress_event,
     load_claims,
     reset_progress_log,
     write_progress_log,
     write_summary,
+)
+from src.claim_scope import (
+    FRONTIER_COLLECT,
+    FRONTIER_RECORD_SCHEMA_VERSION,
+    OUT_OF_SCOPE,
+    RELEASE_RELIABLE,
+    SUPPORTED_ATTEMPT,
+    ScopeClassification,
+    build_frontier_record,
+    classify_claim_scope,
+    classify_failure,
+    metrics_by_scope,
+    scope_counts,
 )
 from src.backend_capabilities import get_backend_capability
 from src.config import BENCHMARK_BASELINE_DIR, BENCHMARK_REQUIRE_PRICING, PROVER_PROVIDER
@@ -294,6 +309,22 @@ class _TerminalReporter:
             self._emit(_render_table(["Failure code", "Count"], failure_rows))
         else:
             self._emit("Failures: none")
+        scoped = summary.get("metrics_by_scope") or {}
+        if scoped:
+            scope_rows = [
+                [
+                    scope_name,
+                    _format_ratio(
+                        int((payload or {}).get("claims_passed") or 0),
+                        int((payload or {}).get("claims_total") or 0),
+                    ),
+                ]
+                for scope_name, payload in scoped.items()
+            ]
+            self._emit(_render_table(["Scope", "Pass@1"], scope_rows))
+        frontier_path = summary.get("frontier_queue_path")
+        if frontier_path:
+            self._emit(f"Frontier queue: {frontier_path}")
 
     def combined_completed(self, summary: dict[str, Any], output_path: Path) -> None:
         self.section("[local_gate] combined")
@@ -504,6 +535,84 @@ def _accumulate_failure(error_code: str | None, failure_counts: dict[str, int]) 
     if not error_code:
         return
     failure_counts[error_code] = failure_counts.get(error_code, 0) + 1
+
+
+def _classify_gate_claim(
+    *,
+    claim_set: str,
+    raw_claim: str,
+    claim_bucket: str,
+    preamble_names: list[str],
+    theorem_stub: str | None,
+) -> ScopeClassification:
+    claim_type = claim_bucket if claim_bucket in {"preamble_definable", "mathlib_native"} else None
+    scope = classify_claim_scope(
+        raw_claim=raw_claim,
+        claim_type=claim_type,
+        selected_preamble_entries=preamble_names,
+        theorem_stub_present=bool(theorem_stub and theorem_stub.strip()),
+    )
+    if claim_set in FRONTIER_BENCHMARK_CLAIM_SETS and scope.scope == RELEASE_RELIABLE:
+        return ScopeClassification(
+            scope=SUPPORTED_ATTEMPT if claim_type == "preamble_definable" else FRONTIER_COLLECT,
+            claim_type=scope.claim_type,
+            selected_preamble_entries=scope.selected_preamble_entries,
+            required_primitives=scope.required_primitives,
+            theorem_shape_recommendation=scope.theorem_shape_recommendation,
+            assumption_audit=scope.assumption_audit,
+            reason="Claim belongs to a frontier benchmark set and is excluded from release-reliable metrics.",
+        )
+    return scope
+
+
+def _parse_success_from_result(result: dict[str, Any]) -> bool | None:
+    parse_check = result.get("parse_check")
+    if isinstance(parse_check, dict) and "success" in parse_check:
+        return bool(parse_check.get("success"))
+    return None
+
+
+def _frontier_records_from_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for result in results:
+        scope = str(result.get("claim_scope") or "")
+        if result.get("status") == "verified" and scope not in {FRONTIER_COLLECT, OUT_OF_SCOPE}:
+            continue
+        failure = {
+            "failure_class": result.get("failure_class"),
+            "next_action": result.get("recommended_next_action"),
+            "reason": result.get("failure_reason"),
+        }
+        records.append(
+            build_frontier_record(
+                raw_claim=str(result.get("raw_claim") or ""),
+                claim_id=str(result.get("id") or ""),
+                scope={
+                    "scope": scope,
+                    "claim_type": result.get("claim_type"),
+                    "selected_preamble_entries": result.get("selected_preamble") or [],
+                    "required_primitives": result.get("required_primitives") or [],
+                    "theorem_shape_recommendation": result.get("theorem_shape_recommendation"),
+                    "assumption_audit": result.get("assumption_audit") or [],
+                    "reason": result.get("scope_reason"),
+                },
+                claim_type=result.get("claim_type"),
+                status=str(result.get("status") or ""),
+                lean_statement=result.get("theorem_stub_reference") or result.get("lean_statement"),
+                parse_success=_parse_success_from_result(result),
+                proof_result=str(result.get("termination_reason") or result.get("status") or ""),
+                failure=failure,
+            )
+        )
+    return records
+
+
+def _write_frontier_queue(name: str, records: list[dict[str, Any]], output_dir: Path) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"{name}.frontier_queue.jsonl"
+    lines = [json.dumps(record, sort_keys=True) for record in records]
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return path
 
 
 def _trace_events_from_result(prove_result: ProverResult) -> list[dict[str, Any]]:
@@ -983,6 +1092,7 @@ async def _run_claim_set_async(
             )
         return {
             "claim_set": claim_set,
+            "artifact_schema_version": FRONTIER_RECORD_SCHEMA_VERSION,
             "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
             "benchmark_mode": benchmark_mode,
             "target_timeouts": target_timeouts.model_dump(mode="json"),
@@ -1016,9 +1126,18 @@ async def _run_claim_set_async(
         theorem_stub = claim.get("theorem_stub")
         preamble_names_raw = claim.get("preamble_names") or []
         preamble_names = [str(name) for name in preamble_names_raw if str(name).strip()]
+        scope = _classify_gate_claim(
+            claim_set=claim_set,
+            raw_claim=raw_claim,
+            claim_bucket=claim_bucket,
+            preamble_names=preamble_names,
+            theorem_stub=theorem_stub,
+        )
+        claim_type = scope.claim_type
         planner_usage: dict[str, Any] | None = None
         formalizer_usage: dict[str, Any] | None = None
         prover_usage: dict[str, Any] | None = None
+        formalize_result: Any | None = None
         planner_schema_invalid = False
         raw_planner_response: str | None = None
         failure_code: str | None = None
@@ -1091,6 +1210,16 @@ async def _run_claim_set_async(
                     {
                         "id": claim_id,
                         "benchmark_bucket": claim_bucket,
+                        "claim_scope": scope.scope,
+                        "claim_type": claim_type,
+                        "selected_preamble": list(scope.selected_preamble_entries),
+                        "required_primitives": list(scope.required_primitives),
+                        "theorem_shape_recommendation": scope.theorem_shape_recommendation,
+                        "assumption_audit": list(scope.assumption_audit),
+                        "scope_reason": scope.reason,
+                        "failure_class": None,
+                        "recommended_next_action": None,
+                        "failure_reason": None,
                         "status": result_status,
                         "termination_reason": termination_reason,
                         "failure_code": failure_code,
@@ -1193,18 +1322,20 @@ async def _run_claim_set_async(
                     message="Prover started.",
                     metadata={
                         "benchmark_mode": benchmark_mode,
-                        "claim_type": claim_bucket
-                        if claim_bucket in {"preamble_definable", "mathlib_native"}
-                        else None,
-                        "mathlib_native_mode": claim_bucket == "mathlib_native",
+                        "claim_scope": scope.scope,
+                        "claim_type": claim_type,
+                        "mathlib_native_mode": claim_type == "mathlib_native",
                     },
                 )
             )
             prover_packet = formalize_result.payload.model_copy(
                 update={
-                    "claim_type": claim_bucket
-                    if claim_bucket in {"preamble_definable", "mathlib_native"}
-                    else None,
+                    "claim_type": claim_type,
+                    "claim_scope": scope.scope,
+                    "required_primitives": list(scope.required_primitives),
+                    "theorem_shape_recommendation": scope.theorem_shape_recommendation,
+                    "assumption_audit": list(scope.assumption_audit),
+                    "scope_reason": scope.reason,
                     "planner_plan_paragraph": plan_result.payload.plan_paragraph,
                     "planner_textbook_defaults": list(
                         plan_result.payload.textbook_defaults
@@ -1345,14 +1476,49 @@ async def _run_claim_set_async(
             cost_by_model=cost_by_model,
         )
         _accumulate_failure(failure_code, failure_counts)
+        parse_check_payload = None
+        formalization_source = None
+        lean_statement = None
+        if formalize_result is not None:
+            payload = getattr(formalize_result, "payload", None)
+            if payload is not None:
+                parse_check_payload = payload.parse_check.model_dump(mode="json")
+                formalization_source = payload.formalization_source
+                lean_statement = payload.theorem_with_sorry
+        failure = classify_failure(
+            scope=scope.scope,
+            claim_type=claim_type,
+            status=result_status,
+            failure_code=failure_code,
+            termination_reason=termination_reason,
+            selected_preamble_entries=scope.selected_preamble_entries,
+            parse_success=(
+                bool(parse_check_payload.get("success"))
+                if isinstance(parse_check_payload, dict)
+                else None
+            ),
+        )
         results.append(
             {
                 "id": claim_id,
                 "benchmark_bucket": claim_bucket,
+                "claim_scope": scope.scope,
+                "claim_type": claim_type,
+                "selected_preamble": list(scope.selected_preamble_entries),
+                "required_primitives": list(scope.required_primitives),
+                "theorem_shape_recommendation": scope.theorem_shape_recommendation,
+                "assumption_audit": list(scope.assumption_audit),
+                "scope_reason": scope.reason,
+                "failure_class": failure.failure_class,
+                "recommended_next_action": failure.next_action,
+                "failure_reason": failure.reason,
                 "status": result_status,
                 "termination_reason": termination_reason,
                 "failure_code": failure_code,
                 "theorem_name": theorem_name,
+                "lean_statement": lean_statement,
+                "parse_check": parse_check_payload,
+                "formalization_source": formalization_source,
                 "raw_claim": raw_claim,
                 "benchmark_mode": benchmark_mode,
                 "verified_via": verified_via,
@@ -1434,8 +1600,10 @@ async def _run_claim_set_async(
     prover_state_transitions = _prover_state_transition_payloads(results)
     synthesis_events = _synthesis_event_payloads(results)
     synthesis_counts = _synthesis_event_counts(results)
+    frontier_records = _frontier_records_from_results(results)
     return {
         "claim_set": claim_set,
+        "artifact_schema_version": FRONTIER_RECORD_SCHEMA_VERSION,
         "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
         "benchmark_mode": benchmark_mode,
         "target_timeouts": target_timeouts.model_dump(mode="json"),
@@ -1446,6 +1614,13 @@ async def _run_claim_set_async(
         "claims_passed": claims_passed,
         "claims_failed": claims_total - claims_passed,
         "pass_at_1": round(claims_passed / claims_total, 6) if claims_total else 0.0,
+        "claim_scope_counts": scope_counts(results),
+        "metrics_by_scope": metrics_by_scope(results),
+        "release_reliable_metrics": metrics_by_scope(results)[RELEASE_RELIABLE],
+        "frontier_metrics": {
+            scope_name: metrics_by_scope(results)[scope_name]
+            for scope_name in (SUPPORTED_ATTEMPT, FRONTIER_COLLECT, OUT_OF_SCOPE)
+        },
         "average_tool_calls": average_tool_calls,
         "average_lsp_tool_calls": average_lsp_tool_calls,
         "average_native_search_attempts": average_native_search_attempts,
@@ -1473,6 +1648,7 @@ async def _run_claim_set_async(
         "cost_by_stage": cost_by_stage,
         "cost_by_model": cost_by_model,
         "failure_counts": failure_counts,
+        "frontier_records": frontier_records,
         "results": results,
     }
 
@@ -1547,6 +1723,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     benchmark_mode = any(bool(summary.get("benchmark_mode")) for summary in summaries)
     target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
     all_results = [result for summary in summaries for result in summary.get("results", [])]
+    combined_scope_metrics = metrics_by_scope(all_results)
     average_tool_calls = (
         round(sum(int(item.get("tool_calls") or 0) for item in all_results) / len(all_results), 3)
         if all_results
@@ -1577,6 +1754,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     synthesis_counts = _synthesis_event_counts(all_results)
     return {
         "claim_set": "local_gate",
+        "artifact_schema_version": FRONTIER_RECORD_SCHEMA_VERSION,
         "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
         "benchmark_mode": benchmark_mode,
         "target_timeouts": target_timeouts.model_dump(mode="json"),
@@ -1585,6 +1763,13 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "claims_passed": claims_passed,
         "claims_failed": claims_total - claims_passed,
         "pass_at_1": round(claims_passed / claims_total, 6) if claims_total else 0.0,
+        "claim_scope_counts": scope_counts(all_results),
+        "metrics_by_scope": combined_scope_metrics,
+        "release_reliable_metrics": combined_scope_metrics[RELEASE_RELIABLE],
+        "frontier_metrics": {
+            scope_name: combined_scope_metrics[scope_name]
+            for scope_name in (SUPPORTED_ATTEMPT, FRONTIER_COLLECT, OUT_OF_SCOPE)
+        },
         "average_tool_calls": average_tool_calls,
         "average_lsp_tool_calls": average_lsp_tool_calls,
         "average_native_search_attempts": average_native_search_attempts,
@@ -1615,6 +1800,7 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "cost_by_model": cost_by_model,
         "failure_counts": failure_counts,
         "benchmark_category_mix": benchmark_category_mix,
+        "frontier_records": _frontier_records_from_results(all_results),
         "claim_sets": summaries,
     }
 
@@ -1639,9 +1825,14 @@ def main(argv: list[str] | None = None) -> int:
         item.strip() for item in (args.claim_sets or "").split(",") if item.strip()
     )
     selected = tuple(args.claim_set or selected_from_csv or CLAIM_SETS)
-    output_dir = args.output_dir or (
-        BENCHMARK_BASELINE_DIR / ("benchmark_mode" if args.benchmark_mode else "live_pipeline")
-    )
+    if args.output_dir is not None:
+        output_dir = args.output_dir
+    elif args.limit == 0:
+        output_dir = Path(tempfile.gettempdir()) / "leanecon-local-gate-scaffold"
+    else:
+        output_dir = BENCHMARK_BASELINE_DIR / (
+            "benchmark_mode" if args.benchmark_mode else "live_pipeline"
+        )
     reporter = _TerminalReporter()
     summaries: list[dict[str, Any]] = []
     for claim_set in selected:
@@ -1671,9 +1862,21 @@ def main(argv: list[str] | None = None) -> int:
         ]
         progress_path = write_progress_log(summary["claim_set"], progress_events, output_dir)
         summary["progress_log_path"] = str(progress_path)
+        frontier_path = _write_frontier_queue(
+            str(summary["claim_set"]),
+            list(summary.get("frontier_records") or []),
+            output_dir,
+        )
+        summary["frontier_queue_path"] = str(frontier_path)
         path = write_summary(summary["claim_set"], summary, output_dir)
         reporter.claim_set_completed(summary, path)
     combined = _combine_summaries(summaries)
+    combined_frontier_path = _write_frontier_queue(
+        "local_gate",
+        list(combined.get("frontier_records") or []),
+        output_dir,
+    )
+    combined["frontier_queue_path"] = str(combined_frontier_path)
     combined_path = write_summary("local_gate", combined, output_dir)
     combined_progress_events = [
         event

@@ -28,6 +28,7 @@ from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerContext, PlannerLLMResponse, PlannerPacket, slugify_claim
 from src.planner.prompts import build_system_prompt, build_user_prompt
 from src.planner.retrieval import PlannerRetrievalService, TextEmbedder
+from src.claim_scope import classify_claim_scope
 from src.providers import normalize_huggingface_provider
 from src.utils.json_extraction import extract_json_object
 
@@ -864,6 +865,18 @@ class Planner:
         subgoals = _dedupe_subgoals(
             _fallback_subgoals(claim, context, theorem_stub=theorem_stub) if upgraded_subgoals else response.subgoals
         )[:3]
+        selected_preamble_names = [hit.name for hit in context.selected_preamble]
+        inferred_claim_type = (
+            "preamble_definable"
+            if selected_preamble_names or theorem_stub or preamble_names
+            else None
+        )
+        scope = classify_claim_scope(
+            raw_claim=claim,
+            claim_type=inferred_claim_type,
+            selected_preamble_entries=selected_preamble_names or preamble_names or [],
+            theorem_stub_present=bool(theorem_stub and theorem_stub.strip()),
+        )
         return (
             PlannerPacket(
                 claim=claim,
@@ -878,6 +891,12 @@ class Planner:
                 model=self.backend.model or PLANNER_MODEL,
                 selected_preamble=context.selected_preamble,
                 few_shot_traces=context.few_shot_traces,
+                claim_scope=scope.scope,
+                claim_type=scope.claim_type,
+                required_primitives=list(scope.required_primitives),
+                theorem_shape_recommendation=scope.theorem_shape_recommendation,
+                assumption_audit=list(scope.assumption_audit),
+                scope_reason=scope.reason,
             ),
             metadata,
         )

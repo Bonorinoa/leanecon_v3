@@ -31,6 +31,14 @@ class FormalizerContextBuilder:
             textbook_defaults=list(planner_packet.textbook_defaults) if planner_packet else [],
             planner_subgoals=list(planner_packet.subgoals) if planner_packet else [],
             selected_preamble=[entry.name for entry in entries],
+            claim_scope=planner_packet.claim_scope if planner_packet else "supported_attempt",
+            claim_type=planner_packet.claim_type if planner_packet else None,
+            required_primitives=list(planner_packet.required_primitives) if planner_packet else [],
+            theorem_shape_recommendation=(
+                planner_packet.theorem_shape_recommendation if planner_packet else ""
+            ),
+            assumption_audit=list(planner_packet.assumption_audit) if planner_packet else [],
+            scope_reason=planner_packet.scope_reason if planner_packet else "",
             imports=build_preamble_imports(entries),
             open_statements=[],
             preamble_entries=[self._entry_context(entry) for entry in entries],

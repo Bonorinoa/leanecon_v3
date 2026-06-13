@@ -1,7 +1,13 @@
 """Observability exports."""
 
 from .errors import StageExecutionError, classify_exception
-from .lean_lsp_client import LeanLSPClient, LeanLSPUnavailableError, default_lean_lsp_client
+from .lean_lsp_client import (
+    LeanLSPClient,
+    LeanLSPUnavailableError,
+    NullLeanLSPClient,
+    build_default_lean_lsp_client,
+    default_lean_lsp_client,
+)
 from .logging import log_event
 from .models import (
     AuditEvent,
@@ -45,6 +51,7 @@ __all__ = [
     "CandidateTacticEvent",
     "LeanLSPClient",
     "LeanLSPUnavailableError",
+    "NullLeanLSPClient",
     "LeanSearchFailureEvent",
     "PremiseResolutionEvent",
     "ProgressDelta",
@@ -63,6 +70,7 @@ __all__ = [
     "classify_exception",
     "complete_usage",
     "build_progress_event",
+    "build_default_lean_lsp_client",
     "default_lean_lsp_client",
     "dominant_failure_class",
     "dump_pricing_registry",

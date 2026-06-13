@@ -7,6 +7,13 @@ from evals.aggregate_benchmarks import build_markdown_report, load_benchmark_sum
 
 
 def _write_summary(path: Path, *, claim_set: str, passed: int, total: int, failures: dict[str, int]) -> None:
+    scope = (
+        "release_reliable"
+        if claim_set == "tier1_core_preamble_definable"
+        else "frontier_collect"
+        if claim_set == "tier2_frontier_mathlib_native"
+        else "supported_attempt"
+    )
     path.write_text(
         json.dumps(
             {
@@ -21,6 +28,8 @@ def _write_summary(path: Path, *, claim_set: str, passed: int, total: int, failu
                 "failure_counts": failures,
                 "results": [
                     {
+                        "claim_scope": scope,
+                        "status": "verified" if index < passed else "failed",
                         "timing_breakdown": {
                             "planner_ms": 1000.0,
                             "formalizer_ms": 2000.0,
@@ -28,7 +37,7 @@ def _write_summary(path: Path, *, claim_set: str, passed: int, total: int, failu
                             "total_ms": 6000.0,
                         }
                     }
-                    for _ in range(total)
+                    for index in range(total)
                 ],
             },
             indent=2,
@@ -67,8 +76,14 @@ def test_build_markdown_report_includes_overview_latency_and_failures(tmp_path) 
     assert "# Benchmark Summary" in report
     assert "## Overview" in report
     assert "## Average Latency By Stage" in report
+    assert "## Scope-Separated Metrics" in report
     assert "## Failure Breakdown" in report
+    assert (
+        "- Release-reliable pass@1 is computed only from `release_reliable` scoped claims"
+        in report
+    )
     assert "| Claim Set | Generated At | Pass@1 | Passed | Failed | Cost USD | File |" in report
+    assert "| overall | 50.0% | 1/2 | 0.0% | 0/2 |" in report
     assert (
         "| Failure Code | tier1_core_preamble_definable | tier2_frontier_mathlib_native | "
         "tier2_frontier_preamble_definable | Total |"

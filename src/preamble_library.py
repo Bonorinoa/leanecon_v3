@@ -152,6 +152,10 @@ _register(
             "concepts": ["monotone_sequence", "bounded_sequence", "convergence"],
             "textbook_source": "MWG App. M",
             "status": "proven",
+            "theorem_template": (
+                "∀ {u : ℕ → ℝ}, Monotone u → BddAbove (Set.range u) → "
+                "∃ l, Filter.Tendsto u Filter.atTop (nhds l)"
+            ),
             "tactic_hints": ["exact monotone_boundedAbove_converges hu_mono hu_bdd"],
             "related": ["topological_space", "fixed_point_theorem"],
         },
@@ -221,6 +225,10 @@ _register(
             "concepts": ["constrained_optimization", "feasible_set", "argmax_certificate"],
             "textbook_source": "MWG Ch. 3",
             "status": "proven",
+            "theorem_template": (
+                "∀ {α : Type*} {f : α → ℝ} {feasible : Set α} {x y : α}, "
+                "IsConstrainedMaximum f feasible x → y ∈ feasible → f y ≤ f x"
+            ),
             "tactic_hints": [
                 "exact hx.1",
                 "exact hx.2 hy",
@@ -454,6 +462,12 @@ _register(
             "concepts": ["best_response", "normal_form_game", "strategic_optimality"],
             "textbook_source": "MWG Ch. 8",
             "status": "proven",
+            "theorem_template": (
+                "∀ {Opponent Action : Type*} {payoff : Opponent → Action → ℝ} "
+                "{opponents : Opponent} {action : Action}, "
+                "IsBestResponse payoff opponents action → ∀ alternative, "
+                "payoff opponents alternative ≤ payoff opponents action"
+            ),
             "tactic_hints": [
                 "exact h alternative",
                 "exact IsBestResponse.payoff_le h alternative",

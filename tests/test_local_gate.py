@@ -4,7 +4,10 @@ import json
 from types import SimpleNamespace
 
 from evals.benchmark_manifest import MANIFEST_PATH, build_manifest
+from evals.benchmark_manifest import classify_claim
+from evals.common import FRONTIER_BENCHMARK_CLAIM_SETS, load_claims
 from evals.local_gate import _combine_summaries, run_claim_set
+from src.claim_scope import SPRINT29_RELEASE_RELIABLE_PREAMBLE_ENTRIES
 from src.observability.models import ProviderCallMetadata
 from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, ParseCheck
 from src.planner import PlannerLLMResponse, PlannerService
@@ -400,6 +403,7 @@ def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
     )
 
     assert summary["executed"] is True
+    assert summary["artifact_schema_version"] == 1
     assert summary["benchmark_mode"] is True
     assert summary["claims_total"] == 3
     assert summary["claims_passed"] == 3
@@ -830,3 +834,138 @@ def test_local_gate_main_emits_readable_terminal_summary(monkeypatch, tmp_path, 
     assert len(history_rows) == 1
     assert history_rows[0]["row_id"] == "run_000001"
     assert "tier1_core_preamble_definable" in history_rows[0]["bucket_breakdown"]
+
+
+def test_local_gate_limit_zero_defaults_to_temp_output(monkeypatch, tmp_path) -> None:
+    import evals.local_gate as local_gate_module
+
+    output_dirs: list[object] = []
+    expected_output_dir = tmp_path / "leanecon-local-gate-scaffold"
+    summary = {
+        "claim_set": "tier0_smoke",
+        "benchmark_mode": True,
+        "mode": "benchmark_pipeline",
+        "generated_at": "2026-06-13T00:00:00+00:00",
+        "claims_total": 0,
+        "claims_passed": 0,
+        "claims_failed": 0,
+        "pass_at_1": 0.0,
+        "executed": True,
+        "readiness": {"ready": True, "blockers": [], "checks": {}},
+        "tokens_by_stage": {},
+        "cost_by_stage": {},
+        "cost_by_model": {},
+        "failure_counts": {},
+        "claim_set_manifest": {"bucket_counts": {}},
+        "results": [],
+    }
+
+    monkeypatch.setattr(local_gate_module.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(local_gate_module, "reset_progress_log", lambda *_args: expected_output_dir)
+    monkeypatch.setattr(local_gate_module, "write_progress_log", lambda *_args: expected_output_dir)
+    monkeypatch.setattr(
+        local_gate_module,
+        "write_summary",
+        lambda _name, _payload, output_dir=None: output_dirs.append(output_dir)
+        or expected_output_dir,
+    )
+    monkeypatch.setattr(local_gate_module, "run_claim_set", lambda *args, **kwargs: dict(summary))
+
+    exit_code = local_gate_module.main(["--claim-set", "tier0_smoke", "--limit", "0"])
+
+    assert exit_code == 0
+    assert output_dirs
+    assert all(output_dir == expected_output_dir for output_dir in output_dirs)
+
+
+def test_sprint28_local_gate_tier_scope_classification() -> None:
+    import evals.local_gate as local_gate_module
+
+    reliable = local_gate_module._classify_gate_claim(
+        claim_set="tier1_core_preamble_definable",
+        raw_claim="A constrained maximum weakly dominates every feasible alternative.",
+        claim_bucket="preamble_definable",
+        preamble_names=["constrained_optimization"],
+        theorem_stub="theorem demo : True := by\n  sorry\n",
+    )
+    frontier = local_gate_module._classify_gate_claim(
+        claim_set="tier2_frontier_mathlib_native",
+        raw_claim="A compact continuous function attains a maximum.",
+        claim_bucket="mathlib_native",
+        preamble_names=[],
+        theorem_stub=None,
+    )
+
+    assert reliable.scope == "release_reliable"
+    assert reliable.claim_type == "preamble_definable"
+    assert frontier.scope == "frontier_collect"
+    assert frontier.claim_type == "mathlib_native"
+    supported_frontier_preamble = local_gate_module._classify_gate_claim(
+        claim_set="tier2_frontier_preamble_definable",
+        raw_claim="A constrained maximum weakly dominates every feasible alternative.",
+        claim_bucket="preamble_definable",
+        preamble_names=["constrained_optimization"],
+        theorem_stub="theorem demo : True := by\n  sorry\n",
+    )
+    assert supported_frontier_preamble.scope == "supported_attempt"
+    assert "frontier benchmark set" in supported_frontier_preamble.reason
+
+
+def test_sprint29_release_denominator_manifest_audit() -> None:
+    import evals.local_gate as local_gate_module
+
+    release_claims = load_claims("tier1_core_preamble_definable")
+    assert release_claims
+
+    for claim in release_claims:
+        assert claim.get("expected_category") == "DEFINABLE"
+        assert classify_claim(claim) == "preamble_definable"
+        assert str(claim.get("theorem_stub") or "").strip()
+        preamble_names = [str(name) for name in claim.get("preamble_names") or [] if str(name).strip()]
+        assert preamble_names
+        assert set(preamble_names) <= SPRINT29_RELEASE_RELIABLE_PREAMBLE_ENTRIES
+
+        classified = local_gate_module._classify_gate_claim(
+            claim_set="tier1_core_preamble_definable",
+            raw_claim=str(claim["raw_claim"]),
+            claim_bucket=classify_claim(claim),
+            preamble_names=preamble_names,
+            theorem_stub=str(claim.get("theorem_stub") or ""),
+        )
+        assert classified.scope == "release_reliable"
+
+    for claim_set in FRONTIER_BENCHMARK_CLAIM_SETS:
+        for claim in load_claims(claim_set):
+            classified = local_gate_module._classify_gate_claim(
+                claim_set=claim_set,
+                raw_claim=str(claim["raw_claim"]),
+                claim_bucket=classify_claim(claim),
+                preamble_names=[
+                    str(name) for name in claim.get("preamble_names") or [] if str(name).strip()
+                ],
+                theorem_stub=claim.get("theorem_stub"),
+            )
+            assert classified.scope != "release_reliable"
+
+
+def test_sprint28_frontier_queue_written_to_explicit_output_dir(tmp_path) -> None:
+    import evals.local_gate as local_gate_module
+
+    records = [
+        {
+            "claim_id": "frontier-1",
+            "raw_claim": "Prove the full Arrow-Debreu theorem.",
+            "scope_classification": "out_of_scope",
+            "claim_type": "mathlib_native",
+            "recommended_next_action": "mark_out_of_scope",
+        }
+    ]
+    path = local_gate_module._write_frontier_queue("demo", records, tmp_path)
+    loaded = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert path == tmp_path / "demo.frontier_queue.jsonl"
+    assert loaded == records

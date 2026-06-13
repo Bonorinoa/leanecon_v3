@@ -37,4 +37,4 @@ jobs:
         run: python -m pytest
 
       - name: Run local-gate scaffold
-        run: python -m evals.local_gate --claim-set tier0_smoke --limit 0
+        run: python -m evals.local_gate --claim-set tier0_smoke --limit 0 --output-dir /tmp/leanecon-local-gate-ci

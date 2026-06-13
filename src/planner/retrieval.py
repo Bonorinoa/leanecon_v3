@@ -71,10 +71,71 @@ class SentenceTransformerEmbedder:
         return [list(map(float, row)) for row in matrix]
 
 
-def get_default_embedder() -> TextEmbedder:
+def _log_embedding_selection(
+    *,
+    event_type: str,
+    success: bool,
+    backend: str,
+    model: str,
+    reason: str | None = None,
+) -> None:
     try:
-        return SentenceTransformerEmbedder()
+        from src.observability import log_event
+
+        log_event(
+            f"retrieval.{event_type}",
+            stage="retrieval",
+            provider="local",
+            model=model,
+            success=success,
+            error_code=None if success else "embedding_fallback",
+            error_message=reason,
+            embedding_backend=backend,
+            embedding_model=model,
+            fallback_reason=reason,
+            local_files_only=os.getenv("LEANECON_LOCAL_FILES_ONLY", "false").lower() == "true",
+        )
     except Exception:
+        pass
+
+
+def get_default_embedder() -> TextEmbedder:
+    backend = os.getenv("LEANECON_EMBEDDING_BACKEND", "semantic").strip().lower()
+    if backend in {"hash", "hashing", "deterministic"}:
+        _log_embedding_selection(
+            event_type="embedding_backend_selected",
+            success=True,
+            backend="hashing",
+            model="HashingTextEmbedder",
+            reason="LEANECON_EMBEDDING_BACKEND requests deterministic hashing.",
+        )
+        return HashingTextEmbedder()
+    if backend not in {"", "semantic", "sentence-transformer", "sentence_transformer"}:
+        _log_embedding_selection(
+            event_type="embedding_backend_selected",
+            success=True,
+            backend="hashing",
+            model="HashingTextEmbedder",
+            reason=f"Unknown LEANECON_EMBEDDING_BACKEND={backend!r}; using deterministic hashing.",
+        )
+        return HashingTextEmbedder()
+    try:
+        embedder = SentenceTransformerEmbedder()
+        _log_embedding_selection(
+            event_type="embedding_backend_selected",
+            success=True,
+            backend="semantic",
+            model=getattr(embedder, "model_name", EMBEDDING_MODEL),
+        )
+        return embedder
+    except Exception as exc:
+        _log_embedding_selection(
+            event_type="embedding_semantic_fallback",
+            success=False,
+            backend="hashing",
+            model=EMBEDDING_MODEL,
+            reason=str(exc),
+        )
         return HashingTextEmbedder()
 
 

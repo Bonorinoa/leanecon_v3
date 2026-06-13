@@ -166,6 +166,7 @@ class Prover(
         self.memory_writer = ProverMemoryWriter(self.trace_store)
         self._proof_synthesizer = ProofSynthesizer()
         self._state_machine = StateMachine()
+        self._state_tool_history_start_index = 0
         self.lsp_client = lsp_client or default_lean_lsp_client
         self._extracted_lemmas = 0
         self._retrieval_events: list[dict[str, Any]] = []
@@ -203,14 +204,39 @@ class Prover(
     def _reset_prover_state(self) -> None:
         """Reset the lightweight prover state machine before a new run."""
         self._state_machine.reset()
+        self._state_tool_history_start_index = len(self.budget_tracker.tool_history)
 
     def _prover_state_metadata(self) -> dict[str, Any]:
         """Return state context suitable for trace/progress metadata."""
         config = self.current_state_config
+        state_tool_calls_used = (
+            len(self.budget_tracker.tool_history) - self._state_tool_history_start_index
+        )
         return {
             "current_state": self.current_state.value,
             "current_state_config": config.to_dict(),
+            "state_tool_calls_used": max(0, state_tool_calls_used),
         }
+
+    def _state_allowed_tool_names(self) -> set[str]:
+        """Return executable tool names allowed by the current state."""
+        return set(self.current_state_config.allowed_tools)
+
+    def _state_tool_limit_reached(self) -> bool:
+        """Return whether the current state's configured tool-call cap is spent."""
+        max_tool_calls = self.current_state_config.max_tool_calls
+        if max_tool_calls is None:
+            return False
+        used = len(self.budget_tracker.tool_history) - self._state_tool_history_start_index
+        return used >= max_tool_calls
+
+    def _state_allows_tool(self, tool_name: str) -> bool:
+        """Return whether ``tool_name`` may execute in the current state."""
+        return tool_name in self._state_allowed_tool_names()
+
+    def _state_allows_decomposition(self, *, allow_decomposition: bool) -> bool:
+        """Combine caller decomposition policy with current state policy."""
+        return bool(allow_decomposition and self.current_state_config.allow_decompose)
 
     def _transition_prover_state(
         self,
@@ -228,6 +254,7 @@ class Prover(
         result = self._state_machine.transition(next_state, reason=reason)
         if result == from_state:
             return result
+        self._state_tool_history_start_index = len(self.budget_tracker.tool_history)
 
         state_metadata = self._prover_state_metadata()
         transition_payload = ProverStateTransition(

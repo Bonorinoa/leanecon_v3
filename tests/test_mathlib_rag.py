@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -219,3 +220,31 @@ def test_default_rag_uses_get_default_embedder() -> None:
         f"Expected {expected_type.__name__}, got {type(rag._embedder).__name__}"
     )
     rag_mod._DEFAULT_RAG = None
+
+
+def test_default_embedder_can_be_forced_to_deterministic_hashing(monkeypatch) -> None:
+    from src.planner.retrieval import HashingTextEmbedder, get_default_embedder
+
+    monkeypatch.setenv("LEANECON_EMBEDDING_BACKEND", "hashing")
+    embedder = get_default_embedder()
+
+    assert isinstance(embedder, HashingTextEmbedder)
+    assert embedder.encode(["Continuous.add"])[0] == embedder.encode(["Continuous.add"])[0]
+
+
+def test_semantic_embedder_fallback_is_logged(monkeypatch, caplog) -> None:
+    import src.planner.retrieval as retrieval_mod
+    from src.planner.retrieval import HashingTextEmbedder
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.delenv("LEANECON_EMBEDDING_BACKEND", raising=False)
+    monkeypatch.setattr(retrieval_mod, "SentenceTransformerEmbedder", _boom)
+    caplog.set_level(logging.INFO, logger="leanecon.observability")
+
+    embedder = retrieval_mod.get_default_embedder()
+
+    assert isinstance(embedder, HashingTextEmbedder)
+    assert "retrieval.embedding_semantic_fallback" in caplog.text
+    assert "model unavailable" in caplog.text

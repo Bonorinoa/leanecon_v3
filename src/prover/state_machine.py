@@ -28,9 +28,8 @@ class ProverState(Enum):
 class StateConfig:
     """Constraint hints associated with a strategic prover state.
 
-    The prover currently uses these configs for prompt shaping, memory
-    selection, and observability. Tool lists and per-state call limits remain
-    descriptive constraints until execution-time enforcement is added.
+    The prover uses these configs for prompt shaping, memory selection,
+    observability, and execution-time tool/decomposition policy.
     """
 
     allowed_tools: list[str] = field(default_factory=list)

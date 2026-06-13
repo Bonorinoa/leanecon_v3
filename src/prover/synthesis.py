@@ -241,8 +241,13 @@ class ProverSynthesisMixin:
 
     def _tool_specs_for_prompt(self, packet: FormalizationPacket) -> list[dict[str, Any]]:
         mathlib_native_mode = self._normalized_claim_type(packet) == "mathlib_native"
+        allowed_tools = self._state_allowed_tool_names()
+        if self._state_tool_limit_reached():
+            allowed_tools = set()
         specs = []
         for spec in self.registry.list():
+            if spec.name not in allowed_tools:
+                continue
             # LSP search tools are exposed to the model only for mathlib-native
             # claims; preamble-definable claims should first exercise the local
             # indexed lemmas and bounded compile checks.

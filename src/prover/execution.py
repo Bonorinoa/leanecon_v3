@@ -19,6 +19,7 @@ from src.config import (
     MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED,
 )
 from src.formalizer.models import FormalizationPacket
+from src.claim_scope import classify_failure
 from src.observability import (
     AuditEvent,
     CandidateTacticEvent,
@@ -258,6 +259,78 @@ def _extract_theorem_block(code: str) -> str:
         if match is not None:
             return code[match.start() :].strip() + "\n"
     return code.strip() + "\n"
+
+
+def _assemble_prover_result(
+    *,
+    status: str,
+    packet: FormalizationPacket,
+    benchmark_mode: bool,
+    verified_via: str = "full_pipeline",
+    verified_code: str | None,
+    current_code: str,
+    trace: list[ProverTraceStep],
+    targets: list[ProverTarget],
+    failure: ProverFailure | None,
+    termination_reason: str,
+    preamble_names: list[str],
+    backend_used: str,
+    attempted_backends: list[str],
+    tool_budget: dict[str, Any],
+    telemetry: dict[str, float],
+    stage_usage: TokenUsage | None,
+    timing_breakdown: dict[str, Any],
+    target_timeouts: ProverTargetTimeouts,
+    audit_summary: dict[str, Any],
+    retrieval_events: list[dict[str, Any]],
+    tool_usage_traces: list[dict[str, Any]],
+    state_transitions: list[dict[str, Any]],
+    prover_state_transitions: list[dict[str, Any]],
+    progress_deltas: list[dict[str, Any]],
+    synthesis_events: list[dict[str, Any]],
+) -> ProverResult:
+    failure_classification = classify_failure(
+        scope=getattr(packet, "claim_scope", None),
+        claim_type=getattr(packet, "claim_type", None),
+        status=status,
+        failure_code=failure.error_code if failure is not None else None,
+        termination_reason=termination_reason,
+        selected_preamble_entries=getattr(packet, "selected_preamble", []),
+        parse_success=getattr(getattr(packet, "parse_check", None), "success", None),
+    )
+    return ProverResult(
+        status=status,
+        theorem_name=packet.theorem_name,
+        claim=packet.claim,
+        claim_scope=getattr(packet, "claim_scope", "supported_attempt"),
+        claim_type=getattr(packet, "claim_type", None),
+        failure_class=failure_classification.failure_class,
+        recommended_next_action=failure_classification.next_action,
+        benchmark_mode=benchmark_mode,
+        verified_via=verified_via,
+        verified_code=verified_code,
+        current_code=current_code,
+        trace=trace,
+        targets=targets,
+        failure=failure,
+        termination_reason=termination_reason,
+        repair_count=sum(1 for step in trace if not step.success),
+        preamble_names=preamble_names,
+        backend_used=backend_used,
+        attempted_backends=attempted_backends,
+        tool_budget=tool_budget,
+        telemetry=telemetry,
+        usage_by_stage={"prover": stage_usage.to_dict()} if stage_usage is not None else {},
+        timing_breakdown=timing_breakdown,
+        target_timeouts=target_timeouts,
+        audit_summary=audit_summary,
+        retrieval_events=retrieval_events,
+        tool_usage_traces=tool_usage_traces,
+        state_transitions=state_transitions,
+        prover_state_transitions=prover_state_transitions,
+        progress_deltas=progress_deltas,
+        synthesis_events=synthesis_events,
+    )
 
 def _inject_theorem_before_main(current_code: str, theorem_block: str) -> str:
     match = re.search(r"(?m)^(/--|theorem |lemma )", current_code)
@@ -700,10 +773,9 @@ class ProverExecutionMixin:
                         },
                     )
                 )
-                result = ProverResult(
+                result = _assemble_prover_result(
                     status="verified",
-                    theorem_name=packet.theorem_name,
-                    claim=packet.claim,
+                    packet=packet,
                     benchmark_mode=benchmark_mode,
                     verified_via=verified_via,
                     verified_code=working_code,
@@ -712,7 +784,6 @@ class ProverExecutionMixin:
                     targets=targets,
                     failure=None,
                     termination_reason="verified",
-                    repair_count=sum(1 for step in trace if not step.success),
                     preamble_names=list(packet.selected_preamble),
                     backend_used=attempted_backends[-1]
                     if attempted_backends
@@ -720,9 +791,7 @@ class ProverExecutionMixin:
                     attempted_backends=attempted_backends,
                     tool_budget=self.budget_tracker.snapshot(),
                     telemetry=telemetry.snapshot(),
-                    usage_by_stage={"prover": stage_usage.to_dict()}
-                    if stage_usage is not None
-                    else {},
+                    stage_usage=stage_usage,
                     timing_breakdown=timing_breakdown,
                     target_timeouts=resolved_target_timeouts,
                     audit_summary=self._audit_summary(audit_events),
@@ -792,10 +861,9 @@ class ProverExecutionMixin:
                 )
             )
 
-            result = ProverResult(
+            result = _assemble_prover_result(
                 status="failed",
-                theorem_name=packet.theorem_name,
-                claim=packet.claim,
+                packet=packet,
                 benchmark_mode=benchmark_mode,
                 verified_via="full_pipeline",
                 verified_code=None,
@@ -804,7 +872,6 @@ class ProverExecutionMixin:
                 targets=targets,
                 failure=failure,
                 termination_reason=failure.reason,
-                repair_count=sum(1 for step in trace if not step.success),
                 preamble_names=list(packet.selected_preamble),
                 backend_used=attempted_backends[-1]
                 if attempted_backends
@@ -812,7 +879,7 @@ class ProverExecutionMixin:
                 attempted_backends=attempted_backends,
                 tool_budget=self.budget_tracker.snapshot(),
                 telemetry=telemetry.snapshot(),
-                usage_by_stage={"prover": stage_usage.to_dict()} if stage_usage is not None else {},
+                stage_usage=stage_usage,
                 timing_breakdown=timing_breakdown,
                 target_timeouts=resolved_target_timeouts,
                 audit_summary=self._audit_summary(audit_events),
@@ -1557,7 +1624,9 @@ class ProverExecutionMixin:
                 if should_decompose(
                     failed_turns_for_target=failed_turns,
                     action=action,
-                    allow_decomposition=allow_decomposition,
+                    allow_decomposition=self._state_allows_decomposition(
+                        allow_decomposition=allow_decomposition
+                    ),
                     current_depth=target.recursion_depth,
                     total_extracted=self._extracted_lemmas,
                     no_progress_streak=no_progress_streak,
@@ -3102,7 +3171,9 @@ class ProverExecutionMixin:
             helper_skip_reason: str | None = None
             if not MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED:
                 helper_skip_reason = "helper_lemma_disabled"
-            elif not allow_decomposition:
+            elif not self._state_allows_decomposition(
+                allow_decomposition=allow_decomposition
+            ):
                 helper_skip_reason = "decomposition_disabled"
             elif target.recursion_depth >= max_recursion_depth:
                 helper_skip_reason = "max_recursion_depth_reached"
@@ -4821,8 +4892,27 @@ class ProverExecutionMixin:
         packet: FormalizationPacket,
         target: ProverTarget,
     ) -> ToolResult:
-        self.budget_tracker.record(tool.name)
         call = ToolCall(id=f"{target.name}:{tool.name}", name=tool.name, arguments=tool.arguments)
+        if not self._state_allows_tool(tool.name):
+            return ToolResult(
+                call.id,
+                (
+                    f"state_policy_violation: tool `{tool.name}` is not allowed in "
+                    f"state `{self.current_state.value}`."
+                ),
+                is_error=True,
+            )
+        if self._state_tool_limit_reached():
+            max_tool_calls = self.current_state_config.max_tool_calls
+            return ToolResult(
+                call.id,
+                (
+                    f"state_tool_budget_exhausted: state `{self.current_state.value}` "
+                    f"allows at most {max_tool_calls} tool calls."
+                ),
+                is_error=True,
+            )
+        self.budget_tracker.record(tool.name)
         if tool.name == "read_current_code":
             return ToolResult(call.id, session.read_code())
         if tool.name == "write_current_code":

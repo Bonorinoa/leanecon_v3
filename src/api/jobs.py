@@ -128,11 +128,14 @@ class JobStore:
                 connection.execute("DELETE FROM job_timing WHERE job_id = ?", (job_id,))
                 connection.execute("DELETE FROM job_audit_events WHERE job_id = ?", (job_id,))
                 connection.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
-                self._subscribers.pop(job_id, None)
-                self._event_history.pop(job_id, None)
+            with self._lock:
+                for job_id in expired:
+                    self._subscribers.pop(job_id, None)
+                    self._event_history.pop(job_id, None)
             connection.commit()
 
     def create(self, *, status: str, review_state: str | None, result: dict[str, Any] | None = None) -> JobRecord:
+        self._cleanup_expired()
         job = JobRecord(
             id=str(uuid.uuid4()),
             status=status,
@@ -244,6 +247,7 @@ class JobStore:
         return self._hydrate_job(job)
 
     def counts(self) -> dict[str, int]:
+        self._cleanup_expired()
         with closing(sqlite3.connect(self.db_path)) as connection:
             rows = connection.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status").fetchall()
         return {str(status): int(count) for status, count in rows}
@@ -481,6 +485,7 @@ class JobStore:
         }
 
     def metrics_snapshot(self) -> dict[str, Any]:
+        self._cleanup_expired()
         with closing(sqlite3.connect(self.db_path)) as connection:
             usage_rows = connection.execute(
                 """

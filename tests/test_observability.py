@@ -97,6 +97,15 @@ def test_job_store_persists_usage_metrics_and_audits(tmp_path) -> None:
     assert snapshot["integrity"]["schema_invalid_rate"] is None
 
 
+def test_job_store_expired_jobs_are_removed_from_counts_and_metrics(tmp_path) -> None:
+    store = JobStore(tmp_path / "jobs.db", ttl_seconds=-1)
+    job = store.create(status="queued", review_state="queued", result={"claim": "expired"})
+
+    assert store.get(job.id) is None
+    assert store.counts() == {}
+    assert store.metrics_snapshot()["usage_totals"]["records"] == 0
+
+
 @pytest.mark.anyio
 async def test_job_store_subscription_emits_initial_snapshot_then_progress(tmp_path) -> None:
     store = JobStore(tmp_path / "jobs.db", ttl_seconds=3600)

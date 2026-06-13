@@ -8,12 +8,11 @@ current strategic state, validates allowed transitions, exposes per-state
 configuration, and emits state context into prompts, memory retrieval, progress
 events, and result traces.
 
-The state machine is useful today as an orchestration and observability layer.
-It changes prompt guidance and memory example selection for recovery states, and
-it records when the harness enters stall recovery, unknown-identifier rescue,
-decomposition, verification, or failure. It does not yet fully enforce all
-`StateConfig` constraints at execution time; `allowed_tools`, `max_tool_calls`,
-and `allow_decompose` are mostly descriptive outside prompt and trace context.
+The state machine is useful today as an orchestration, observability, and
+execution-policy layer. It changes prompt guidance and memory example selection
+for recovery states, records when the harness enters stall recovery,
+unknown-identifier rescue, decomposition, verification, or failure, and enforces
+the active `StateConfig` at the model/tool boundary.
 
 ## Current Capabilities
 
@@ -43,20 +42,24 @@ and `allow_decompose` are mostly descriptive outside prompt and trace context.
 
 Each config contains:
 
-- `allowed_tools`: Intended tool allowlist for the state.
+- `allowed_tools`: Tool allowlist for the state. Prompt-visible tools are built
+  from this list, and `_execute_tool()` rejects disallowed model-requested tools
+  before budget accounting.
 - `prompt_rules`: Mode and natural-language guidance for prompt synthesis.
 - `memory_filter`: Strategy used by `ProverSynthesisMixin._memory_examples`.
-- `max_tool_calls`: Intended per-state tool-call budget.
-- `allow_decompose`: Intended decomposition permission for the state.
+- `max_tool_calls`: Per-state tool-call budget, counted from the moment the
+  state is entered and mapped onto the existing `BudgetTracker.tool_history`.
+  `None` preserves legacy unrestricted behavior.
+- `allow_decompose`: Decomposition permission for the state. Caller-level
+  `allow_decomposition` must also be true.
 - `terminal`: Whether the state is terminal.
 
 `StateConfig.copy()` protects the canonical config table from caller mutation.
 `StateConfig.to_dict()` produces the JSON-ready form used by prover metadata,
 progress events, and traces.
 
-Today, `prompt_rules` and `memory_filter` actively influence behavior.
-`allowed_tools`, `max_tool_calls`, and `allow_decompose` are emitted and visible
-but not yet consistently enforced by the execution loop.
+Today, all `StateConfig` fields are active except terminal states still rely on
+the existing transition/finalization paths to prevent further prover work.
 
 ### Transitions
 
@@ -96,6 +99,11 @@ state_config)`. The default `Synthesizing` state intentionally keeps the legacy
 prompt shape. Non-default states add `state_context` plus instruction fields
 such as `state_prompt_rules`, `state_memory_filter`, and state-specific
 guidance.
+
+Prompt-visible tool specs flow through `ProverSynthesisMixin._tool_specs_for_prompt()`.
+That builder applies claim-type filtering and the current state's `allowed_tools`
+from the same policy used by `_execute_tool()`, so hidden tools and executable
+tools cannot drift.
 
 The mathlib-native harness prompt uses the same state-context helper. For
 non-default states, state guidance is appended to the harness rules. This keeps
@@ -145,36 +153,24 @@ No dead files were found in the analyzed state-machine surface.
 
 ## Rough Edges
 
-- `allowed_tools` is not consistently enforced. Prompt tool specs still come
-  from registry filtering rather than the current state's allowlist.
-- `max_tool_calls` is visible in state context but not applied as an execution
-  budget.
-- `allow_decompose` is visible but decomposition gating still primarily uses
-  the `allow_decomposition` argument, helper-lemma feature flags, recursion
-  depth, and extracted-lemma limits.
 - `_try_transition_prover_state()` suppresses invalid edges. That is useful for
   instrumentation-only integration, but it can hide transition mistakes unless
   tests or logs catch them.
 - `Decomposing` has no transition back to `Synthesizing`. That matches the
   current matrix, but it means decomposition either verifies or fails at the
   state-machine level even if the broader harness resumes normal search.
-- State prompt context intentionally omits `allowed_tools`, so the model sees
-  state guidance and memory strategy but not the full configured constraints.
+- State prompt context intentionally omits `allowed_tools`; allowed tools are
+  communicated through the actual prompt tool list instead.
 - There are multiple synthesis-event creation sites that repeat current-state
   metadata plumbing. This is manageable now but should be centralized if more
   event types gain state context.
 
 ## Suggested Next-Sprint Priorities
 
-1. Decide which `StateConfig` fields are normative. If `allowed_tools`,
-   `max_tool_calls`, and `allow_decompose` are intended to control execution,
-   enforce them in one central execution boundary.
-2. Add a single state-aware tool-spec builder so prompt tools and execution
-   allowlists cannot drift.
-3. Clarify the intended `Decomposing` lifecycle. Either keep it terminal-like
+1. Clarify the intended `Decomposing` lifecycle. Either keep it terminal-like
    after helper extraction or add an explicit recovery edge if normal synthesis
    should resume.
-4. Add integration tests for state-driven tool filtering and decomposition
-   gating once those fields become enforced.
-5. Consider logging blocked invalid transitions in `_try_transition_prover_state`
+2. Consider logging blocked invalid transitions in `_try_transition_prover_state`
    so instrumentation remains forgiving without making state drift invisible.
+3. Centralize synthesis-event state metadata if more event types gain state
+   context.

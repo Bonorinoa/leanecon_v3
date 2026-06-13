@@ -9,8 +9,10 @@ from pydantic import ValidationError
 from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, ParseCheck
 from src.memory.store import ProofTraceStore
 from src.prover import Prover, ProverAction, ProverTargetTimeouts
+from src.prover.execution import _assemble_prover_result
 from src.prover.file_controller import ProofFileController
-from src.prover.models import ProverTarget
+from src.prover.models import ProverFailure, ProverTarget, ProverTraceStep
+from src.observability import TokenUsage
 from src.prover.repl import ReplToolOrchestrator
 from src.tools import ToolCall
 from src.prover.tactics import should_decompose
@@ -56,6 +58,67 @@ def _packet(
             "model": "labs-leanstral-2603",
         }
     )
+
+
+def test_assemble_prover_result_preserves_terminal_payload_shape() -> None:
+    packet = _packet(
+        theorem_name="assembled",
+        claim="Assemble result.",
+        lean_code="theorem assembled : True := by\n  trivial\n",
+        selected_preamble=["truth"],
+    )
+    trace = [
+        ProverTraceStep(
+            turn=1,
+            backend="leanstral",
+            target_name="theorem_body",
+            action_type="tool",
+            success=False,
+        )
+    ]
+    target = ProverTarget(name="theorem_body", statement="True", kind="theorem_body")
+    failure = ProverFailure(reason="compile_failed", message="compile failed")
+    usage = TokenUsage(
+        stage="prover",
+        provider="mistral",
+        model="labs-leanstral-2603",
+        latency_ms=12.0,
+        success=False,
+        error_code="compile_failed",
+    )
+
+    result = _assemble_prover_result(
+        status="failed",
+        packet=packet,
+        benchmark_mode=True,
+        verified_code=None,
+        current_code=packet.lean_code,
+        trace=trace,
+        targets=[target],
+        failure=failure,
+        termination_reason=failure.reason,
+        preamble_names=list(packet.selected_preamble),
+        backend_used="leanstral",
+        attempted_backends=["leanstral"],
+        tool_budget={"total_tool_calls": 1},
+        telemetry={"wall_clock_ms": 12.0},
+        stage_usage=usage,
+        timing_breakdown={"prover_ms": 12.0, "total_ms": 12.0},
+        target_timeouts=ProverTargetTimeouts(theorem_body=30),
+        audit_summary={"event_count": 1},
+        retrieval_events=[{"source": "mathlib_rag"}],
+        tool_usage_traces=[],
+        state_transitions=[],
+        prover_state_transitions=[],
+        progress_deltas=[],
+        synthesis_events=[],
+    )
+
+    assert result.status == "failed"
+    assert result.repair_count == 1
+    assert result.failure == failure
+    assert result.usage_by_stage["prover"]["error_code"] == "compile_failed"
+    assert result.retrieval_events == [{"source": "mathlib_rag"}]
 
 
 class ScriptedDriver:

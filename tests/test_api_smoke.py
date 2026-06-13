@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import threading
 import time
 from types import SimpleNamespace
 
@@ -9,7 +10,7 @@ from fastapi.testclient import TestClient
 from src.api.jobs import JobStore
 from src.formalizer import FormalizerGenerationResponse, FormalizerService, FormalizerSubgoal
 from src.planner import PlannerLLMResponse, PlannerPacket, PlannerService
-from src.prover.models import ProverResult
+from src.prover.models import ProverResult, ProverTargetTimeouts
 
 
 class FakePlannerDriver:
@@ -301,6 +302,109 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
     assert fake_prover.calls
     assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
     assert fake_prover.calls[0]["benchmark_mode"] is True
+
+
+def test_prove_jobs_respect_configured_concurrency(monkeypatch, tmp_path) -> None:
+    api_module = _configure_api(monkeypatch, tmp_path)
+    monkeypatch.setattr(api_module, "_prove_semaphore", threading.BoundedSemaphore(1))
+
+    formalization_packet = {
+        "claim": "Queued proof claim.",
+        "lean_code": "theorem queued_smoke : True := by\n  sorry\n",
+        "theorem_with_sorry": "theorem queued_smoke : True := by\n  sorry\n",
+        "theorem_name": "queued_smoke",
+        "imports": ["Mathlib"],
+        "selected_imports": ["Mathlib"],
+        "open_statements": [],
+        "subgoals": [],
+        "selected_preamble": [],
+        "vacuity": {"is_vacuous": False},
+        "faithfulness": {
+            "score": 5.0,
+            "coverage": 1.0,
+            "structural_isomorphism": 1.0,
+            "primitive_faithfulness": 1.0,
+            "claim_frame": {},
+            "stub_frame": {},
+            "needs_human_review": False,
+            "passes_gate": True,
+            "feedback": [],
+        },
+        "parse_check": {"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
+        "review_state": "approved",
+        "backend": "leanstral",
+        "provider": "mistral",
+        "model": "labs-leanstral-2603",
+    }
+    first_entered = threading.Event()
+    release_first = threading.Event()
+
+    class BlockingProver:
+        def __init__(self) -> None:
+            self.primary_backend = SimpleNamespace(
+                name="leanstral",
+                provider="mistral",
+                model="labs-leanstral-2603",
+            )
+            self.calls: list[str] = []
+
+        async def prove(self, packet, job_id, **kwargs):
+            self.calls.append(job_id)
+            if len(self.calls) == 1:
+                first_entered.set()
+                assert release_first.wait(timeout=2.0)
+            return ProverResult(
+                status="verified",
+                theorem_name=packet.theorem_name,
+                claim=packet.claim,
+                benchmark_mode=kwargs["benchmark_mode"],
+                verified_code=packet.lean_code.replace("sorry", "trivial"),
+                current_code=packet.lean_code.replace("sorry", "trivial"),
+                trace=[],
+                targets=[],
+                failure=None,
+                termination_reason="verified",
+                repair_count=0,
+                preamble_names=[],
+                backend_used="leanstral",
+                attempted_backends=["leanstral"],
+                tool_budget={},
+                telemetry={},
+                usage_by_stage={},
+                timing_breakdown={"prover_ms": 0.0, "total_ms": 0.0},
+                target_timeouts=kwargs["target_timeouts"] or ProverTargetTimeouts(),
+                audit_summary={"event_count": 0, "events": []},
+            )
+
+    fake_prover = BlockingProver()
+    monkeypatch.setattr(api_module, "prover", fake_prover)
+    client = TestClient(api_module.app)
+
+    first = client.post("/prove", json={"formalization_packet": formalization_packet, "benchmark_mode": True})
+    second = client.post("/prove", json={"formalization_packet": formalization_packet, "benchmark_mode": True})
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_id = first.json()["job_id"]
+    second_id = second.json()["job_id"]
+
+    assert first_entered.wait(timeout=2.0)
+    assert client.get(f"/jobs/{first_id}").json()["status"] == "running_prover"
+    assert client.get(f"/jobs/{second_id}").json()["status"] == "queued"
+    assert fake_prover.calls == [first_id]
+
+    release_first.set()
+    deadline = time.monotonic() + 2.0
+    statuses: dict[str, str] = {}
+    while time.monotonic() < deadline:
+        statuses = {
+            first_id: client.get(f"/jobs/{first_id}").json()["status"],
+            second_id: client.get(f"/jobs/{second_id}").json()["status"],
+        }
+        if statuses[first_id] == statuses[second_id] == "completed":
+            break
+        time.sleep(0.05)
+
+    assert statuses == {first_id: "completed", second_id: "completed"}
 
 
 def test_prove_accepts_hydrated_formalize_result(monkeypatch, tmp_path) -> None:

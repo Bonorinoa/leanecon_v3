@@ -6,7 +6,6 @@ import asyncio
 from contextlib import asynccontextmanager
 import json
 import threading
-import shutil
 import time
 from typing import Any
 
@@ -36,7 +35,7 @@ from src.config import (
     CORS_ORIGINS,
     EVAL_CLAIMS_DIR,
     HF_TOKEN,
-    LEAN_WORKSPACE,
+    JOB_MAX_CONCURRENT,
     MISTRAL_API_KEY,
     OLLAMA_API_KEY,
     PROVER_PROVIDER,
@@ -160,11 +159,14 @@ def _backend_status() -> dict[str, Any]:
             provider=PROVER_PROVIDER if prover_backend.provider == "huggingface" else prover_backend.provider,
             model=prover_backend.model,
         ),
-        "lean_lsp": {
+        "lean_lsp": prover.lsp_client.status()
+        if hasattr(prover.lsp_client, "status")
+        else {
             "name": "lean_lsp",
-            "binary": "uvx lean-lsp-mcp",
-            "available": shutil.which("uvx") is not None and LEAN_WORKSPACE.exists(),
-            "benchmark_ready": shutil.which("uvx") is not None and LEAN_WORKSPACE.exists(),
+            "state": "unavailable",
+            "available": False,
+            "benchmark_ready": False,
+            "reason": "Configured LSP client does not expose status().",
         },
     }
 
@@ -327,6 +329,15 @@ app.add_middleware(
 planner = PlannerService()
 formalizer = DEFAULT_FORMALIZER
 prover = DEFAULT_PROVER
+_prove_semaphore = threading.BoundedSemaphore(max(1, int(JOB_MAX_CONCURRENT)))
+
+
+class _ProofJobSlot:
+    def __enter__(self) -> None:
+        _prove_semaphore.acquire()
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        _prove_semaphore.release()
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -512,6 +523,11 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
 
 
 async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
+    with _ProofJobSlot():
+        await _run_prove_job_in_slot(job_id, request)
+
+
+async def _run_prove_job_in_slot(job_id: str, request: ProveRequest) -> None:
     started_at = time.perf_counter()
     job_store.update(job_id, status="running_prover", review_state="in_progress")
     job_store.publish_progress(

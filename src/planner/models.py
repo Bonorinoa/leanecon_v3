@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -95,6 +96,17 @@ class PlannerPacket(PlannerLLMResponse):
     model: str
     selected_preamble: list[PreambleHit] = Field(default_factory=list)
     few_shot_traces: list[MemoryTraceExample] = Field(default_factory=list, max_length=1)
+    claim_scope: Literal[
+        "release_reliable",
+        "supported_attempt",
+        "frontier_collect",
+        "out_of_scope",
+    ] = "supported_attempt"
+    claim_type: Literal["preamble_definable", "mathlib_native"] | None = None
+    required_primitives: list[str] = Field(default_factory=list)
+    theorem_shape_recommendation: str = ""
+    assumption_audit: list[str] = Field(default_factory=list)
+    scope_reason: str = ""
 
     @field_validator("review_state")
     @classmethod

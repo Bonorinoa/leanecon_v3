@@ -301,6 +301,68 @@ def test_formalizer_stub_authoritative_skips_llm_and_preserves_stub() -> None:
     assert RejectingDriver.calls == []
 
 
+def test_sprint28_release_reliable_claim_uses_preamble_template_before_llm() -> None:
+    class RejectingDriver:
+        calls: list[dict[str, object]] = []
+
+        def generate(self, **kwargs: object) -> object:
+            RejectingDriver.calls.append(kwargs)
+            raise AssertionError("Template-first release reliable claims must not call the driver.")
+
+    planner_packet = PlannerPacket.model_validate(
+        {
+            "claim": "A monotone real sequence bounded above converges.",
+            "clarifying_questions": [],
+            "textbook_defaults": ["Assume a monotone real sequence and an explicit upper bound."],
+            "plan_paragraph": "Apply the monotone bounded convergence preamble theorem directly, preserving monotonicity and boundedness assumptions.",
+            "subgoals": [
+                "theorem monotone_template_subgoal {u : ℕ → ℝ} (hu_mono : Monotone u) (hu_bdd : BddAbove (Set.range u)) : ∃ l, Filter.Tendsto u Filter.atTop (nhds l) := by\n  sorry"
+            ],
+            "needs_review": False,
+            "confidence": 0.95,
+            "review_state": "approved",
+            "backend": "test",
+            "model": "test",
+            "selected_preamble": [
+                {
+                    "name": "monotone_sequence",
+                    "lean_module": "LeanEcon.Preamble.Foundations.Primitives.Sequences",
+                    "score": 10.0,
+                    "description": "Monotone real sequences bounded above converge.",
+                    "concepts": ["monotone_sequence", "bounded_sequence", "convergence"],
+                    "proven_lemmas": ["monotone_boundedAbove_converges"],
+                    "tactic_hints": ["exact monotone_boundedAbove_converges hu_mono hu_bdd"],
+                    "textbook_source": "MWG App. M",
+                    "related": [],
+                }
+            ],
+            "few_shot_traces": [],
+            "claim_scope": "release_reliable",
+            "claim_type": "preamble_definable",
+            "required_primitives": ["monotone_sequence"],
+            "theorem_shape_recommendation": "template_or_stub_direct_closure",
+            "assumption_audit": ["monotonicity_explicit", "boundedness_explicit"],
+            "scope_reason": "Preamble-backed template test.",
+        }
+    )
+    service = FormalizerService(backend="leanstral", mistral_driver=RejectingDriver())
+
+    packet = service.formalize(
+        planner_packet.claim,
+        planner_packet=planner_packet.model_dump(mode="json"),
+        benchmark_mode=True,
+    )
+
+    assert packet.formalization_source == "preamble_template"
+    assert packet.claim_scope == "release_reliable"
+    assert packet.claim_type == "preamble_definable"
+    assert packet.required_primitives == ["monotone_sequence"]
+    assert "Monotone u" in packet.lean_code
+    assert "BddAbove (Set.range u)" in packet.lean_code
+    assert "exact h_monotone_sequence" in packet.lean_code
+    assert RejectingDriver.calls == []
+
+
 def test_formalizer_routes_goedel_backend_to_huggingface() -> None:
     mistral_driver = RevisingMistralFormalizerDriver()
     hf_driver = RecordingHFFormalizerDriver()
