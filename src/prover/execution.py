@@ -78,6 +78,23 @@ from src.prover.tactics import (
 )
 from src.tools import ToolCall, ToolResult
 
+MIN_TARGET_OPERATION_SECONDS = 1.0
+
+
+def _remaining_deadline_seconds(deadline: float | None) -> float | None:
+    if deadline is None:
+        return None
+    return max(0.0, deadline - time.monotonic())
+
+
+def _timeout_for_deadline(default_timeout: int, deadline: float | None) -> int:
+    remaining = _remaining_deadline_seconds(deadline)
+    if remaining is None:
+        return default_timeout
+    if remaining <= 0:
+        return 0
+    return max(1, min(default_timeout, int(remaining)))
+
 
 def _compat_prover_module() -> Any:
     from src.prover import prover as prover_module
@@ -380,6 +397,7 @@ class _ActiveProofSession:
     repl: Any = None
     proof_path: Path | None = None
     materialize_code: Callable[[str], str] | None = None
+    enable_repl: bool = True
     active_repl: bool = False
     goals: list[str] | None = None
     solved: bool = False
@@ -443,7 +461,11 @@ class _ActiveProofSession:
         self.close()
         self.solved = False
         self.goals = []
-        if _compat_lean_repl_session() is None or _count_standalone_sorries(self.code) != 1:
+        if (
+            not self.enable_repl
+            or _compat_lean_repl_session() is None
+            or _count_standalone_sorries(self.code) != 1
+        ):
             return
         try:
             repl = _compat_lean_repl_session()(timeout=self.timeout)
@@ -934,6 +956,7 @@ class ProverExecutionMixin:
         audit_events: list[AuditEvent],
         on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> tuple[bool, str, ProverFailure | None]:
+        target_deadline = time.monotonic() + max(timeout, 1)
         theorem_name = self._target_theorem_name(packet, target)
         direct_close_policy = self._direct_close_policy(packet)
         # Keep a single explicit mode flag here so the next sprint can branch mathlib-native
@@ -961,6 +984,7 @@ class ProverExecutionMixin:
             target=target,
             current_code=current_code,
             timeout=timeout,
+            deadline=target_deadline,
             job_id=job_id,
             on_progress=on_progress,
             attempt_budget=direct_close_budget,
@@ -999,6 +1023,10 @@ class ProverExecutionMixin:
             timeout,
             proof_path=self.file_controller.proof_path(job_id),
             materialize_code=lambda code: self.file_controller.build_final_code(job_id, code),
+            enable_repl=not (
+                mathlib_native_mode
+                and getattr(_compat_lean_repl_session(), "__module__", "") == "src.lean.repl"
+            ),
         )
         failed_turns = 0
         invalid_output_count = 0
@@ -1030,6 +1058,17 @@ class ProverExecutionMixin:
 
         try:
             for turn in range(1, max_turns + 1):
+                if _remaining_deadline_seconds(target_deadline) < MIN_TARGET_OPERATION_SECONDS:
+                    return (
+                        False,
+                        session.read_code(),
+                        self._target_timeout_failure(
+                            target=target,
+                            turn=turn,
+                            backend=active_backend,
+                            timeout=timeout,
+                        ),
+                    )
                 if not self.budget_tracker.can_continue():
                     return (
                         False,
@@ -1044,6 +1083,7 @@ class ProverExecutionMixin:
                     )
 
                 current_code = session.read_code()
+                session.timeout = _timeout_for_deadline(timeout, target_deadline)
                 compile_result = session.compile_current_code()
                 lean_feedback = failure_feedback_messages(compile_result)
                 goals = session.get_goals()
@@ -1074,6 +1114,7 @@ class ProverExecutionMixin:
                                     job_id, session.read_code()
                                 ),
                                 timeout=timeout,
+                                deadline=target_deadline,
                                 include_fallback_tactics=force_deterministic_recovery,
                                 attempt_budget=direct_close_budget,
                             )
@@ -1158,6 +1199,7 @@ class ProverExecutionMixin:
                     backend=active_backend,
                     turn=turn,
                     timeout=timeout,
+                    deadline=target_deadline,
                     lean_feedback=lean_feedback,
                     include_fallback_tactics=force_deterministic_recovery
                     or failed_turns > 0
@@ -1234,6 +1276,7 @@ class ProverExecutionMixin:
                         attempted_backends=attempted_backends,
                         turn=turn,
                         timeout=timeout,
+                        deadline=target_deadline,
                         telemetry=telemetry,
                         provider_usage=provider_usage,
                         lean_feedback=lean_feedback,
@@ -1261,6 +1304,7 @@ class ProverExecutionMixin:
                         backend=active_backend,
                         turn=turn,
                         timeout=timeout,
+                        deadline=target_deadline,
                         lean_feedback=lean_feedback,
                         goals=goals,
                         job_id=job_id,
@@ -1337,11 +1381,31 @@ class ProverExecutionMixin:
                 )
 
                 try:
+                    remaining = _remaining_deadline_seconds(target_deadline)
+                    if remaining < MIN_TARGET_OPERATION_SECONDS:
+                        return (
+                            False,
+                            session.read_code(),
+                            self._target_timeout_failure(
+                                target=target,
+                                turn=turn,
+                                backend=active_backend,
+                                timeout=timeout,
+                            ),
+                        )
+                    driver = self._drivers[active_backend.provider]
+                    original_driver_timeout = getattr(driver, "timeout", None)
+                    if isinstance(original_driver_timeout, (int, float)):
+                        setattr(driver, "timeout", max(1.0, min(float(original_driver_timeout), remaining)))
                     provider_started_at = time.perf_counter()
-                    raw_action = self._drivers[active_backend.provider].next_action(
-                        backend=active_backend,
-                        prompt=prompt,
-                    )
+                    try:
+                        raw_action = driver.next_action(
+                            backend=active_backend,
+                            prompt=prompt,
+                        )
+                    finally:
+                        if isinstance(original_driver_timeout, (int, float)):
+                            setattr(driver, "timeout", original_driver_timeout)
                     telemetry.record_provider(provider_started_at)
                     action, metadata = _unwrap_action_response(raw_action)
                     usage = complete_usage(
@@ -2306,6 +2370,7 @@ class ProverExecutionMixin:
         claim_id: str | None,
         job_id: str,
         on_progress: Callable[[str, dict[str, Any]], None] | None,
+        deadline: float | None = None,
     ) -> tuple[str | None, bool]:
         if not candidates:
             return None, False
@@ -2314,6 +2379,9 @@ class ProverExecutionMixin:
         before_hash = str(before_state["state_hash"])
         target_theorem_name = self._target_theorem_name(packet, target)
         for candidate in candidates:
+            remaining = _remaining_deadline_seconds(deadline)
+            if remaining is not None and remaining < MIN_TARGET_OPERATION_SECONDS:
+                break
             session.write_code(baseline_code)
             tool = ProverToolInvocation(
                 name="apply_tactic",
@@ -2325,6 +2393,7 @@ class ProverExecutionMixin:
             )
             used_compile_fallback = not session.active_repl
             if used_compile_fallback:
+                session.timeout = _timeout_for_deadline(session.timeout, deadline)
                 self.budget_tracker.record("compile_check")
                 try:
                     candidate_code = _replace_target_proof_site(
@@ -2514,6 +2583,7 @@ class ProverExecutionMixin:
         attempted_backends: list[str],
         turn: int,
         timeout: int,
+        deadline: float | None = None,
         telemetry: SpanRecorder,
         provider_usage: list[TokenUsage],
         lean_feedback: list[str],
@@ -2878,9 +2948,21 @@ class ProverExecutionMixin:
             claim_id=claim_id,
             job_id=job_id,
             on_progress=on_progress,
+            deadline=deadline,
         )
         if candidate_committed:
             return candidate_code, None
+        remaining_after_candidates = _remaining_deadline_seconds(deadline)
+        if (
+            remaining_after_candidates is not None
+            and remaining_after_candidates < MIN_TARGET_OPERATION_SECONDS
+        ):
+            return None, self._target_timeout_failure(
+                target=target,
+                turn=turn,
+                backend=backend,
+                timeout=timeout,
+            )
         prompt = self._build_mathlib_harness_prompt(
             packet=packet,
             target=target,
@@ -2893,37 +2975,66 @@ class ProverExecutionMixin:
         )
         provider_started_at = time.perf_counter()
         try:
+            remaining = _remaining_deadline_seconds(deadline)
+            if remaining is not None and remaining < MIN_TARGET_OPERATION_SECONDS:
+                return None, self._target_timeout_failure(
+                    target=target,
+                    turn=turn,
+                    backend=backend,
+                    timeout=timeout,
+                )
+            driver = self._drivers[backend.provider]
+            original_driver_timeout = getattr(driver, "timeout", None)
+            if remaining is not None and isinstance(original_driver_timeout, (int, float)):
+                setattr(driver, "timeout", max(1.0, min(float(original_driver_timeout), remaining)))
             best_of_n = max(int(MATHLIB_SYNTHESIS_BEST_OF_N or 1), 1)
-            if best_of_n > 1:
-                candidates: list[tuple[ProverAction, Any]] = []
-                for _sample_index in range(best_of_n):
-                    raw_candidate = self._drivers[backend.provider].next_action(
+            try:
+                if best_of_n > 1:
+                    candidates: list[tuple[ProverAction, Any]] = []
+                    for _sample_index in range(best_of_n):
+                        sample_remaining = _remaining_deadline_seconds(deadline)
+                        if (
+                            sample_remaining is not None
+                            and sample_remaining < MIN_TARGET_OPERATION_SECONDS
+                        ):
+                            break
+                        raw_candidate = driver.next_action(
+                            backend=backend,
+                            prompt=prompt,
+                            temperature=0.7,
+                        )
+                        candidate_action, candidate_metadata = _unwrap_action_response(raw_candidate)
+                        candidates.append((candidate_action, candidate_metadata))
+                    if not candidates:
+                        return None, self._target_timeout_failure(
+                            target=target,
+                            turn=turn,
+                            backend=backend,
+                            timeout=timeout,
+                        )
+                    action, metadata = next(
+                        (
+                            (candidate_action, candidate_metadata)
+                            for candidate_action, candidate_metadata in candidates
+                            if candidate_action.action_type == "tool"
+                            and candidate_action.tool is not None
+                            and candidate_action.tool.name == "apply_tactic"
+                            and self._proof_synthesizer.premise_match(
+                                str(candidate_action.tool.arguments.get("tactic") or ""),
+                                merged_premises[:3],
+                            ).matched
+                        ),
+                        candidates[0],
+                    )
+                else:
+                    raw_action = driver.next_action(
                         backend=backend,
                         prompt=prompt,
-                        temperature=0.7,
                     )
-                    candidate_action, candidate_metadata = _unwrap_action_response(raw_candidate)
-                    candidates.append((candidate_action, candidate_metadata))
-                action, metadata = next(
-                    (
-                        (candidate_action, candidate_metadata)
-                        for candidate_action, candidate_metadata in candidates
-                        if candidate_action.action_type == "tool"
-                        and candidate_action.tool is not None
-                        and candidate_action.tool.name == "apply_tactic"
-                        and self._proof_synthesizer.premise_match(
-                            str(candidate_action.tool.arguments.get("tactic") or ""),
-                            merged_premises[:3],
-                        ).matched
-                    ),
-                    candidates[0],
-                )
-            else:
-                raw_action = self._drivers[backend.provider].next_action(
-                    backend=backend,
-                    prompt=prompt,
-                )
-                action, metadata = _unwrap_action_response(raw_action)
+                    action, metadata = _unwrap_action_response(raw_action)
+            finally:
+                if isinstance(original_driver_timeout, (int, float)):
+                    setattr(driver, "timeout", original_driver_timeout)
             telemetry.record_provider(provider_started_at)
             usage = complete_usage(
                 stage="prover",
@@ -3329,6 +3440,7 @@ class ProverExecutionMixin:
         backend: ProverBackend,
         turn: int,
         timeout: int,
+        deadline: float | None = None,
         lean_feedback: list[str],
         goals: list[str],
         job_id: str,
@@ -3475,6 +3587,10 @@ class ProverExecutionMixin:
         selected_lemma: str | None = None
         candidate_failures: list[dict[str, str | None]] = []
         for proof, source, lemma_name in candidates[:MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT]:
+            remaining = _remaining_deadline_seconds(deadline)
+            if remaining is not None and remaining < MIN_TARGET_OPERATION_SECONDS:
+                break
+            bounded_attempt_timeout = _timeout_for_deadline(attempt_timeout, deadline)
             try:
                 candidate_code = _replace_target_proof_site(
                     code,
@@ -3496,7 +3612,7 @@ class ProverExecutionMixin:
             compiled_candidate_count += 1
             self.budget_tracker.record("compile_check")
             try:
-                result = _compat_compile_check(candidate_code, timeout=attempt_timeout)
+                result = _compat_compile_check(candidate_code, timeout=bounded_attempt_timeout)
             except Exception as exc:
                 if len(candidate_failures) < MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT:
                     candidate_failures.append(
@@ -4273,6 +4389,7 @@ class ProverExecutionMixin:
         target: ProverTarget,
         current_code: str,
         timeout: int,
+        deadline: float | None = None,
         include_fallback_tactics: bool = False,
         job_id: str | None = None,
         on_progress: Callable[[str, dict[str, Any]], None] | None = None,
@@ -4296,6 +4413,10 @@ class ProverExecutionMixin:
         attempt_limit = min(len(candidates), attempt_cap)
         attempts_used = 0
         for index, (proof, source, rationale) in enumerate(candidates[:attempt_limit], start=1):
+            remaining = _remaining_deadline_seconds(deadline)
+            if remaining is not None and remaining < MIN_TARGET_OPERATION_SECONDS:
+                break
+            bounded_attempt_timeout = _timeout_for_deadline(attempt_timeout, deadline)
             attempts_used = index
             if job_id is not None:
                 self._emit_progress(
@@ -4313,7 +4434,7 @@ class ProverExecutionMixin:
                         "attempt_index": index,
                         "attempt_limit": attempt_limit,
                         "candidate_count": len(candidates),
-                        "compile_timeout_seconds": attempt_timeout,
+                        "compile_timeout_seconds": bounded_attempt_timeout,
                         "claim_type": policy.claim_type,
                         "claim_type_policy": policy.claim_type_policy,
                         "direct_close_attempt_cap": policy.attempt_cap,
@@ -4333,7 +4454,7 @@ class ProverExecutionMixin:
                     preamble_shortcuts_enabled=policy.preamble_shortcuts_enabled,
                 )
             try:
-                result = _compat_compile_check(candidate_code, timeout=attempt_timeout)
+                result = _compat_compile_check(candidate_code, timeout=bounded_attempt_timeout)
             except Exception:
                 continue
             if result.get("success"):
@@ -4364,6 +4485,23 @@ class ProverExecutionMixin:
             claim_type=policy.claim_type,
             claim_type_policy=policy.claim_type_policy,
             preamble_shortcuts_enabled=policy.preamble_shortcuts_enabled,
+        )
+
+    def _target_timeout_failure(
+        self,
+        *,
+        target: ProverTarget,
+        turn: int,
+        backend: ProverBackend,
+        timeout: int,
+    ) -> ProverFailure:
+        return ProverFailure(
+            reason="target_timeout",
+            message=f"Target `{target.name}` exceeded its {timeout}s wall-clock budget.",
+            error_code="target_timeout",
+            target_name=target.name,
+            turn=turn,
+            backend=backend.name,
         )
 
     def _record_direct_definable_closure(
@@ -4440,15 +4578,20 @@ class ProverExecutionMixin:
         theorem_name: str,
         current_code: str,
         timeout: int,
+        deadline: float | None = None,
     ) -> dict[str, str] | None:
         attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
         for tactic in suggest_fast_path_tactics(current_code):
+            remaining = _remaining_deadline_seconds(deadline)
+            if remaining is not None and remaining < MIN_TARGET_OPERATION_SECONDS:
+                break
+            bounded_attempt_timeout = _timeout_for_deadline(attempt_timeout, deadline)
             try:
                 candidate_code = _replace_named_theorem_body(current_code, theorem_name, tactic)
             except ValueError:
                 return None
             try:
-                result = _compat_compile_check(candidate_code, timeout=attempt_timeout)
+                result = _compat_compile_check(candidate_code, timeout=bounded_attempt_timeout)
             except Exception:
                 continue
             if result.get("success"):
@@ -4466,6 +4609,7 @@ class ProverExecutionMixin:
         target: ProverTarget,
         current_code: str,
         timeout: int,
+        deadline: float | None = None,
         include_fallback_tactics: bool = False,
         attempt_budget: dict[str, int] | None = None,
     ) -> tuple[dict[str, str] | None, DirectCloseAttemptSummary]:
@@ -4474,6 +4618,7 @@ class ProverExecutionMixin:
             target=target,
             current_code=current_code,
             timeout=timeout,
+            deadline=deadline,
             include_fallback_tactics=include_fallback_tactics,
             attempt_budget=attempt_budget,
         )
@@ -4483,6 +4628,7 @@ class ProverExecutionMixin:
             theorem_name=self._target_theorem_name(packet, target),
             current_code=current_code,
             timeout=timeout,
+            deadline=deadline,
         )
         if normalization is not None:
             return (
@@ -4536,6 +4682,7 @@ class ProverExecutionMixin:
         backend: ProverBackend,
         turn: int,
         timeout: int,
+        deadline: float | None,
         lean_feedback: list[str],
         include_fallback_tactics: bool,
         scaffold_attempts: set[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], str]],

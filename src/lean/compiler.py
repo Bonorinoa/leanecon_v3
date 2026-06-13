@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -141,12 +143,37 @@ def lean_run_code(
 
     try:
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 ["lake", "env", "lean", _relative_to_workspace(temp_path)],
                 cwd=str(LEAN_WORKSPACE),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,
+                start_new_session=True,
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    process.kill()
+                stdout, stderr = process.communicate()
+                return {
+                    "success": False,
+                    "stdout": stdout or "",
+                    "stderr": (
+                        (stderr or "").strip()
+                        + ("\n" if stderr else "")
+                        + f"lake env lean timed out after {timeout}s"
+                    ),
+                    "exit_code": -1,
+                }
+            result = subprocess.CompletedProcess(
+                process.args,
+                process.returncode,
+                stdout=stdout,
+                stderr=stderr,
             )
         except subprocess.TimeoutExpired:
             return {

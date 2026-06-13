@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +13,7 @@ from src.prover import Prover, ProverAction, ProverTargetTimeouts
 from src.prover.execution import _assemble_prover_result
 from src.prover.file_controller import ProofFileController
 from src.prover.models import ProverFailure, ProverTarget, ProverTraceStep
-from src.observability import TokenUsage
+from src.observability import SpanRecorder, TokenUsage
 from src.prover.repl import ReplToolOrchestrator
 from src.tools import ToolCall
 from src.prover.tactics import should_decompose
@@ -1177,6 +1178,121 @@ def test_prover_resolves_per_target_timeouts_with_request_fallback(tmp_path) -> 
         == 300
     )
     assert prover._final_compile_timeout(resolved) == 300
+
+
+def test_direct_closure_respects_expired_target_deadline(monkeypatch, tmp_path) -> None:
+    import src.prover.prover as prover_module
+
+    compile_calls: list[int] = []
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver({}),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+    packet = _packet(
+        theorem_name="deadline_demo",
+        claim="Deadline demo.",
+        lean_code="theorem deadline_demo : True := by\n  sorry\n",
+        selected_preamble=["measure"],
+        claim_type="preamble_definable",
+    )
+
+    monkeypatch.setattr(
+        prover,
+        "_direct_candidate_proofs",
+        lambda **_kwargs: [("trivial", "test", "test candidate")],
+    )
+    monkeypatch.setattr(
+        prover_module,
+        "compile_check",
+        lambda *_args, **_kwargs: compile_calls.append(1) or {"success": True},
+    )
+
+    direct_close, summary = prover._try_direct_definable_closure(
+        packet=packet,
+        target=ProverTarget(name="theorem_body", statement="True", kind="theorem_body"),
+        current_code=packet.lean_code,
+        timeout=30,
+        deadline=time.monotonic() - 1.0,
+    )
+
+    assert direct_close is None
+    assert summary.attempts_used == 0
+    assert compile_calls == []
+
+
+@pytest.mark.asyncio
+async def test_provider_timeout_is_clamped_to_target_remaining_budget(monkeypatch, tmp_path) -> None:
+    import src.prover.prover as prover_module
+
+    class TimeoutCapturingDriver:
+        def __init__(self) -> None:
+            self.timeout = 300.0
+            self.seen_timeouts: list[float] = []
+
+        def next_action(self, *, backend, prompt: str) -> ProverAction:
+            self.seen_timeouts.append(float(self.timeout))
+            return ProverAction.model_validate(
+                {
+                    "action_type": "finish",
+                    "rationale": "Give up after timeout clamp is observed.",
+                    "finish_reason": "unable_to_prove",
+                }
+            )
+
+    driver = TimeoutCapturingDriver()
+    prover = Prover(
+        backend="leanstral",
+        mistral_driver=driver,
+        huggingface_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+    packet = _packet(
+        theorem_name="provider_deadline_demo",
+        claim="Provider deadline demo.",
+        lean_code="theorem provider_deadline_demo : True := by\n  sorry\n",
+    )
+    monkeypatch.setattr(
+        prover_module,
+        "compile_check",
+        lambda *_args, **_kwargs: {
+            "success": False,
+            "errors": ["unsolved goals"],
+            "warnings": [],
+            "has_sorry": True,
+        },
+    )
+    monkeypatch.setattr(prover_module, "LeanREPLSession", FakeReplSession)
+    monkeypatch.setattr(prover, "_try_direct_definable_closure", lambda **_kwargs: (None, _kwargs.get("direct_close_summary") or SimpleNamespace(exhausted=False)))
+    monkeypatch.setattr(
+        prover,
+        "_apply_deterministic_repair",
+        lambda **_kwargs: (False, None, None),
+    )
+
+    await prover._prove_target(
+        packet=packet,
+        target=ProverTarget(name="theorem_body", statement="True", kind="theorem_body"),
+        current_code=packet.lean_code,
+        trace=[],
+        job_id="provider_deadline_demo",
+        attempted_backends=[],
+        max_turns=1,
+        timeout=3,
+        target_timeouts=ProverTargetTimeouts(theorem_body=3),
+        allow_decomposition=False,
+        max_recursion_depth=0,
+        telemetry=SpanRecorder(),
+        provider_usage=[],
+        audit_events=[],
+    )
+
+    assert driver.seen_timeouts
+    assert max(driver.seen_timeouts) <= 3.0
+    assert driver.timeout == 300.0
 
 
 def test_prover_recursion_depth_allows_three_and_rejects_four() -> None:
