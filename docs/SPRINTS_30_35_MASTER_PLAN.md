@@ -5,6 +5,10 @@
 **Canonical scope:** this document is the working master plan for Sprints 30-35.
 `docs/ROADMAP_SPRINTS_30_35.md` remains as the compact roadmap summary.
 
+Status note: Sprint 34 has been closed with a no-go result and no Railway
+deployment. Sprint 35 is the next active sprint and remains dev-mode,
+evaluation-focused work.
+
 ## Operating Contract
 
 The alpha release denominator is frozen:
