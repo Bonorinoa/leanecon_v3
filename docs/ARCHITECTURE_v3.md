@@ -8,6 +8,7 @@
 > Sprint 24 update (April 27, 2026): The cumulative hybrid retrieval pipeline is described across §4A (Sprint 20 LSP surface + Sprint 22 LeanSearch merge) and §4B (Sprints 21–24: harness RAG, semantic embedding, seed expansion, enrichment, stall recovery, observable failures, rescue retrieval). Headline `tier2_frontier_mathlib_native` pass rate has held at 1/3 across Sprints 20–24 — the synthesis bottleneck is now isolated and the Sprint 25 work plan attacks it from the prover side.
 > Alpha checkpoint update (June 13, 2026): The alpha release denominator is frozen to `tier1_core_preamble_definable` scoped as `release_reliable`. `tier2_frontier_mathlib_native` and `tier2_frontier_preamble_definable` remain standard benchmark artifacts, but they are frontier/attempt surfaces and are excluded from `release_reliable_metrics`.
 > Sprint 31 update (June 14, 2026): `release`, `frontier`, and `research` budget profiles are first-class execution policy. Public/API release paths default to `release`; frontier/research runs are explicitly non-release and cannot contribute to release-reliable metrics.
+> Sprint 32 update (June 14, 2026): Lean infrastructure now has explicit command lanes. Developer and PR checks use focused Python tests plus `lake env lean LeanEcon.lean`; full `lake build` is a release-image/infrastructure gate with cache pre-warm expectations, not ordinary edit-loop work.
 
 ## 1. High-Level Flow (Matches Your Hand-Drawn Sketch)
 ```
@@ -203,9 +204,32 @@ The harness emits `SynthesisEvent` after each mathlib-native `apply_tactic`, rec
 ---
 
 ## 6. Deployment & CI
-- **Docker**: Multi-stage, cached Lean base image (GHCR), HF model weights cached at build (for self-hosting path).
-- **Railway**: Same core pattern as v2 with v3 env vars, Mistral/Leanstral credentials, cached Lean workspace, and `uvx lean-lsp-mcp` available in the runtime image. Deployment readiness requires `/health`, `/metrics`, `lake build`, and benchmark-mode smoke/local-gate checks.
-- **CI Gate**: `.github/workflows/ci.yml` should target the normalized benchmark surface, not the historical mixed files: `tier1_core_preamble_definable`, `tier2_frontier_mathlib_native`, and `tier2_frontier_preamble_definable`.
+- **Developer edit-loop gate**: focused Python tests with
+  `PYTHONPATH=. ./.venv/bin/python -m pytest -o addopts=''` and the fast Lean
+  root check `cd lean_workspace && lake env lean LeanEcon.lean`. This is the
+  default local/PR lane and does not require a full Lake build.
+- **Local release-candidate gate**: the developer gate plus
+  `tier1_core_preamble_definable` through `evals.local_gate`. This is the only
+  alpha release-reliable denominator.
+- **Release-image gate**: `lake exe cache get`, full `lake build`, and Docker
+  image build. This lane validates infrastructure, cache, and image readiness;
+  it runs on main/manual CI rather than every ordinary edit loop.
+- **Docker**: Multi-stage image using `ghcr.io/bonorinoa/leanecon-lean-base:latest`
+  as the Lean toolchain and workspace source. The application image copies
+  `/root/.elan` and `/lean_workspace`, places `/root/.elan/bin` on `PATH`,
+  installs `uv` for `uvx lean-lsp-mcp` availability, and checks `lean`,
+  `lake`, and `lake env lean LeanEcon.lean` during image build so a missing
+  toolchain or broken workspace fails before Railway runtime.
+- **Railway**: Same core pattern as v2 with v3 env vars, Mistral/Leanstral
+  credentials, cached Lean workspace, and observable Lean/LSP state. Hosted
+  deployment readiness requires the release-image gate first, then `/health`,
+  `/metrics`, `/metrics/prometheus`, bounded job/SSE smoke, review transitions,
+  and one release-profile proof smoke in production.
+- **CI Gate**: `.github/workflows/ci.yml` has a fast edit-loop job for PRs and a
+  release-image job for main/manual runs. Benchmark/local-gate release checks
+  target `tier1_core_preamble_definable`; frontier sets
+  `tier2_frontier_mathlib_native` and `tier2_frontier_preamble_definable` remain
+  diagnostics and cannot alter release reliability.
 
 ---
 

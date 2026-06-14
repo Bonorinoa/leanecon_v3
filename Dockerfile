@@ -8,9 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl && rm 
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY evals ./evals
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir uv && pip install --no-cache-dir -e .
 
+COPY --from=lean /root/.elan /root/.elan
 COPY --from=lean /lean_workspace /app/lean_workspace
+ENV PATH="/root/.elan/bin:${PATH}"
+RUN lean --version && lake --version && cd /app/lean_workspace && lake env lean LeanEcon.lean
 COPY docs ./docs
 COPY skills ./skills
 COPY benchmark_baselines ./benchmark_baselines

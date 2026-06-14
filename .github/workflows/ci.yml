@@ -5,9 +5,10 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
 
 jobs:
-  bootstrap:
+  fast-edit-loop:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,6 +16,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Cache Lean toolchain and Lake workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan
+            lean_workspace/.lake/packages
+            lean_workspace/.lake/build
+          key: ${{ runner.os }}-lean-${{ hashFiles('lean_workspace/lean-toolchain', 'lean_workspace/lake-manifest.json', 'lean_workspace/lakefile.toml', 'lean_workspace/**/*.lean') }}
+          restore-keys: |
+            ${{ runner.os }}-lean-${{ hashFiles('lean_workspace/lean-toolchain', 'lean_workspace/lake-manifest.json', 'lean_workspace/lakefile.toml') }}-
+            ${{ runner.os }}-lean-
 
       - name: Install Lean toolchain
         run: |
@@ -30,11 +43,51 @@ jobs:
       - name: Fetch mathlib cache
         run: cd lean_workspace && lake exe cache get
 
-      - name: Build Lean workspace
-        run: cd lean_workspace && lake build
-
       - name: Run focused tests
-        run: python -m pytest
+        run: python -m pytest -o addopts=''
+
+      - name: Fast Lean root check
+        run: cd lean_workspace && lake env lean LeanEcon.lean
 
       - name: Run local-gate scaffold
         run: python -m evals.local_gate --claim-set tier0_smoke --limit 0 --output-dir /tmp/leanecon-local-gate-ci
+
+  release-image:
+    runs-on: ubuntu-latest
+    needs: fast-edit-loop
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache Lean toolchain and Lake workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan
+            lean_workspace/.lake/packages
+            lean_workspace/.lake/build
+          key: ${{ runner.os }}-lean-release-${{ hashFiles('lean_workspace/lean-toolchain', 'lean_workspace/lake-manifest.json', 'lean_workspace/lakefile.toml', 'lean_workspace/**/*.lean') }}
+          restore-keys: |
+            ${{ runner.os }}-lean-${{ hashFiles('lean_workspace/lean-toolchain', 'lean_workspace/lake-manifest.json', 'lean_workspace/lakefile.toml') }}-
+            ${{ runner.os }}-lean-
+
+      - name: Install Lean toolchain
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain "$(cat lean_workspace/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.elan/bin:$PATH"
+          lake --version
+
+      - name: Fetch mathlib cache
+        run: cd lean_workspace && lake exe cache get
+
+      - name: Full Lake build
+        run: cd lean_workspace && lake build
+
+      - name: Docker release image syntax/build check
+        run: docker build --pull=false -t leanecon-v3:ci .
