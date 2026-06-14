@@ -2,7 +2,8 @@
 
 Sprint 34 deployment work must wait until the local release-candidate audit in
 `docs/SPRINT_30_LOCAL_RC_AUDIT.md` is green. The broader Sprint 30-35 execution
-plan is `docs/SPRINTS_30_35_MASTER_PLAN.md`.
+plan is `docs/SPRINTS_30_35_MASTER_PLAN.md`. The current Sprint 34 no-go
+record is `docs/SPRINT_34_NO_GO_RESULT.md`.
 
 ## Minimum Bar Before Any Readiness Claim
 1. The developer edit-loop gate passes on the deployment branch:
@@ -83,3 +84,61 @@ requires it.
 mathlib-native frontier path. It is not a release blocker for
 `tier1_core_preamble_definable` unless `/health` or the prover runtime cannot
 report the LSP state cleanly.
+
+## Sprint 34 Release-Prep Record
+
+For Sprint 34, keep fresh release-prep artifacts outside canonical benchmark
+history unless the release manager explicitly promotes them:
+
+- local release gate: `/private/tmp/leanecon-s34-tier1`
+- local or hosted API smoke: `/private/tmp/leanecon-s34-api-smoke`
+- Docker/image notes: record either a successful `docker build --pull=false -t
+  leanecon-v3:ci .` or the exact reason local Docker could not validate the
+  image.
+
+If local Docker is unavailable, the CI release-image lane must prove all of the
+following before hosted alpha deployment:
+
+- the Lean base image has `/root/.elan`
+- the Lean base image has `/lean_workspace`
+- the app image can run `lean --version`
+- the app image can run `lake --version`
+- the app image can run `cd /app/lean_workspace && lake env lean LeanEcon.lean`
+
+Hosted smoke is required after image readiness and before any public alpha
+readiness statement. Capture `/health`, `/metrics`, `/metrics/prometheus`,
+bounded proof job acceptance, `/jobs/{job_id}`, `/jobs/{job_id}/events`, review
+approve/reject transitions, and one release-profile proof smoke when provider
+credentials and endpoint access permit it.
+
+## Rollback Notes
+
+If hosted smoke fails after deploy:
+
+1. Stop the readiness announcement and keep the release denominator unchanged.
+2. Roll Railway back to the last deployment whose image passed `/health`,
+   `/metrics`, `/metrics/prometheus`, and a bounded release-profile proof smoke.
+3. Restore the last known-good production environment values for
+   `LEANECON_BUDGET_PROFILE`, planner, formalizer, prover, and Mistral
+   credentials.
+4. Re-run the hosted deployment gate against the rolled-back deployment and
+   save smoke responses under a fresh `/private/tmp/leanecon-s34-api-smoke-*`
+   directory.
+5. Treat any frontier, mathlib-native, or non-release profile failure as
+   diagnostic unless it breaks release-profile health, metrics, queue bounds, or
+   Lean kernel verification for `tier1_core_preamble_definable`.
+
+Rollback does not authorize broadening the release denominator, promoting
+frontier results, or weakening Sprint 31 release budget defaults.
+
+## Alpha Release Statement Draft
+
+LeanEcon v3 hosted alpha is release-reliable only for the frozen
+`tier1_core_preamble_definable` denominator with
+`claim_scope = release_reliable`. Frontier surfaces, including mathlib-native
+and frontier preamble claim sets, are diagnostic and experimental; they are not
+part of release reliability. Lean kernel verification is the trust anchor for
+proof success. Cost, latency, token usage, provider/model posture, budget
+profile, and queue behavior are observable through release artifacts,
+`/health`, `/metrics`, and `/metrics/prometheus`. Hosted alpha jobs are bounded
+by the `release` budget profile.
