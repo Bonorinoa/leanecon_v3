@@ -13,7 +13,7 @@ from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, P
 from src.planner import PlannerLLMResponse, PlannerService
 from src.planner.planner import PlannerDriverError
 from src.planner.retrieval import HashingTextEmbedder, PlannerRetrievalService
-from src.prover.models import ProverResult, ProverTraceStep
+from src.prover.models import ProverFailure, ProverResult, ProverTraceStep
 
 
 class FakePlannerDriver:
@@ -107,7 +107,7 @@ class FakeFormalizerService:
 class FakeProver:
     def __init__(self) -> None:
         self.primary_backend = SimpleNamespace(
-            name="goedel-prover-v2", provider="huggingface", model="Goedel-LM/Goedel-Prover-V2-32B"
+            name="leanstral", provider="mistral", model="labs-leanstral-2603"
         )
         self.calls: list[dict[str, object]] = []
 
@@ -121,6 +121,7 @@ class FakeProver:
         target_timeouts,
         allow_decomposition,
         benchmark_mode,
+        budget_profile=None,
         on_progress=None,
     ):
         self.calls.append(
@@ -133,6 +134,7 @@ class FakeProver:
                 else None,
                 "allow_decomposition": allow_decomposition,
                 "benchmark_mode": benchmark_mode,
+                "budget_profile": getattr(budget_profile, "name", budget_profile),
                 "claim_type": packet.claim_type,
             }
         )
@@ -161,15 +163,15 @@ class FakeProver:
             termination_reason="verified",
             repair_count=0,
             preamble_names=list(packet.selected_preamble),
-            backend_used="goedel-prover-v2",
-            attempted_backends=["goedel-prover-v2"],
+            backend_used="leanstral",
+            attempted_backends=["leanstral"],
             tool_budget={},
             telemetry={},
             usage_by_stage={
                 "prover": {
                     "stage": "prover",
-                    "provider": "huggingface",
-                    "model": "Goedel-LM/Goedel-Prover-V2-32B",
+                    "provider": "mistral",
+                    "model": "labs-leanstral-2603",
                     "input_tokens": 120,
                     "output_tokens": 40,
                     "estimated_cost_usd": 0.12,
@@ -182,6 +184,8 @@ class FakeProver:
             timing_breakdown={"prover_ms": 25.0, "total_ms": 25.0},
             target_timeouts=target_timeouts,
             audit_summary={"event_count": 1, "events": []},
+            budget_profile=getattr(budget_profile, "name", budget_profile) or "release",
+            budget_caps=budget_profile.public_dict() if hasattr(budget_profile, "public_dict") else {},
         )
 
 
@@ -405,6 +409,8 @@ def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
     assert summary["executed"] is True
     assert summary["artifact_schema_version"] == 1
     assert summary["benchmark_mode"] is True
+    assert summary["budget_profile"] == "release"
+    assert summary["budget_caps"]["max_prover_turns"] == 8
     assert summary["claims_total"] == 3
     assert summary["claims_passed"] == 3
     assert summary["claims_failed"] == 0
@@ -412,16 +418,21 @@ def test_local_gate_runs_live_pipeline_with_usage_summary(monkeypatch) -> None:
     assert summary["tokens_by_stage"]["prover"]["input_tokens"] == 360
     assert summary["cost_by_stage"]["prover"] == 0.36
     assert (
-        summary["cost_by_model"]["huggingface:Goedel-LM/Goedel-Prover-V2-32B"]["estimated_cost_usd"]
+        summary["cost_by_model"]["mistral:labs-leanstral-2603"]["estimated_cost_usd"]
         == 0.36
     )
+    assert summary["cost_by_claim_scope"]
+    assert summary["token_usage_sources"]["provider"]["records"] >= 3
+    assert summary["latency_by_stage"]["prover"]["records"] == 3
     assert all(item["theorem_stub_reference"] is not None for item in summary["results"])
     assert all(item["benchmark_mode"] is True for item in summary["results"])
+    assert all(item["budget_profile"] == "release" for item in summary["results"])
     assert all("raw_planner_response" not in item for item in summary["results"])
     assert all(item["verified_via"] == "full_pipeline" for item in summary["results"])
     assert fake_prover.calls
     assert fake_prover.calls[0]["benchmark_mode"] is True
-    assert fake_prover.calls[0]["timeout"] == 120
+    assert fake_prover.calls[0]["timeout"] == 300
+    assert fake_prover.calls[0]["budget_profile"] == "release"
     assert fake_prover.calls[0]["target_timeouts"] == {
         "theorem_body": 120,
         "subgoal": 120,
@@ -443,6 +454,7 @@ def test_local_gate_attaches_claim_type_for_supported_benchmark_buckets(monkeypa
         planner_service=_planner_service(),
         formalizer_service=FakeFormalizerService(),
         prover_instance=fake_prover,
+        budget_profile="frontier",
         enforce_readiness=False,
         benchmark_mode=True,
     )
@@ -450,6 +462,69 @@ def test_local_gate_attaches_claim_type_for_supported_benchmark_buckets(monkeypa
     assert summary["claims_total"] == len(fake_prover.calls)
     assert fake_prover.calls
     assert all(call["claim_type"] == "mathlib_native" for call in fake_prover.calls)
+
+
+def test_release_budget_profile_blocks_frontier_claim_set(monkeypatch) -> None:
+    import evals.local_gate as local_gate_module
+
+    monkeypatch.setattr(local_gate_module, "_try_claim_trivial_shortcut", lambda _stub: None)
+
+    summary = run_claim_set(
+        "tier2_frontier_mathlib_native",
+        planner_service=_planner_service(),
+        formalizer_service=FakeFormalizerService(),
+        prover_instance=FakeProver(),
+        enforce_readiness=False,
+        benchmark_mode=True,
+    )
+
+    assert summary["executed"] is False
+    assert summary["budget_profile"] == "release"
+    assert summary["failure_counts"]["budget_profile_disallows_frontier_claim_set"] == 1
+    assert summary["failure_counts"]["budget_profile_disallows_mathlib_native"] == 1
+
+
+def test_budget_exhaustion_reports_profile_and_cap(monkeypatch) -> None:
+    import evals.local_gate as local_gate_module
+
+    class ExhaustedProver(FakeProver):
+        async def prove(self, *args, **kwargs):
+            result = await super().prove(*args, **kwargs)
+            profile = kwargs["budget_profile"]
+            result.status = "failed"
+            result.failure = ProverFailure(
+                reason="max_turns_exhausted",
+                message="Reached turn cap.",
+                error_code="max_turns_exhausted",
+                turn=profile.max_prover_turns,
+                backend="leanstral",
+            )
+            result.termination_reason = "max_turns_exhausted"
+            result.tool_budget = {
+                "budget_profile": profile.name,
+                "max_prover_turns": profile.max_prover_turns,
+                "max_total_tool_calls": profile.max_total_tool_calls,
+                "total_tool_calls": profile.max_total_tool_calls,
+            }
+            return result
+
+    monkeypatch.setattr(local_gate_module, "_try_claim_trivial_shortcut", lambda _stub: None)
+
+    summary = run_claim_set(
+        "tier0_smoke",
+        planner_service=_planner_service(),
+        formalizer_service=FakeFormalizerService(),
+        prover_instance=ExhaustedProver(),
+        enforce_readiness=False,
+        benchmark_mode=True,
+        limit=1,
+    )
+
+    result = summary["results"][0]
+    assert result["budget_exhaustion"]["budget_profile"] == "release"
+    assert result["budget_exhaustion"]["cap"] == "max_prover_turns"
+    assert result["budget_exhaustion"]["cap_value"] == 8
+    assert summary["budget_exhaustion"]["by_reason"]["max_turns_exhausted"] == 1
 
 
 def test_local_gate_persists_raw_planner_response_for_schema_invalid(monkeypatch) -> None:
@@ -612,6 +687,7 @@ def test_local_gate_focused_sample_uses_locked_frontier_ids(monkeypatch) -> None
         planner_service=_planner_service(),
         formalizer_service=FakeFormalizerService(),
         prover_instance=FakeProver(),
+        budget_profile="frontier",
         enforce_readiness=False,
         benchmark_mode=True,
         focused_sample=True,
@@ -621,6 +697,7 @@ def test_local_gate_focused_sample_uses_locked_frontier_ids(monkeypatch) -> None
         planner_service=_planner_service(),
         formalizer_service=FakeFormalizerService(),
         prover_instance=FakeProver(),
+        budget_profile="frontier",
         enforce_readiness=False,
         benchmark_mode=True,
         focused_sample=True,
@@ -649,6 +726,7 @@ def test_local_gate_benchmark_metrics_include_harness_trace_events(monkeypatch) 
         planner_service=_planner_service(),
         formalizer_service=FakeFormalizerService(),
         prover_instance=TraceFakeProver(),
+        budget_profile="frontier",
         enforce_readiness=False,
         benchmark_mode=True,
         focused_sample=True,

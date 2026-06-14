@@ -53,7 +53,16 @@ def test_pricing_lookup_and_complete_usage(monkeypatch) -> None:
 
 def test_job_store_persists_usage_metrics_and_audits(tmp_path) -> None:
     store = JobStore(tmp_path / "jobs.db", ttl_seconds=3600)
-    job = store.create(status="queued", review_state="queued", result={"claim": "demo"})
+    job = store.create(
+        status="queued",
+        review_state="queued",
+        result={
+            "claim": "demo",
+            "claim_type": "preamble_definable",
+            "claim_scope": "release_reliable",
+            "budget_profile": "release",
+        },
+    )
     store.record_stage_usage(
         job.id,
         complete_usage(
@@ -93,6 +102,10 @@ def test_job_store_persists_usage_metrics_and_audits(tmp_path) -> None:
     snapshot = store.metrics_snapshot()
     assert snapshot["usage_totals"]["records"] == 1
     assert snapshot["usage_by_stage"]["formalizer"]["records"] == 1
+    assert snapshot["usage_by_claim_type"]["preamble_definable"]["records"] == 1
+    assert snapshot["usage_by_claim_scope"]["release_reliable"]["records"] == 1
+    assert snapshot["usage_by_source"]["estimated_chars"]["records"] == 1
+    assert snapshot["latency_by_stage"]["formalizer"]["latency_ms_avg"] == 7.0
     assert snapshot["stage_success_counts"]["formalizer"]["success"] == 1
     assert snapshot["integrity"]["schema_invalid_rate"] is None
 

@@ -82,7 +82,7 @@ def test_build_markdown_report_includes_overview_latency_and_failures(tmp_path) 
         "- Release-reliable pass@1 is computed only from `release_reliable` scoped claims"
         in report
     )
-    assert "| Claim Set | Generated At | Pass@1 | Passed | Failed | Cost USD | File |" in report
+    assert "| Claim Set | Generated At | Pass@1 | Passed | Failed | Cost USD | Profile | File |" in report
     assert "| overall | 50.0% | 1/2 | 0.0% | 0/2 |" in report
     assert (
         "| Failure Code | tier1_core_preamble_definable | tier2_frontier_mathlib_native | "

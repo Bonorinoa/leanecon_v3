@@ -7,6 +7,7 @@
 > Sprint 20 update (April 24, 2026): mathlib-native proving is now a first-class route. `mathlib_native_mode` gates preamble shortcuts, exposes `lean-lsp-mcp` tools to Leanstral, and records LSP/native-search usage in benchmark traces.
 > Sprint 24 update (April 27, 2026): The cumulative hybrid retrieval pipeline is described across §4A (Sprint 20 LSP surface + Sprint 22 LeanSearch merge) and §4B (Sprints 21–24: harness RAG, semantic embedding, seed expansion, enrichment, stall recovery, observable failures, rescue retrieval). Headline `tier2_frontier_mathlib_native` pass rate has held at 1/3 across Sprints 20–24 — the synthesis bottleneck is now isolated and the Sprint 25 work plan attacks it from the prover side.
 > Alpha checkpoint update (June 13, 2026): The alpha release denominator is frozen to `tier1_core_preamble_definable` scoped as `release_reliable`. `tier2_frontier_mathlib_native` and `tier2_frontier_preamble_definable` remain standard benchmark artifacts, but they are frontier/attempt surfaces and are excluded from `release_reliable_metrics`.
+> Sprint 31 update (June 14, 2026): `release`, `frontier`, and `research` budget profiles are first-class execution policy. Public/API release paths default to `release`; frontier/research runs are explicitly non-release and cannot contribute to release-reliable metrics.
 
 ## 1. High-Level Flow (Matches Your Hand-Drawn Sketch)
 ```
@@ -68,7 +69,7 @@ Python harness is deliberately minimal.
 - **src/claim_scope.py** — Scope and failure classifier. It separates `release_reliable`, `supported_attempt`, `frontier_collect`, and `out_of_scope` claims, maps failed attempts to roadmap next actions, and produces frontier queue records for benchmark/local-gate artifacts.
 - **src/guardrails/** — Vacuity rejection, semantic faithfulness (new frame-based), compile check, repair history.
 - **src/memory/** — SQLite + vector index (episodic proof traces, successful/failed tactics, retrieval for Planner/Prover).
-- **src/observability/** — SSE streaming, typed progress events, cost tracking, tool budgets, provenance, `/health` + `/metrics`. Tool budgets now report total tool calls, LSP tool calls, native search attempts, and `mathlib_native_mode` uses.
+- **src/observability/** — SSE streaming, typed progress events, cost tracking, tool budgets, provenance, `/health` + `/metrics`. Tool budgets now report active budget profile, total tool calls, search calls, LSP tool calls, native search attempts, budget exhaustion, and `mathlib_native_mode` uses.
 - **src/tools/** — Standardized `ToolSpec` (name, args, description, Lean-specific, cost). Registry + LeanInteract wrappers + `lean-lsp-mcp` tools (`lean_goal`, `lean_code_actions`, `lean_diagnostic_messages`, `lean_hover_info`, `lean_leansearch`, `lean_loogle`).
 - **src/api/** — FastAPI v3 (async jobs, SSE, review gates).
 
@@ -84,6 +85,15 @@ Python harness is deliberately minimal.
 - **Formalizer**: `leanstral` via Mistral.
 - **Prover**: `leanstral` via Mistral, with bounded Lean REPL and `lean-lsp-mcp` tooling.
 
+**Sprint 31 release guardrail**:
+- The `release` budget profile requires the alpha-primary Mistral path:
+  planner `mistral-large-2512`, formalizer `labs-leanstral-2603`, prover
+  `labs-leanstral-2603`.
+- Non-Mistral provider paths and cheap fallback exploration are allowed only
+  under `frontier` or `research`; those runs are marked non-release and excluded
+  from release-reliable metrics.
+- `research` is local-only and must not be used for hosted public alpha paths.
+
 **Supported/open path**:
 - **Planner**: MiniMaxAI/MiniMax-M2.7, arcee-ai/Trinity-Large-Thinking, Qwen/DeepSeek class models, or other strong open informal reasoners via HF.
 - **Formalizer**: `mistralai/Leanstral-2603` — native Lean 4 code agent.
@@ -94,6 +104,24 @@ Python harness is deliberately minimal.
 **Fallback**: Codex CLI → Ollama (same 32B+ model) if token limits hit (rare).
 
 **No Anthropic. No Opus. No rate-limit theater.**
+
+## 3A. Budget Profiles
+
+Select profiles with `LEANECON_BUDGET_PROFILE` or local-gate
+`--budget-profile`. API requests may also provide `budget_profile`; omitted
+values use the environment default, which itself defaults to `release`.
+
+| Profile | Max prover turns | Max prove steps | Max total tool calls | Max search calls | Hybrid search cap | Max timeout | Target timeout caps | Direct-close cap | Mathlib direct-close cap | Frontier/mathlib native | Provider policy |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- | --- |
+| `release` | 8 | 32 | 40 | 12 | 16 | 300s | theorem 300s, subgoal 180s, APOLLO 120s | 24 | 2 | blocked on public release surfaces | Mistral-only alpha primary |
+| `frontier` | 12 | 48 | 80 | 20 | 24 | 600s | theorem 450s, subgoal 240s, APOLLO 180s | 24 | 2 | allowed, non-release | Mistral primary; non-release fallback allowed |
+| `research` | 20 | 96 | 160 | 40 | 48 | 1200s | theorem 900s, subgoal 600s, APOLLO 300s | 48 | 4 | allowed, local-only non-release | experimental local/non-release |
+
+Budget profile metadata appears in prover results, API job payloads,
+`/health`, `/metrics`, `/metrics/prometheus`, local-gate claim-set JSON, and
+combined `local_gate.json`. Cost is attributed by stage, model, claim type,
+claim scope, and token usage source. Latency is reported by stage. Budget
+exhaustion records carry the active profile and cap that stopped the run.
 
 ---
 

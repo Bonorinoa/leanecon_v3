@@ -27,17 +27,27 @@ from src.api.models import (
     ProveRequest,
 )
 from src.backend_capabilities import get_backend_capability
+from src.budget_profiles import (
+    BudgetProfile,
+    clamp_int,
+    clamp_target_timeouts,
+    evaluate_provider_guardrail,
+    resolve_budget_profile,
+)
 from src.config import (
     API_PORT,
     APP_VERSION,
     BENCHMARK_REQUIRE_PRICING,
+    BUDGET_PROFILE,
     COST_TRACKING_ENABLED,
     CORS_ORIGINS,
     EVAL_CLAIMS_DIR,
     HF_TOKEN,
     JOB_MAX_CONCURRENT,
+    LEANECON_ENV,
     MISTRAL_API_KEY,
     OLLAMA_API_KEY,
+    PROVER_FALLBACK_BACKEND,
     PROVER_PROVIDER,
 )
 from src.evals.metrics_aggregator import CANONICAL_HISTORY_PATH, load_history_rows
@@ -171,6 +181,129 @@ def _backend_status() -> dict[str, Any]:
     }
 
 
+def _provider_stage_config() -> dict[str, dict[str, str]]:
+    fallback_backend = getattr(prover, "fallback_backend", None)
+    stages = {
+        "planner": {
+            "provider": str(planner.backend.provider),
+            "model": str(planner.backend.model),
+        },
+        "formalizer": {
+            "provider": str(formalizer.backend.provider),
+            "model": str(formalizer.backend.model),
+        },
+        "prover": {
+            "provider": str(prover.primary_backend.provider),
+            "model": str(prover.primary_backend.model),
+        },
+    }
+    if fallback_backend is not None:
+        stages["prover_fallback"] = {
+            "provider": str(getattr(fallback_backend, "provider", "")),
+            "model": str(getattr(fallback_backend, "model", "")),
+            "backend": str(getattr(fallback_backend, "name", PROVER_FALLBACK_BACKEND)),
+        }
+    return stages
+
+
+def _provider_guardrail(profile: BudgetProfile) -> dict[str, Any]:
+    return evaluate_provider_guardrail(profile, _provider_stage_config())
+
+
+def _resolve_request_profile(value: str | None) -> BudgetProfile:
+    try:
+        return resolve_budget_profile(value, runtime_env=LEANECON_ENV)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _budget_profile_payload(profile: BudgetProfile) -> dict[str, Any]:
+    return {
+        "active": profile.name,
+        "default": BUDGET_PROFILE.name,
+        "caps": profile.public_dict(),
+        "provider_guardrail": _provider_guardrail(profile),
+    }
+
+
+def _ensure_release_provider_guardrail(profile: BudgetProfile) -> None:
+    guardrail = _provider_guardrail(profile)
+    if profile.name == "release" and not guardrail.get("release_compliant"):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Release budget profile requires Mistral-primary provider defaults.",
+                "provider_guardrail": guardrail,
+            },
+        )
+
+
+def _ensure_profile_allows_packet(profile: BudgetProfile, packet: Any) -> None:
+    claim_type = getattr(packet, "claim_type", None)
+    claim_scope = getattr(packet, "claim_scope", None)
+    if claim_type == "mathlib_native" and not profile.allow_mathlib_native:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Budget profile `release` does not allow mathlib-native frontier "
+                "proof behavior. Select `frontier` or `research` for diagnostic attempts."
+            ),
+        )
+    if str(claim_scope) in {"frontier_collect", "out_of_scope"} and not profile.allow_frontier_claims:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Budget profile `release` does not allow frontier claim scopes. "
+                "Select `frontier` or `research` for diagnostic attempts."
+            ),
+        )
+
+
+def _validate_prove_budget_request(request: ProveRequest, profile: BudgetProfile) -> None:
+    if request.max_turns is not None and request.max_turns > profile.max_prover_turns:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Requested max_turns={request.max_turns} exceeds `{profile.name}` "
+                f"profile cap {profile.max_prover_turns}."
+            ),
+        )
+    if request.timeout is not None and request.timeout > profile.max_timeout_seconds:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Requested timeout={request.timeout} exceeds `{profile.name}` "
+                f"profile cap {profile.max_timeout_seconds}."
+            ),
+        )
+    if request.target_timeouts is None:
+        return
+    requested = request.target_timeouts.model_dump(mode="json")
+    for key, cap in profile.target_timeout_caps.items():
+        value = requested.get(key)
+        if value is not None and int(value) > int(cap):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Requested target_timeouts.{key}={value} exceeds `{profile.name}` "
+                    f"profile cap {cap}."
+                ),
+            )
+
+
+def _effective_prove_budget(request: ProveRequest, profile: BudgetProfile) -> dict[str, Any]:
+    requested_timeouts = (
+        request.target_timeouts.model_dump(mode="json")
+        if request.target_timeouts is not None
+        else profile.target_timeout_caps
+    )
+    return {
+        "max_turns": request.max_turns or profile.max_prover_turns,
+        "timeout": request.timeout or profile.max_timeout_seconds,
+        "target_timeouts": clamp_target_timeouts(requested_timeouts, profile),
+    }
+
+
 def _stage_timing(stage: str, latency_ms: float | None) -> StageTiming:
     duration = float(latency_ms or 0.0)
     payload = {
@@ -246,6 +379,15 @@ def _persist_stage_failure(job_id: str, exc: StageExecutionError, *, result: dic
 
 def _prometheus_lines(snapshot: dict[str, Any]) -> str:
     lines: list[str] = []
+    profile_payload = snapshot.get("budget_profile", {})
+    active_profile = str(profile_payload.get("active") or BUDGET_PROFILE.name)
+    lines.append(f'leanecon_budget_profile_active{{profile="{active_profile}"}} 1')
+    for cap_name, value in (profile_payload.get("caps") or {}).items():
+        if isinstance(value, (int, float, bool)):
+            metric_value = int(value) if isinstance(value, bool) else value
+            lines.append(
+                f'leanecon_budget_profile_cap{{profile="{active_profile}",cap="{cap_name}"}} {metric_value}'
+            )
     for status, count in snapshot["jobs"].items():
         lines.append(f'leanecon_jobs{{status="{status}"}} {count}')
     for name, count in snapshot["benchmark_claim_sets"].items():
@@ -264,6 +406,23 @@ def _prometheus_lines(snapshot: dict[str, Any]) -> str:
         lines.append(
             f'leanecon_model_estimated_cost_usd{{provider="{provider}",model="{model}"}} {payload.get("estimated_cost_usd", 0.0)}'
         )
+    for claim_type, payload in snapshot.get("usage_by_claim_type", {}).items():
+        lines.append(
+            f'leanecon_claim_type_estimated_cost_usd{{claim_type="{claim_type}"}} {payload.get("estimated_cost_usd", 0.0)}'
+        )
+    for claim_scope, payload in snapshot.get("usage_by_claim_scope", {}).items():
+        lines.append(
+            f'leanecon_claim_scope_estimated_cost_usd{{claim_scope="{claim_scope}"}} {payload.get("estimated_cost_usd", 0.0)}'
+        )
+    for source, payload in snapshot.get("usage_by_source", {}).items():
+        lines.append(
+            f'leanecon_usage_source_records{{usage_source="{source}"}} {payload.get("records", 0)}'
+        )
+    for stage, payload in snapshot.get("latency_by_stage", {}).items():
+        lines.append(f'leanecon_stage_latency_ms_sum{{stage="{stage}"}} {payload.get("latency_ms_sum", 0.0)}')
+        lines.append(f'leanecon_stage_latency_ms_avg{{stage="{stage}"}} {payload.get("latency_ms_avg", 0.0)}')
+    for reason, payload in snapshot.get("budget_exhaustion", {}).get("by_reason", {}).items():
+        lines.append(f'leanecon_budget_exhaustions{{reason="{reason}"}} {payload}')
     for error_code, count in snapshot.get("failure_counts", {}).items():
         lines.append(f'leanecon_failures{{error_code="{error_code}"}} {count}')
     for tool_name, count in snapshot.get("tool_call_distribution", {}).items():
@@ -344,9 +503,13 @@ class _ProofJobSlot:
 async def health() -> HealthResponse:
     probe = lean_workspace_probe()
     recent = job_store.recent_prover_stats()
+    profile = BUDGET_PROFILE
+    guardrail = _provider_guardrail(profile)
     runtime = {
         "probe": probe,
         "port": API_PORT,
+        "budget_profile": _budget_profile_payload(profile),
+        "provider_guardrail": guardrail,
         "cost_tracking_enabled": COST_TRACKING_ENABLED,
         "pricing_registry": dump_pricing_registry(),
         "backends": _backend_status(),
@@ -365,6 +528,7 @@ async def health() -> HealthResponse:
 
 @app.get("/metrics", response_model=MetricsResponse)
 async def metrics() -> MetricsResponse:
+    profile = BUDGET_PROFILE
     snapshot = {
         "jobs": job_store.counts(),
         "memory": trace_store.counts(),
@@ -372,12 +536,15 @@ async def metrics() -> MetricsResponse:
         "benchmark_category_mix": _benchmark_category_mix(),
         **job_store.metrics_snapshot(),
         "backend_status": _backend_status(),
+        "budget_profile": _budget_profile_payload(profile),
+        "provider_guardrail": _provider_guardrail(profile),
     }
     return MetricsResponse(**snapshot)
 
 
 @app.get("/metrics/prometheus", response_class=PlainTextResponse)
 async def metrics_prometheus() -> PlainTextResponse:
+    profile = BUDGET_PROFILE
     snapshot = {
         "jobs": job_store.counts(),
         "memory": trace_store.counts(),
@@ -385,6 +552,8 @@ async def metrics_prometheus() -> PlainTextResponse:
         "benchmark_category_mix": _benchmark_category_mix(),
         **job_store.metrics_snapshot(),
         "backend_status": _backend_status(),
+        "budget_profile": _budget_profile_payload(profile),
+        "provider_guardrail": _provider_guardrail(profile),
     }
     return PlainTextResponse(_prometheus_lines(snapshot), media_type="text/plain; version=0.0.4")
 
@@ -399,10 +568,18 @@ async def metrics_history() -> dict[str, Any]:
 
 @app.post("/plan", response_model=JobStatusResponse)
 async def plan(request: PlanRequest) -> JobStatusResponse:
+    profile = _resolve_request_profile(request.budget_profile)
+    _ensure_release_provider_guardrail(profile)
     job = job_store.create(
         status="queued",
         review_state="in_progress",
-        result={"claim": request.claim, "benchmark_mode": request.benchmark_mode},
+        result={
+            "claim": request.claim,
+            "benchmark_mode": request.benchmark_mode,
+            "budget_profile": profile.name,
+            "budget_caps": profile.public_dict(),
+            "provider_guardrail": _provider_guardrail(profile),
+        },
     )
     job_store.publish_progress(
         job.id,
@@ -411,7 +588,7 @@ async def plan(request: PlanRequest) -> JobStatusResponse:
         status="queued",
         review_state="in_progress",
         message="Planner started.",
-        metadata={"benchmark_mode": request.benchmark_mode},
+        metadata={"benchmark_mode": request.benchmark_mode, "budget_profile": profile.name},
     )
     try:
         stage_result = await asyncio.to_thread(
@@ -432,7 +609,14 @@ async def plan(request: PlanRequest) -> JobStatusResponse:
         return _persist_stage_failure(
             job.id,
             exc,
-            result={"claim": request.claim, "benchmark_mode": request.benchmark_mode, "stage": "planner"},
+            result={
+                "claim": request.claim,
+                "benchmark_mode": request.benchmark_mode,
+                "budget_profile": profile.name,
+                "budget_caps": profile.public_dict(),
+                "provider_guardrail": _provider_guardrail(profile),
+                "stage": "planner",
+            },
         )
 
     packet = stage_result.payload.model_copy(
@@ -453,7 +637,12 @@ async def plan(request: PlanRequest) -> JobStatusResponse:
     return _persist_stage_success(
         job.id,
         stage="planner",
-        payload=packet.model_dump(mode="json"),
+        payload={
+            **packet.model_dump(mode="json"),
+            "budget_profile": profile.name,
+            "budget_caps": profile.public_dict(),
+            "provider_guardrail": _provider_guardrail(profile),
+        },
         review_state=packet.review_state,
         status="completed" if request.benchmark_mode else "awaiting_plan_review",
         usage=stage_result.usage,
@@ -463,10 +652,18 @@ async def plan(request: PlanRequest) -> JobStatusResponse:
 
 @app.post("/formalize", response_model=JobStatusResponse)
 async def formalize(request: FormalizeRequest) -> JobStatusResponse:
+    profile = _resolve_request_profile(request.budget_profile)
+    _ensure_release_provider_guardrail(profile)
     job = job_store.create(
         status="queued",
         review_state="in_progress",
-        result={"claim": request.claim, "benchmark_mode": request.benchmark_mode},
+        result={
+            "claim": request.claim,
+            "benchmark_mode": request.benchmark_mode,
+            "budget_profile": profile.name,
+            "budget_caps": profile.public_dict(),
+            "provider_guardrail": _provider_guardrail(profile),
+        },
     )
     job_store.publish_progress(
         job.id,
@@ -475,7 +672,7 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
         status="queued",
         review_state="in_progress",
         message="Formalizer started.",
-        metadata={"benchmark_mode": request.benchmark_mode},
+        metadata={"benchmark_mode": request.benchmark_mode, "budget_profile": profile.name},
     )
     try:
         stage_result = await asyncio.to_thread(
@@ -497,11 +694,21 @@ async def formalize(request: FormalizeRequest) -> JobStatusResponse:
         return _persist_stage_failure(
             job.id,
             exc,
-            result={"claim": request.claim, "benchmark_mode": request.benchmark_mode, "stage": "formalizer"},
+            result={
+                "claim": request.claim,
+                "benchmark_mode": request.benchmark_mode,
+                "budget_profile": profile.name,
+                "budget_caps": profile.public_dict(),
+                "provider_guardrail": _provider_guardrail(profile),
+                "stage": "formalizer",
+            },
         )
 
     payload = stage_result.payload.model_dump(mode="json")
     payload["benchmark_mode"] = request.benchmark_mode
+    payload["budget_profile"] = profile.name
+    payload["budget_caps"] = profile.public_dict()
+    payload["provider_guardrail"] = _provider_guardrail(profile)
     job_store.publish_progress(
         job.id,
         "formalizer_completed",
@@ -529,6 +736,8 @@ async def _run_prove_job(job_id: str, request: ProveRequest) -> None:
 
 async def _run_prove_job_in_slot(job_id: str, request: ProveRequest) -> None:
     started_at = time.perf_counter()
+    profile = resolve_budget_profile(request.budget_profile, runtime_env=LEANECON_ENV)
+    effective_budget = _effective_prove_budget(request, profile)
     job_store.update(job_id, status="running_prover", review_state="in_progress")
     job_store.publish_progress(
         job_id,
@@ -537,22 +746,23 @@ async def _run_prove_job_in_slot(job_id: str, request: ProveRequest) -> None:
         status="running_prover",
         review_state="in_progress",
         message="Prover started.",
-        metadata={"benchmark_mode": request.benchmark_mode},
+        metadata={
+            "benchmark_mode": request.benchmark_mode,
+            "budget_profile": profile.name,
+            "effective_budget": effective_budget,
+        },
     )
-    target_timeouts = (
-        ProverTargetTimeouts.model_validate(request.target_timeouts.model_dump(mode="json"))
-        if request.target_timeouts is not None
-        else None
-    )
+    target_timeouts = ProverTargetTimeouts.model_validate(effective_budget["target_timeouts"])
     try:
         result = await prover.prove(
             request.formalization_packet,
             job_id,
-            max_turns=request.max_turns,
-            timeout=request.timeout,
+            max_turns=effective_budget["max_turns"],
+            timeout=effective_budget["timeout"],
             target_timeouts=target_timeouts,
             allow_decomposition=request.allow_decomposition,
             benchmark_mode=request.benchmark_mode,
+            budget_profile=profile,
             on_progress=lambda event, payload: job_store.publish(job_id, payload, event=event),
         )
         payload = result.model_dump(mode="json")
@@ -581,6 +791,8 @@ async def _run_prove_job_in_slot(job_id: str, request: ProveRequest) -> None:
                 "termination_reason": result.termination_reason,
                 "benchmark_mode": result.benchmark_mode,
                 "target_timeouts": result.target_timeouts.model_dump(mode="json"),
+                "budget_profile": profile.name,
+                "effective_budget": effective_budget,
             },
         )
         job_store.record_audit_event(job_id, terminal_event)
@@ -638,7 +850,9 @@ async def _run_prove_job_in_slot(job_id: str, request: ProveRequest) -> None:
                 metadata={
                     "termination_reason": "exception",
                     "benchmark_mode": request.benchmark_mode,
-                    "target_timeouts": request.target_timeouts.model_dump(mode="json") if request.target_timeouts else None,
+                    "budget_profile": profile.name,
+                    "effective_budget": effective_budget,
+                    "target_timeouts": target_timeouts.model_dump(mode="json"),
                 },
             ),
         )
@@ -648,7 +862,10 @@ async def _run_prove_job_in_slot(job_id: str, request: ProveRequest) -> None:
             review_state="failed",
             result={
                 "benchmark_mode": request.benchmark_mode,
-                "target_timeouts": request.target_timeouts.model_dump(mode="json") if request.target_timeouts else None,
+                "budget_profile": profile.name,
+                "budget_caps": profile.public_dict(),
+                "effective_budget": effective_budget,
+                "target_timeouts": target_timeouts.model_dump(mode="json"),
                 "stage": "prover",
             },
             error=str(exc),
@@ -667,14 +884,25 @@ async def _run_prove_job_in_slot(job_id: str, request: ProveRequest) -> None:
 
 @app.post("/prove", response_model=JobAcceptedResponse)
 async def prove(request: ProveRequest) -> JobAcceptedResponse:
+    profile = _resolve_request_profile(request.budget_profile)
+    _ensure_release_provider_guardrail(profile)
+    _ensure_profile_allows_packet(profile, request.formalization_packet)
+    _validate_prove_budget_request(request, profile)
+    effective_budget = _effective_prove_budget(request, profile)
     job = job_store.create(
         status="queued",
         review_state="auto_approved" if request.benchmark_mode else "queued",
         result={
             "benchmark_mode": request.benchmark_mode,
-            "target_timeouts": request.target_timeouts.model_dump(mode="json") if request.target_timeouts else None,
+            "budget_profile": profile.name,
+            "budget_caps": profile.public_dict(),
+            "effective_budget": effective_budget,
+            "provider_guardrail": _provider_guardrail(profile),
+            "target_timeouts": effective_budget["target_timeouts"],
             "theorem_name": request.formalization_packet.theorem_name,
             "claim": request.formalization_packet.claim,
+            "claim_type": request.formalization_packet.claim_type,
+            "claim_scope": request.formalization_packet.claim_scope,
         },
     )
     job_store.publish_progress(
@@ -684,7 +912,11 @@ async def prove(request: ProveRequest) -> JobAcceptedResponse:
         status="queued",
         review_state=job.review_state,
         message="Proof job queued.",
-        metadata={"benchmark_mode": request.benchmark_mode},
+        metadata={
+            "benchmark_mode": request.benchmark_mode,
+            "budget_profile": profile.name,
+            "effective_budget": effective_budget,
+        },
     )
     threading.Thread(
         target=lambda: asyncio.run(_run_prove_job(job.id, request)),

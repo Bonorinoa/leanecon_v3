@@ -7,6 +7,11 @@ This document replaces the completed Sprint 26-29 working notes. Commit history
 preserves those sprint plans; the active docs should now describe the current
 system, its gates, and the remaining release path.
 
+Sprint 30-35 execution planning now lives in:
+
+- `docs/SPRINTS_30_35_MASTER_PLAN.md`
+- `docs/SPRINT_30_LOCAL_RC_AUDIT.md`
+
 ## Current Release Surface
 
 The alpha release denominator is:

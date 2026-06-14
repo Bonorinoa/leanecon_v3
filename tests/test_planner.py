@@ -973,6 +973,60 @@ def test_planner_fast_fails_when_local_ollama_endpoint_is_unreachable(monkeypatc
     assert sleep_calls == []
 
 
+def test_mistral_connectivity_checks_models_endpoint(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps({"data": [{"id": "mistral-large-2512"}]}).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.headers.get("Authorization")
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    driver = MistralPlannerDriver(
+        api_key="mistral_test",
+        base_url="https://api.mistral.ai/v1",
+        timeout=360,
+    )
+
+    assert driver.connectivity_status() == (True, None)
+    assert captured == {
+        "url": "https://api.mistral.ai/v1/models",
+        "authorization": "Bearer mistral_test",
+        "timeout": 5.0,
+    }
+
+
+def test_mistral_connectivity_reports_unreachable_endpoint(monkeypatch) -> None:
+    def fake_urlopen(request, timeout: float):
+        raise urllib_error.URLError("[Errno 8] nodename nor servname provided, or not known")
+
+    monkeypatch.setattr("src.planner.planner.urllib_request.urlopen", fake_urlopen)
+
+    driver = MistralPlannerDriver(
+        api_key="mistral_test",
+        base_url="https://api.mistral.ai/v1",
+        timeout=360,
+    )
+
+    ok, message = driver.connectivity_status()
+    assert ok is False
+    assert message is not None
+    assert "Mistral endpoint unreachable" in message
+    assert "[Errno 8]" in message
+
+
 def test_hosted_ollama_connectivity_checks_tags_by_default(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

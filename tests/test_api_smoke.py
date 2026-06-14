@@ -194,9 +194,9 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
     class FakeProver:
         def __init__(self) -> None:
             self.primary_backend = SimpleNamespace(
-                name="goedel-prover-v2",
-                provider="huggingface",
-                model="Goedel-LM/Goedel-Prover-V2-32B",
+                name="leanstral",
+                provider="mistral",
+                model="labs-leanstral-2603",
             )
             self.calls: list[dict[str, object]] = []
 
@@ -210,6 +210,7 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
             target_timeouts,
             allow_decomposition,
             benchmark_mode,
+            budget_profile=None,
             on_progress=None,
         ):
             self.calls.append(
@@ -220,6 +221,7 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
                     "target_timeouts": target_timeouts.model_dump(mode="json") if target_timeouts is not None else None,
                     "allow_decomposition": allow_decomposition,
                     "benchmark_mode": benchmark_mode,
+                    "budget_profile": getattr(budget_profile, "name", budget_profile),
                 }
             )
             if on_progress is not None:
@@ -247,15 +249,15 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
                 termination_reason="verified",
                 repair_count=0,
                 preamble_names=list(packet.selected_preamble),
-                backend_used="goedel-prover-v2",
-                attempted_backends=["goedel-prover-v2"],
+                backend_used="leanstral",
+                attempted_backends=["leanstral"],
                 tool_budget={},
                 telemetry={},
                 usage_by_stage={
                     "prover": {
                         "stage": "prover",
-                        "provider": "huggingface",
-                        "model": "Goedel-LM/Goedel-Prover-V2-32B",
+                        "provider": "mistral",
+                        "model": "labs-leanstral-2603",
                         "input_tokens": 100,
                         "output_tokens": 50,
                         "estimated_cost_usd": 0.25,
@@ -268,6 +270,8 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
                 timing_breakdown={"prover_ms": 10.0, "total_ms": 10.0},
                 target_timeouts=target_timeouts,
                 audit_summary={"event_count": 1, "events": []},
+                budget_profile=getattr(budget_profile, "name", budget_profile) or "release",
+                budget_caps=budget_profile.public_dict() if hasattr(budget_profile, "public_dict") else {},
             )
 
     fake_prover = FakeProver()
@@ -298,6 +302,8 @@ def test_prove_job_lifecycle(monkeypatch, tmp_path) -> None:
     assert payload is not None
     assert payload["status"] == "completed"
     assert payload["result"]["benchmark_mode"] is True
+    assert payload["result"]["budget_profile"] == "release"
+    assert payload["result"]["budget_caps"]["max_prover_turns"] == 8
     assert payload["result"]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
     assert fake_prover.calls
     assert fake_prover.calls[0]["target_timeouts"] == {"theorem_body": 300, "subgoal": 180, "apollo_lemma": 120}
@@ -468,6 +474,84 @@ def test_prove_accepts_hydrated_formalize_result(monkeypatch, tmp_path) -> None:
     assert prove.status_code == 200
 
 
+def test_release_profile_rejects_non_mistral_prover_fallback(monkeypatch, tmp_path) -> None:
+    api_module = _configure_api(monkeypatch, tmp_path)
+
+    class NonReleaseFallbackProver:
+        def __init__(self) -> None:
+            self.primary_backend = SimpleNamespace(
+                name="leanstral",
+                provider="mistral",
+                model="labs-leanstral-2603",
+            )
+            self.fallback_backend = SimpleNamespace(
+                name="goedel-prover-v2",
+                provider="huggingface",
+                model="Goedel-LM/Goedel-Prover-V2-32B",
+            )
+
+    monkeypatch.setattr(api_module, "prover", NonReleaseFallbackProver())
+    client = TestClient(api_module.app)
+
+    formalization_packet = {
+        "claim": "Guardrail proof claim.",
+        "lean_code": "theorem guardrail_smoke : True := by\n  sorry\n",
+        "theorem_with_sorry": "theorem guardrail_smoke : True := by\n  sorry\n",
+        "theorem_name": "guardrail_smoke",
+        "imports": ["Mathlib"],
+        "selected_imports": ["Mathlib"],
+        "open_statements": [],
+        "subgoals": [],
+        "selected_preamble": [],
+        "vacuity": {"is_vacuous": False},
+        "faithfulness": {
+            "score": 5.0,
+            "coverage": 1.0,
+            "structural_isomorphism": 1.0,
+            "primitive_faithfulness": 1.0,
+            "claim_frame": {},
+            "stub_frame": {},
+            "needs_human_review": False,
+            "passes_gate": True,
+            "feedback": [],
+        },
+        "parse_check": {"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
+        "review_state": "approved",
+        "backend": "leanstral",
+        "provider": "mistral",
+        "model": "labs-leanstral-2603",
+    }
+
+    response = client.post(
+        "/prove",
+        json={"formalization_packet": formalization_packet, "benchmark_mode": True},
+    )
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["provider_guardrail"]["release_compliant"] is False
+    assert detail["provider_guardrail"]["violations"]
+
+
+def test_research_budget_profile_is_rejected_in_production(monkeypatch, tmp_path) -> None:
+    api_module = _configure_api(monkeypatch, tmp_path)
+    monkeypatch.setattr(api_module, "LEANECON_ENV", "prod")
+    client = TestClient(api_module.app)
+
+    response = client.post(
+        "/plan",
+        json={
+            "claim": "A production request must not use research budget.",
+            "benchmark_mode": True,
+            "budget_profile": "research",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "local-only" in response.json()["detail"]
+    assert "LEANECON_ENV='prod'" in response.json()["detail"]
+
+
 def test_review_endpoint_transitions_are_honest(monkeypatch, tmp_path) -> None:
     api_module = _configure_api(monkeypatch, tmp_path)
     client = TestClient(api_module.app)
@@ -503,6 +587,8 @@ def test_health_metrics_and_prometheus(monkeypatch, tmp_path) -> None:
 
     assert health.status_code == 200
     assert health.json()["runtime"]["backends"]["planner"]["provider_pinned"] in {True, False}
+    assert health.json()["runtime"]["budget_profile"]["active"] == "release"
+    assert health.json()["runtime"]["provider_guardrail"]["release_compliant"] is True
     assert health.json()["runtime"]["backends"]["planner"]["available"] is False
     assert health.json()["runtime"]["backends"]["planner"]["endpoint_reachable"] is False
     assert "Local Ollama planner endpoint unreachable" in health.json()["runtime"]["backends"]["planner"]["availability_reason"]
@@ -512,11 +598,16 @@ def test_health_metrics_and_prometheus(monkeypatch, tmp_path) -> None:
     metrics_payload = metrics.json()
     assert "backend_status" in metrics_payload
     assert metrics_payload["backend_status"]["planner"]["available"] is False
+    assert metrics_payload["budget_profile"]["active"] == "release"
+    assert metrics_payload["provider_guardrail"]["release_compliant"] is True
     assert "usage_totals" in metrics_payload
+    assert "usage_by_claim_type" in metrics_payload
+    assert "budget_exhaustion" in metrics_payload
     assert "recent" in metrics_payload
 
     assert prometheus.status_code == 200
     assert "leanecon_benchmark_claims" in prometheus.text
+    assert 'leanecon_budget_profile_active{profile="release"} 1' in prometheus.text
 
 
 def test_metrics_history_endpoint(monkeypatch, tmp_path) -> None:

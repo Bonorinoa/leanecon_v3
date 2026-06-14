@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src.config import MAX_SEARCH_TOOL_CALLS, MAX_TOTAL_TOOL_CALLS
+from src.config import (
+    BUDGET_PROFILE_NAME,
+    MAX_PROVE_STEPS,
+    MAX_PROVE_TIMEOUT,
+    MAX_PROVER_TURNS,
+    MAX_SEARCH_TOOL_CALLS,
+    MAX_TOTAL_TOOL_CALLS,
+)
 
 LSP_TOOL_NAMES = frozenset(
     {
@@ -28,6 +35,10 @@ class BudgetTracker:
 
     max_search_tool_calls: int = MAX_SEARCH_TOOL_CALLS
     max_total_tool_calls: int = MAX_TOTAL_TOOL_CALLS
+    max_prover_turns: int = MAX_PROVER_TURNS
+    max_prove_steps: int = MAX_PROVE_STEPS
+    max_timeout_seconds: int = MAX_PROVE_TIMEOUT
+    budget_profile: str = BUDGET_PROFILE_NAME
     search_tool_calls: int = 0
     total_tool_calls: int = 0
     lsp_tool_calls: int = 0
@@ -67,6 +78,10 @@ class BudgetTracker:
         return {
             "max_search_tool_calls": self.max_search_tool_calls,
             "max_total_tool_calls": self.max_total_tool_calls,
+            "max_prover_turns": self.max_prover_turns,
+            "max_prove_steps": self.max_prove_steps,
+            "max_timeout_seconds": self.max_timeout_seconds,
+            "budget_profile": self.budget_profile,
             "search_tool_calls": self.search_tool_calls,
             "total_tool_calls": self.total_tool_calls,
             "lsp_tool_calls": self.lsp_tool_calls,

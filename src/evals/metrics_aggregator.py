@@ -56,6 +56,9 @@ def build_history_row(
         "timestamp": str(run_summary.get("generated_at") or ""),
         "mode": str(run_summary.get("mode") or ""),
         "benchmark_mode": bool(run_summary.get("benchmark_mode")),
+        "budget_profile": str(run_summary.get("budget_profile") or "unknown"),
+        "budget_profiles": list(run_summary.get("budget_profiles") or [run_summary.get("budget_profile") or "unknown"]),
+        "release_metrics_eligible": bool(run_summary.get("release_metrics_eligible", True)),
         "selected_claim_sets": selected_claim_sets,
         "claims_total": int(run_summary.get("claims_total") or 0),
         "claims_passed": int(run_summary.get("claims_passed") or 0),
@@ -105,11 +108,18 @@ def build_history_row(
         "claim_type_mix": _claim_type_mix(claim_set_summaries),
         "claim_scope_counts": scope_counts(all_results),
         "metrics_by_scope": metrics_by_scope(all_results),
-        "release_reliable_metrics": metrics_by_scope(all_results)["release_reliable"],
+        "release_reliable_metrics": (
+            run_summary.get("release_reliable_metrics")
+            or metrics_by_scope(all_results)["release_reliable"]
+        ),
         "frontier_metrics": {
             key: metrics_by_scope(all_results)[key]
             for key in ("supported_attempt", "frontier_collect", "out_of_scope")
         },
+        "cost_by_claim_type": dict(run_summary.get("cost_by_claim_type") or {}),
+        "cost_by_claim_scope": dict(run_summary.get("cost_by_claim_scope") or {}),
+        "token_usage_sources": dict(run_summary.get("token_usage_sources") or {}),
+        "budget_exhaustion": dict(run_summary.get("budget_exhaustion") or {}),
         "bucket_breakdown": bucket_breakdown,
     }
 

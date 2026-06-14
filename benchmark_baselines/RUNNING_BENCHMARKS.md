@@ -1,6 +1,16 @@
 # Running Benchmarks
 
-The benchmark runner is `evals/local_gate.py`. Canonical benchmark outputs should be written to `benchmark_baselines/v3_alpha/benchmark_mode/`, with one JSON summary and one live `.progress.jsonl` file per claim set, plus a combined `local_gate.json`.
+The benchmark runner is `evals/local_gate.py`. Canonical benchmark outputs
+should be written to profile-specific directories under
+`benchmark_baselines/v3_alpha/benchmark_mode/`, such as `release/` and
+`frontier/`, with one JSON summary and one live `.progress.jsonl` file per
+claim set, plus a combined `local_gate.json` for that profile run.
+
+For Sprint 30 local release-candidate work, use the audit runbook in
+`docs/SPRINT_30_LOCAL_RC_AUDIT.md` and write temporary artifacts under
+`/private/tmp/leanecon-s30-*` rather than overwriting canonical benchmark
+baselines. The full Sprint 30-35 planning context is in
+`docs/SPRINTS_30_35_MASTER_PLAN.md`.
 
 ## Canonical Claim Sets
 
@@ -26,21 +36,28 @@ Run a single tier:
 ```bash
 PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --benchmark-mode --claim-set tier0_smoke
 PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --benchmark-mode --claim-set tier1_core_preamble_definable
-PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --benchmark-mode --claim-set tier2_frontier_mathlib_native
-PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --benchmark-mode --claim-set tier2_frontier_preamble_definable
+PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --benchmark-mode --budget-profile frontier --claim-set tier2_frontier_mathlib_native
+PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --benchmark-mode --budget-profile frontier --claim-set tier2_frontier_preamble_definable
 ```
 
-Run the standard sweep and then print the aggregate markdown table:
+Run the release sweep and frontier diagnostic sweep into separate directories so
+each `local_gate.json` has one unambiguous profile meaning:
 
 ```bash
 PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --benchmark-mode \
-  --output-dir benchmark_baselines/v3_alpha/benchmark_mode \
+  --output-dir benchmark_baselines/v3_alpha/benchmark_mode/release \
+  --budget-profile release \
   --claim-set tier0_smoke \
-  --claim-set tier1_core_preamble_definable \
+  --claim-set tier1_core_preamble_definable
+PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --benchmark-mode \
+  --output-dir benchmark_baselines/v3_alpha/benchmark_mode/frontier \
+  --budget-profile frontier \
   --claim-set tier2_frontier_mathlib_native \
   --claim-set tier2_frontier_preamble_definable && \
 PYTHONPATH=. ./.venv/bin/python -m evals.aggregate_benchmarks \
-  --output-dir benchmark_baselines/v3_alpha/benchmark_mode
+  --output-dir benchmark_baselines/v3_alpha/benchmark_mode/release
+PYTHONPATH=. ./.venv/bin/python -m evals.aggregate_benchmarks \
+  --output-dir benchmark_baselines/v3_alpha/benchmark_mode/frontier
 ```
 
 Useful options:
@@ -50,6 +67,10 @@ Useful options:
 - `--stratified`: spread a limited run across preamble buckets.
 - `--allow-unready`: bypass readiness gating and still emit JSON.
 - `--output-dir PATH`: keep benchmark-mode artifacts separate from historical summaries.
+- `--budget-profile {release,frontier,research}`: enforce an explicit profile.
+  Omitted values use `LEANECON_BUDGET_PROFILE`, defaulting to `release`.
+  Release profile hard-blocks frontier claim sets; use `frontier` for tier 2
+  diagnostics and `research` only for local experiments.
 
 Console behavior during long claims:
 
@@ -64,11 +85,24 @@ Console behavior during long claims:
 Each `<claim_set>.json` includes:
 
 - `pass_at_1`, `claims_passed`, `claims_failed`, `claims_total`: top-line success metrics.
+- `budget_profile`, `budget_caps`, and `release_metrics_eligible`: the active
+  profile and whether results may contribute to release reliability.
 - `cost_by_stage` and `cost_by_model`: estimated spend rolled up by stage and model.
+- `cost_by_claim_type`, `cost_by_claim_scope`, `token_usage_sources`, and
+  `latency_by_stage`: Sprint 31 cost/latency dimensions.
+- `budget_exhaustion`: counts by reason/profile when a cap stops a run.
 - `failure_counts`: counts by normalized failure code.
-- `results`: per-claim records with `status`, `failure_code`, `timing_breakdown`, and `usage_by_stage`.
+- `results`: per-claim records with `status`, `failure_code`,
+  `budget_profile`, `budget_exhaustion`, `timing_breakdown`,
+  `tool_budget`, and `usage_by_stage`.
 
 `local_gate.json` is the combined rollup across the claim sets from the same run.
+If the combined run uses `frontier`, `research`, or mixed profiles,
+`release_reliable_metrics` is zeroed so non-release runs cannot change the
+release denominator.
+Do not write release and frontier profile runs to the same `--output-dir`; each
+run writes `local_gate.json`, so shared directories make the combined artifact
+ambiguous and last-writer-wins.
 
 Each `<claim_set>.progress.jsonl` includes stage events such as:
 
@@ -101,9 +135,14 @@ One important readiness blocker seen recently is `planner_endpoint_reachable`. I
 The current benchmark-default planner is Mistral. The recommended `.env` posture is:
 
 ```env
+LEANECON_BUDGET_PROFILE=release
 LEANECON_PLANNER_BACKEND=mistral-structured
 LEANECON_PLANNER_PROVIDER=mistral
 LEANECON_PLANNER_MODEL=mistral-large-2512
+LEANECON_FORMALIZER_BACKEND=leanstral
+LEANECON_FORMALIZER_MODEL=labs-leanstral-2603
+LEANECON_PROVER_BACKEND=leanstral
+LEANECON_PROVER_FALLBACK_BACKEND=leanstral
 MISTRAL_API_KEY=...
 MISTRAL_BASE_URL=https://api.mistral.ai/v1
 LEANECON_LIVE_MODEL_TESTS=true
@@ -111,9 +150,11 @@ LEANECON_LIVE_MODEL_TESTS=true
 
 The planner pricing registry includes `mistral-large-2512`, so `/health` and benchmark preflight should agree on planner price coverage for the hosted setup shown above.
 
-If you explicitly want to use hosted Ollama for planner experiments instead of Mistral, the `.env` should use:
+If you explicitly want to use hosted Ollama for planner experiments instead of
+Mistral, the run is non-release and should use `frontier` or `research`:
 
 ```env
+LEANECON_BUDGET_PROFILE=frontier
 LEANECON_PLANNER_BACKEND=ollama-cloud
 LEANECON_PLANNER_PROVIDER=ollama
 LEANECON_OLLAMA_HOST=https://ollama.com

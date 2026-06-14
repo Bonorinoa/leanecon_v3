@@ -99,6 +99,8 @@ class ProverResult(ProverModel):
         "out_of_scope",
     ] = "supported_attempt"
     claim_type: Literal["preamble_definable", "mathlib_native"] | None = None
+    budget_profile: str = "release"
+    budget_caps: dict[str, Any] = Field(default_factory=dict)
     failure_class: str | None = None
     recommended_next_action: str | None = None
     benchmark_mode: bool = False

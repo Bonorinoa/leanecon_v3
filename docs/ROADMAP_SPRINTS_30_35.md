@@ -3,6 +3,10 @@
 **Purpose:** move from a local alpha checkpoint to a deployable and expandable
 LeanEcon v3 system without blurring release-reliable and frontier capabilities.
 
+**Execution plan:** this compact roadmap is superseded for active execution by
+`docs/SPRINTS_30_35_MASTER_PLAN.md`. Sprint 30 audit details live in
+`docs/SPRINT_30_LOCAL_RC_AUDIT.md`.
+
 ## Sprint 30: Local Release Candidate
 
 Primary outcome: decide whether the current alpha is deployable.

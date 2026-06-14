@@ -28,6 +28,12 @@ from evals.common import (
     write_progress_log,
     write_summary,
 )
+from src.budget_profiles import (
+    BudgetProfile,
+    clamp_target_timeouts,
+    evaluate_provider_guardrail,
+    resolve_budget_profile,
+)
 from src.claim_scope import (
     FRONTIER_COLLECT,
     FRONTIER_RECORD_SCHEMA_VERSION,
@@ -177,6 +183,162 @@ def _summary_total_cost(summary: dict[str, Any]) -> float:
     return round(sum(float(value or 0.0) for value in summary.get("cost_by_stage", {}).values()), 8)
 
 
+def _target_timeouts_for_profile(*, benchmark_mode: bool, profile: BudgetProfile) -> ProverTargetTimeouts:
+    if profile.name == "release":
+        base = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
+        requested = base.model_dump(mode="json")
+    else:
+        requested = profile.target_timeout_caps
+    return ProverTargetTimeouts.model_validate(clamp_target_timeouts(requested, profile))
+
+
+def _provider_stage_config(
+    planner_service: PlannerService,
+    formalizer_service: FormalizerService,
+    prover_instance: Prover,
+) -> dict[str, dict[str, str]]:
+    fallback_backend = getattr(prover_instance, "fallback_backend", None)
+    stages = {
+        "planner": {
+            "provider": str(planner_service.backend.provider),
+            "model": str(planner_service.backend.model),
+        },
+        "formalizer": {
+            "provider": str(formalizer_service.backend.provider),
+            "model": str(formalizer_service.backend.model),
+        },
+        "prover": {
+            "provider": str(prover_instance.primary_backend.provider),
+            "model": str(prover_instance.primary_backend.model),
+        },
+    }
+    if fallback_backend is not None:
+        stages["prover_fallback"] = {
+            "provider": str(getattr(fallback_backend, "provider", "")),
+            "model": str(getattr(fallback_backend, "model", "")),
+            "backend": str(getattr(fallback_backend, "name", "")),
+        }
+    return stages
+
+
+def _profile_claim_set_blockers(
+    *,
+    profile: BudgetProfile,
+    claim_set: str,
+    claim_set_manifest: dict[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    bucket_counts = claim_set_manifest.get("bucket_counts") or {}
+    if claim_set in FRONTIER_BENCHMARK_CLAIM_SETS and not profile.allow_frontier_claims:
+        blockers.append("budget_profile_disallows_frontier_claim_set")
+    if int(bucket_counts.get("mathlib_native") or 0) > 0 and not profile.allow_mathlib_native:
+        blockers.append("budget_profile_disallows_mathlib_native")
+    return blockers
+
+
+def _release_metrics_for_profile(profile: BudgetProfile, results: list[dict[str, Any]]) -> dict[str, Any]:
+    scoped = metrics_by_scope(results)
+    if profile.release_metrics_eligible:
+        return scoped[RELEASE_RELIABLE]
+    return {
+        "claims_total": 0,
+        "claims_passed": 0,
+        "claims_failed": 0,
+        "pass_at_1": 0.0,
+    }
+
+
+def _accumulate_usage_dimension(
+    usage: dict[str, Any] | None,
+    *,
+    key: str,
+    bucket_map: dict[str, dict[str, Any]],
+) -> None:
+    if not usage:
+        return
+    bucket = bucket_map.setdefault(
+        key,
+        {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "estimated_cost_usd": 0.0,
+            "records": 0,
+        },
+    )
+    bucket["input_tokens"] += int(usage.get("input_tokens") or 0)
+    bucket["output_tokens"] += int(usage.get("output_tokens") or 0)
+    bucket["estimated_cost_usd"] = round(
+        float(bucket["estimated_cost_usd"]) + float(usage.get("estimated_cost_usd") or 0.0),
+        8,
+    )
+    bucket["records"] += 1
+
+
+def _budget_exhaustion_reason(
+    *,
+    failure_code: str | None,
+    termination_reason: str | None,
+    profile: BudgetProfile,
+    tool_budget: dict[str, Any],
+    max_turns: int,
+    timeout: int,
+) -> dict[str, Any] | None:
+    reason = str(failure_code or termination_reason or "")
+    if not reason:
+        return None
+    if reason == "max_turns_exhausted":
+        return {
+            "reason": reason,
+            "budget_profile": profile.name,
+            "cap": "max_prover_turns",
+            "cap_value": profile.max_prover_turns,
+            "effective_value": max_turns,
+        }
+    if reason in {"tool_budget_exhausted", "budget_exhausted"}:
+        return {
+            "reason": reason,
+            "budget_profile": profile.name,
+            "cap": "max_total_tool_calls",
+            "cap_value": int(tool_budget.get("max_total_tool_calls") or profile.max_total_tool_calls),
+            "used": int(tool_budget.get("total_tool_calls") or 0),
+        }
+    if "search_exhausted" in reason:
+        return {
+            "reason": reason,
+            "budget_profile": profile.name,
+            "cap": "max_search_tool_calls",
+            "cap_value": int(tool_budget.get("max_search_tool_calls") or profile.max_search_tool_calls),
+            "used": int(tool_budget.get("search_tool_calls") or 0),
+        }
+    if reason == "timeout" or reason.endswith("_timeout"):
+        return {
+            "reason": reason,
+            "budget_profile": profile.name,
+            "cap": "max_timeout_seconds",
+            "cap_value": profile.max_timeout_seconds,
+            "effective_value": timeout,
+        }
+    return None
+
+
+def _budget_exhaustion_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    by_reason: dict[str, int] = {}
+    by_profile: dict[str, int] = {}
+    total = 0
+    for result in results:
+        payload = result.get("budget_exhaustion")
+        if not isinstance(payload, dict):
+            continue
+        reason = str(payload.get("reason") or "")
+        profile = str(payload.get("budget_profile") or result.get("budget_profile") or "unknown")
+        if not reason:
+            continue
+        total += 1
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+        by_profile[profile] = by_profile.get(profile, 0) + 1
+    return {"total": total, "by_reason": by_reason, "by_profile": by_profile}
+
+
 class _TerminalReporter:
     def __init__(self, stream: Any = None) -> None:
         self.stream = stream or sys.stdout
@@ -199,6 +361,7 @@ class _TerminalReporter:
         *,
         claims_total: int,
         benchmark_mode: bool,
+        budget_profile: BudgetProfile,
         selection_info: dict[str, Any],
         readiness: dict[str, Any],
     ) -> None:
@@ -209,6 +372,7 @@ class _TerminalReporter:
             selection = f"{selection} (seed={selection_info['sample_seed']})"
         rows = [
             ["Mode", mode],
+            ["Budget profile", budget_profile.name],
             ["Claims", str(claims_total)],
             ["Sampling", selection],
             ["Readiness", "ready" if readiness.get("ready") else "blocked"],
@@ -474,6 +638,12 @@ def _accumulate_usage(
     tokens_by_stage: dict[str, dict[str, int]],
     cost_by_stage: dict[str, float],
     cost_by_model: dict[str, dict[str, Any]],
+    cost_by_claim_type: dict[str, dict[str, Any]] | None = None,
+    cost_by_claim_scope: dict[str, dict[str, Any]] | None = None,
+    token_usage_sources: dict[str, dict[str, Any]] | None = None,
+    latency_by_stage: dict[str, dict[str, Any]] | None = None,
+    claim_type: str | None = None,
+    claim_scope: str | None = None,
 ) -> None:
     if not usage:
         return
@@ -495,6 +665,38 @@ def _accumulate_usage(
         float(model_bucket["estimated_cost_usd"]) + float(usage.get("estimated_cost_usd") or 0.0),
         8,
     )
+    if cost_by_claim_type is not None:
+        _accumulate_usage_dimension(
+            usage,
+            key=str(claim_type or "unknown"),
+            bucket_map=cost_by_claim_type,
+        )
+    if cost_by_claim_scope is not None:
+        _accumulate_usage_dimension(
+            usage,
+            key=str(claim_scope or "unknown"),
+            bucket_map=cost_by_claim_scope,
+        )
+    if token_usage_sources is not None:
+        _accumulate_usage_dimension(
+            usage,
+            key=str(usage.get("usage_source") or "unknown"),
+            bucket_map=token_usage_sources,
+        )
+    if latency_by_stage is not None:
+        latency_bucket = latency_by_stage.setdefault(
+            stage,
+            {"latency_ms_sum": 0.0, "records": 0, "latency_ms_avg": 0.0},
+        )
+        latency_bucket["latency_ms_sum"] = round(
+            float(latency_bucket["latency_ms_sum"]) + float(usage.get("latency_ms") or 0.0),
+            3,
+        )
+        latency_bucket["records"] += 1
+        latency_bucket["latency_ms_avg"] = round(
+            float(latency_bucket["latency_ms_sum"]) / int(latency_bucket["records"]),
+            3,
+        )
 
 
 _THEOREM_NAME_RE = re.compile(r"(?m)^\s*(?:theorem|lemma)\s+([A-Za-z0-9_']+)")
@@ -926,6 +1128,10 @@ def _preflight(
     planner_service: PlannerService,
     formalizer_service: FormalizerService,
     prover_instance: Prover,
+    *,
+    budget_profile: BudgetProfile,
+    claim_set: str,
+    claim_set_manifest: dict[str, Any],
 ) -> dict[str, Any]:
     planner_backend = planner_service.backend
     formalizer_backend = formalizer_service.backend
@@ -970,6 +1176,20 @@ def _preflight(
             )
             is not None
         )
+    provider_guardrail = evaluate_provider_guardrail(
+        budget_profile,
+        _provider_stage_config(planner_service, formalizer_service, prover_instance),
+    )
+    profile_blockers = _profile_claim_set_blockers(
+        profile=budget_profile,
+        claim_set=claim_set,
+        claim_set_manifest=claim_set_manifest,
+    )
+    checks["provider_guardrail_release_compliant"] = bool(
+        provider_guardrail.get("release_compliant")
+    )
+    for blocker in profile_blockers:
+        checks[blocker] = False
     ready = all(checks.values())
     blockers = [name for name, status in checks.items() if not status]
     details = (
@@ -980,6 +1200,8 @@ def _preflight(
         "checks": checks,
         "blockers": blockers,
         "details": details,
+        "budget_profile": budget_profile.public_dict(),
+        "provider_guardrail": provider_guardrail,
         "capabilities": {
             "planner": get_backend_capability("planner", planner_backend.name),
             "formalizer": get_backend_capability("formalizer", formalizer_backend.name),
@@ -1057,6 +1279,7 @@ async def _run_claim_set_async(
     planner_service: PlannerService,
     formalizer_service: FormalizerService,
     prover_instance: Prover,
+    budget_profile: BudgetProfile,
     enforce_readiness: bool,
     benchmark_mode: bool,
     limit: int | None,
@@ -1075,17 +1298,33 @@ async def _run_claim_set_async(
         focused_sample=focused_sample,
     )
     claim_set_manifest = build_claim_set_manifest(claim_set)
-    readiness = _preflight(planner_service, formalizer_service, prover_instance)
+    target_timeouts = _target_timeouts_for_profile(
+        benchmark_mode=benchmark_mode,
+        profile=budget_profile,
+    )
+    readiness = _preflight(
+        planner_service,
+        formalizer_service,
+        prover_instance,
+        budget_profile=budget_profile,
+        claim_set=claim_set,
+        claim_set_manifest=claim_set_manifest,
+    )
     if reporter is not None:
         reporter.claim_set_started(
             claim_set,
             claims_total=len(claims),
             benchmark_mode=benchmark_mode,
+            budget_profile=budget_profile,
             selection_info=selection_info,
             readiness=readiness,
         )
-    target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
-    if enforce_readiness and not readiness["ready"]:
+    hard_profile_blockers = [
+        blocker
+        for blocker in readiness.get("blockers", [])
+        if str(blocker).startswith("budget_profile_disallows_")
+    ]
+    if hard_profile_blockers or (enforce_readiness and not readiness["ready"]):
         if reporter is not None:
             reporter.skipped_claim_set(
                 claim_set, [str(blocker) for blocker in readiness["blockers"]]
@@ -1095,6 +1334,9 @@ async def _run_claim_set_async(
             "artifact_schema_version": FRONTIER_RECORD_SCHEMA_VERSION,
             "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
             "benchmark_mode": benchmark_mode,
+            "budget_profile": budget_profile.name,
+            "budget_caps": budget_profile.public_dict(),
+            "release_metrics_eligible": False,
             "target_timeouts": target_timeouts.model_dump(mode="json"),
             "generated_at": _timestamp(),
             "claim_set_manifest": claim_set_manifest,
@@ -1108,6 +1350,11 @@ async def _run_claim_set_async(
             "tokens_by_stage": {},
             "cost_by_stage": {},
             "cost_by_model": {},
+            "cost_by_claim_type": {},
+            "cost_by_claim_scope": {},
+            "token_usage_sources": {},
+            "latency_by_stage": {},
+            "budget_exhaustion": {"total": 0, "by_reason": {}, "by_profile": {}},
             "failure_counts": {blocker: 1 for blocker in readiness["blockers"]},
             "results": [],
         }
@@ -1115,6 +1362,10 @@ async def _run_claim_set_async(
     tokens_by_stage: dict[str, dict[str, int]] = {}
     cost_by_stage: dict[str, float] = {}
     cost_by_model: dict[str, dict[str, Any]] = {}
+    cost_by_claim_type: dict[str, dict[str, Any]] = {}
+    cost_by_claim_scope: dict[str, dict[str, Any]] = {}
+    token_usage_sources: dict[str, dict[str, Any]] = {}
+    latency_by_stage: dict[str, dict[str, Any]] = {}
     failure_counts: dict[str, int] = {}
     results: list[dict[str, Any]] = []
 
@@ -1146,6 +1397,7 @@ async def _run_claim_set_async(
         result_status = "failed"
         theorem_name: str | None = None
         verified_via = "full_pipeline"
+        tool_budget: dict[str, Any] = {}
         tool_calls = 0
         lsp_tool_calls = 0
         native_search_attempts = 0
@@ -1226,10 +1478,15 @@ async def _run_claim_set_async(
                         "theorem_name": theorem_name,
                         "raw_claim": raw_claim,
                         "benchmark_mode": benchmark_mode,
+                        "budget_profile": budget_profile.name,
+                        "budget_caps": budget_profile.public_dict(),
+                        "release_metrics_eligible": budget_profile.release_metrics_eligible,
                         "verified_via": "trivial_shortcut",
                         "target_timeouts": target_timeouts.model_dump(mode="json"),
                         "theorem_stub_reference": theorem_stub,
                         "timing_breakdown": stage_timings,
+                        "tool_budget": {},
+                        "budget_exhaustion": None,
                         "tool_calls": tool_calls,
                         "lsp_tool_calls": lsp_tool_calls,
                         "native_search_attempts": native_search_attempts,
@@ -1322,6 +1579,8 @@ async def _run_claim_set_async(
                     message="Prover started.",
                     metadata={
                         "benchmark_mode": benchmark_mode,
+                        "budget_profile": budget_profile.name,
+                        "budget_caps": budget_profile.public_dict(),
                         "claim_scope": scope.scope,
                         "claim_type": claim_type,
                         "mathlib_native_mode": claim_type == "mathlib_native",
@@ -1346,11 +1605,12 @@ async def _run_claim_set_async(
             prove_result = await prover_instance.prove(
                 prover_packet,
                 f"local_gate_{_sanitize_job_id(claim_id)}",
-                max_turns=8,
-                timeout=120 if benchmark_mode else 300,
+                max_turns=budget_profile.max_prover_turns,
+                timeout=budget_profile.max_timeout_seconds,
                 target_timeouts=target_timeouts,
                 allow_decomposition=True,
                 benchmark_mode=benchmark_mode,
+                budget_profile=budget_profile,
                 on_progress=lambda event, payload: record_progress({**payload, "event": event}),
             )
             theorem_name = prove_result.theorem_name
@@ -1405,6 +1665,7 @@ async def _run_claim_set_async(
                     message=f"Prover finished with status `{prove_result.status}`.",
                     metadata={
                         "termination_reason": prove_result.termination_reason,
+                        "budget_profile": budget_profile.name,
                         "tool_calls": tool_calls,
                         "lsp_tool_calls": lsp_tool_calls,
                         "native_search_attempts": native_search_attempts,
@@ -1462,18 +1723,36 @@ async def _run_claim_set_async(
             tokens_by_stage=tokens_by_stage,
             cost_by_stage=cost_by_stage,
             cost_by_model=cost_by_model,
+            cost_by_claim_type=cost_by_claim_type,
+            cost_by_claim_scope=cost_by_claim_scope,
+            token_usage_sources=token_usage_sources,
+            latency_by_stage=latency_by_stage,
+            claim_type=claim_type,
+            claim_scope=scope.scope,
         )
         _accumulate_usage(
             formalizer_usage,
             tokens_by_stage=tokens_by_stage,
             cost_by_stage=cost_by_stage,
             cost_by_model=cost_by_model,
+            cost_by_claim_type=cost_by_claim_type,
+            cost_by_claim_scope=cost_by_claim_scope,
+            token_usage_sources=token_usage_sources,
+            latency_by_stage=latency_by_stage,
+            claim_type=claim_type,
+            claim_scope=scope.scope,
         )
         _accumulate_usage(
             prover_usage,
             tokens_by_stage=tokens_by_stage,
             cost_by_stage=cost_by_stage,
             cost_by_model=cost_by_model,
+            cost_by_claim_type=cost_by_claim_type,
+            cost_by_claim_scope=cost_by_claim_scope,
+            token_usage_sources=token_usage_sources,
+            latency_by_stage=latency_by_stage,
+            claim_type=claim_type,
+            claim_scope=scope.scope,
         )
         _accumulate_failure(failure_code, failure_counts)
         parse_check_payload = None
@@ -1498,6 +1777,14 @@ async def _run_claim_set_async(
                 else None
             ),
         )
+        budget_exhaustion = _budget_exhaustion_reason(
+            failure_code=failure_code,
+            termination_reason=termination_reason,
+            profile=budget_profile,
+            tool_budget=tool_budget,
+            max_turns=budget_profile.max_prover_turns,
+            timeout=budget_profile.max_timeout_seconds,
+        )
         results.append(
             {
                 "id": claim_id,
@@ -1521,10 +1808,15 @@ async def _run_claim_set_async(
                 "formalization_source": formalization_source,
                 "raw_claim": raw_claim,
                 "benchmark_mode": benchmark_mode,
+                "budget_profile": budget_profile.name,
+                "budget_caps": budget_profile.public_dict(),
+                "release_metrics_eligible": budget_profile.release_metrics_eligible,
                 "verified_via": verified_via,
                 "target_timeouts": target_timeouts.model_dump(mode="json"),
                 "theorem_stub_reference": theorem_stub,
                 "timing_breakdown": stage_timings,
+                "tool_budget": tool_budget,
+                "budget_exhaustion": budget_exhaustion,
                 "tool_calls": tool_calls,
                 "lsp_tool_calls": lsp_tool_calls,
                 "native_search_attempts": native_search_attempts,
@@ -1601,11 +1893,16 @@ async def _run_claim_set_async(
     synthesis_events = _synthesis_event_payloads(results)
     synthesis_counts = _synthesis_event_counts(results)
     frontier_records = _frontier_records_from_results(results)
+    scoped_metrics = metrics_by_scope(results)
+    release_reliable_metrics = _release_metrics_for_profile(budget_profile, results)
     return {
         "claim_set": claim_set,
         "artifact_schema_version": FRONTIER_RECORD_SCHEMA_VERSION,
         "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
         "benchmark_mode": benchmark_mode,
+        "budget_profile": budget_profile.name,
+        "budget_caps": budget_profile.public_dict(),
+        "release_metrics_eligible": budget_profile.release_metrics_eligible,
         "target_timeouts": target_timeouts.model_dump(mode="json"),
         "generated_at": _timestamp(),
         "claim_set_manifest": claim_set_manifest,
@@ -1615,10 +1912,10 @@ async def _run_claim_set_async(
         "claims_failed": claims_total - claims_passed,
         "pass_at_1": round(claims_passed / claims_total, 6) if claims_total else 0.0,
         "claim_scope_counts": scope_counts(results),
-        "metrics_by_scope": metrics_by_scope(results),
-        "release_reliable_metrics": metrics_by_scope(results)[RELEASE_RELIABLE],
+        "metrics_by_scope": scoped_metrics,
+        "release_reliable_metrics": release_reliable_metrics,
         "frontier_metrics": {
-            scope_name: metrics_by_scope(results)[scope_name]
+            scope_name: scoped_metrics[scope_name]
             for scope_name in (SUPPORTED_ATTEMPT, FRONTIER_COLLECT, OUT_OF_SCOPE)
         },
         "average_tool_calls": average_tool_calls,
@@ -1647,6 +1944,11 @@ async def _run_claim_set_async(
         "tokens_by_stage": tokens_by_stage,
         "cost_by_stage": cost_by_stage,
         "cost_by_model": cost_by_model,
+        "cost_by_claim_type": cost_by_claim_type,
+        "cost_by_claim_scope": cost_by_claim_scope,
+        "token_usage_sources": token_usage_sources,
+        "latency_by_stage": latency_by_stage,
+        "budget_exhaustion": _budget_exhaustion_summary(results),
         "failure_counts": failure_counts,
         "frontier_records": frontier_records,
         "results": results,
@@ -1659,6 +1961,7 @@ def run_claim_set(
     planner_service: PlannerService | None = None,
     formalizer_service: FormalizerService | None = None,
     prover_instance: Prover | None = None,
+    budget_profile: str | BudgetProfile | None = None,
     enforce_readiness: bool = True,
     benchmark_mode: bool = False,
     limit: int | None = None,
@@ -1668,12 +1971,18 @@ def run_claim_set(
     reporter: _TerminalReporter | None = None,
     progress_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    profile = (
+        budget_profile
+        if isinstance(budget_profile, BudgetProfile)
+        else resolve_budget_profile(budget_profile)
+    )
     return asyncio.run(
         _run_claim_set_async(
             claim_set,
             planner_service=planner_service or PlannerService(),
             formalizer_service=formalizer_service or DEFAULT_FORMALIZER,
             prover_instance=prover_instance or DEFAULT_PROVER,
+            budget_profile=profile,
             enforce_readiness=enforce_readiness,
             benchmark_mode=benchmark_mode,
             limit=limit,
@@ -1690,6 +1999,11 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     tokens_by_stage: dict[str, dict[str, int]] = {}
     cost_by_stage: dict[str, float] = {}
     cost_by_model: dict[str, dict[str, Any]] = {}
+    cost_by_claim_type: dict[str, dict[str, Any]] = {}
+    cost_by_claim_scope: dict[str, dict[str, Any]] = {}
+    token_usage_sources: dict[str, dict[str, Any]] = {}
+    latency_by_stage: dict[str, dict[str, Any]] = {}
+    budget_exhaustion = {"total": 0, "by_reason": {}, "by_profile": {}}
     failure_counts: dict[str, int] = {}
     benchmark_category_mix: dict[str, int] = {}
     for summary in summaries:
@@ -1713,17 +2027,64 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 + float(payload.get("estimated_cost_usd") or 0.0),
                 8,
             )
+        for source, target in (
+            ("cost_by_claim_type", cost_by_claim_type),
+            ("cost_by_claim_scope", cost_by_claim_scope),
+            ("token_usage_sources", token_usage_sources),
+        ):
+            for key, payload in summary.get(source, {}).items():
+                bucket = target.setdefault(
+                    key,
+                    {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "estimated_cost_usd": 0.0,
+                        "records": 0,
+                    },
+                )
+                bucket["input_tokens"] += int(payload.get("input_tokens") or 0)
+                bucket["output_tokens"] += int(payload.get("output_tokens") or 0)
+                bucket["estimated_cost_usd"] = round(
+                    float(bucket["estimated_cost_usd"])
+                    + float(payload.get("estimated_cost_usd") or 0.0),
+                    8,
+                )
+                bucket["records"] += int(payload.get("records") or 0)
+        for stage, payload in summary.get("latency_by_stage", {}).items():
+            bucket = latency_by_stage.setdefault(
+                stage,
+                {"latency_ms_sum": 0.0, "records": 0, "latency_ms_avg": 0.0},
+            )
+            bucket["latency_ms_sum"] = round(
+                float(bucket["latency_ms_sum"]) + float(payload.get("latency_ms_sum") or 0.0),
+                3,
+            )
+            bucket["records"] += int(payload.get("records") or 0)
         for error_code, count in summary.get("failure_counts", {}).items():
             failure_counts[error_code] = failure_counts.get(error_code, 0) + int(count)
+        summary_budget = summary.get("budget_exhaustion") or {}
+        budget_exhaustion["total"] += int(summary_budget.get("total") or 0)
+        for reason, count in (summary_budget.get("by_reason") or {}).items():
+            budget_exhaustion["by_reason"][reason] = budget_exhaustion["by_reason"].get(reason, 0) + int(count)
+        for profile_name, count in (summary_budget.get("by_profile") or {}).items():
+            budget_exhaustion["by_profile"][profile_name] = budget_exhaustion["by_profile"].get(profile_name, 0) + int(count)
         manifest = summary.get("claim_set_manifest", {})
         for bucket, count in manifest.get("bucket_counts", {}).items():
             benchmark_category_mix[bucket] = benchmark_category_mix.get(bucket, 0) + int(count)
     claims_total = sum(int(summary.get("claims_total") or 0) for summary in summaries)
     claims_passed = sum(int(summary.get("claims_passed") or 0) for summary in summaries)
     benchmark_mode = any(bool(summary.get("benchmark_mode")) for summary in summaries)
-    target_timeouts = BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS
+    profile_names = sorted({str(summary.get("budget_profile") or "unknown") for summary in summaries})
+    combined_profile_name = profile_names[0] if len(profile_names) == 1 else "mixed"
+    first_profile = resolve_budget_profile(profile_names[0]) if len(profile_names) == 1 and profile_names[0] != "unknown" else None
+    target_timeouts = (
+        _target_timeouts_for_profile(benchmark_mode=benchmark_mode, profile=first_profile)
+        if first_profile is not None
+        else (BENCHMARK_TARGET_TIMEOUTS if benchmark_mode else LIVE_TARGET_TIMEOUTS)
+    )
     all_results = [result for summary in summaries for result in summary.get("results", [])]
     combined_scope_metrics = metrics_by_scope(all_results)
+    release_metrics_eligible = bool(first_profile and first_profile.release_metrics_eligible)
     average_tool_calls = (
         round(sum(int(item.get("tool_calls") or 0) for item in all_results) / len(all_results), 3)
         if all_results
@@ -1752,11 +2113,18 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     prover_state_transitions = _prover_state_transition_payloads(all_results)
     synthesis_events = _synthesis_event_payloads(all_results)
     synthesis_counts = _synthesis_event_counts(all_results)
+    for bucket in latency_by_stage.values():
+        records = int(bucket.get("records") or 0)
+        bucket["latency_ms_avg"] = round(float(bucket["latency_ms_sum"]) / records, 3) if records else 0.0
     return {
         "claim_set": "local_gate",
         "artifact_schema_version": FRONTIER_RECORD_SCHEMA_VERSION,
         "mode": "benchmark_pipeline" if benchmark_mode else "live_pipeline",
         "benchmark_mode": benchmark_mode,
+        "budget_profile": combined_profile_name,
+        "budget_profiles": profile_names,
+        "budget_caps": first_profile.public_dict() if first_profile is not None else {},
+        "release_metrics_eligible": release_metrics_eligible,
         "target_timeouts": target_timeouts.model_dump(mode="json"),
         "generated_at": _timestamp(),
         "claims_total": claims_total,
@@ -1765,7 +2133,11 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "pass_at_1": round(claims_passed / claims_total, 6) if claims_total else 0.0,
         "claim_scope_counts": scope_counts(all_results),
         "metrics_by_scope": combined_scope_metrics,
-        "release_reliable_metrics": combined_scope_metrics[RELEASE_RELIABLE],
+        "release_reliable_metrics": (
+            combined_scope_metrics[RELEASE_RELIABLE]
+            if release_metrics_eligible
+            else {"claims_total": 0, "claims_passed": 0, "claims_failed": 0, "pass_at_1": 0.0}
+        ),
         "frontier_metrics": {
             scope_name: combined_scope_metrics[scope_name]
             for scope_name in (SUPPORTED_ATTEMPT, FRONTIER_COLLECT, OUT_OF_SCOPE)
@@ -1798,6 +2170,11 @@ def _combine_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "tokens_by_stage": tokens_by_stage,
         "cost_by_stage": cost_by_stage,
         "cost_by_model": cost_by_model,
+        "cost_by_claim_type": cost_by_claim_type,
+        "cost_by_claim_scope": cost_by_claim_scope,
+        "token_usage_sources": token_usage_sources,
+        "latency_by_stage": latency_by_stage,
+        "budget_exhaustion": budget_exhaustion,
         "failure_counts": failure_counts,
         "benchmark_category_mix": benchmark_category_mix,
         "frontier_records": _frontier_records_from_results(all_results),
@@ -1812,6 +2189,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--allow-unready", action="store_true")
     parser.add_argument("--benchmark-mode", action="store_true")
+    parser.add_argument(
+        "--budget-profile",
+        choices=("release", "frontier", "research"),
+        default=None,
+        help="Budget profile to enforce; defaults to LEANECON_BUDGET_PROFILE or release.",
+    )
     parser.add_argument("--save-history", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--stratified", action="store_true")
@@ -1834,12 +2217,14 @@ def main(argv: list[str] | None = None) -> int:
             "benchmark_mode" if args.benchmark_mode else "live_pipeline"
         )
     reporter = _TerminalReporter()
+    selected_profile = resolve_budget_profile(args.budget_profile)
     summaries: list[dict[str, Any]] = []
     for claim_set in selected:
         reset_progress_log(claim_set, output_dir)
         summaries.append(
             run_claim_set(
                 claim_set,
+                budget_profile=selected_profile,
                 enforce_readiness=not args.allow_unready,
                 benchmark_mode=args.benchmark_mode,
                 limit=args.limit,
@@ -1890,7 +2275,7 @@ def main(argv: list[str] | None = None) -> int:
         history_path = benchmark_history_path(output_dir)
         row = append_history_row(combined, history_path=history_path)
         reporter.history_updated(str(row["row_id"]), history_path)
-    if not combined["readiness"]["ready"]:
+    if not args.allow_unready and not combined["readiness"]["ready"]:
         return 1
     return 0 if combined["claims_failed"] == 0 else 1
 

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.budget_profiles import active_budget_profile, clamp_int
+
 APP_VERSION = "3.0.0-alpha"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -118,6 +120,8 @@ def validate_runtime_secrets(
 
 
 LEANECON_ENV = load_runtime_env()
+BUDGET_PROFILE = active_budget_profile(runtime_env=LEANECON_ENV)
+BUDGET_PROFILE_NAME = BUDGET_PROFILE.name
 
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("PORT", os.getenv("API_PORT", "8000")))
@@ -128,10 +132,26 @@ REPL_ENABLED = os.getenv("REPL_ENABLED", "true").lower() == "true"
 FORMALIZER_REPL_VALIDATION_ENABLED = (
     os.getenv("FORMALIZER_REPL_VALIDATION_ENABLED", "true").lower() == "true"
 )
-MAX_PROVE_STEPS = int(os.getenv("MAX_PROVE_STEPS", "32"))
-MAX_PROVE_TIMEOUT = int(os.getenv("MAX_PROVE_TIMEOUT", "300"))
-MAX_TOTAL_TOOL_CALLS = int(os.getenv("MAX_TOTAL_TOOL_CALLS", "40"))
-MAX_SEARCH_TOOL_CALLS = int(os.getenv("MAX_SEARCH_TOOL_CALLS", "12"))
+MAX_PROVER_TURNS = clamp_int(
+    int(os.getenv("MAX_PROVER_TURNS", str(BUDGET_PROFILE.max_prover_turns))),
+    BUDGET_PROFILE.max_prover_turns,
+)
+MAX_PROVE_STEPS = clamp_int(
+    int(os.getenv("MAX_PROVE_STEPS", str(BUDGET_PROFILE.max_prove_steps))),
+    BUDGET_PROFILE.max_prove_steps,
+)
+MAX_PROVE_TIMEOUT = clamp_int(
+    int(os.getenv("MAX_PROVE_TIMEOUT", str(BUDGET_PROFILE.max_timeout_seconds))),
+    BUDGET_PROFILE.max_timeout_seconds,
+)
+MAX_TOTAL_TOOL_CALLS = clamp_int(
+    int(os.getenv("MAX_TOTAL_TOOL_CALLS", str(BUDGET_PROFILE.max_total_tool_calls))),
+    BUDGET_PROFILE.max_total_tool_calls,
+)
+MAX_SEARCH_TOOL_CALLS = clamp_int(
+    int(os.getenv("MAX_SEARCH_TOOL_CALLS", str(BUDGET_PROFILE.max_search_tool_calls))),
+    BUDGET_PROFILE.max_search_tool_calls,
+)
 # Sprint 25: hybrid (mathlib-native) mode gets an explicit synthesis recovery
 # budget for sketching, premise-use recovery, and helper-lemma attempts without
 # changing preamble-definable limits.
@@ -141,17 +161,28 @@ MATHLIB_SYNTHESIS_RECOVERY_SEARCH_BONUS = int(
 MATHLIB_SYNTHESIS_RECOVERY_STEP_BONUS = int(
     os.getenv("MATHLIB_SYNTHESIS_RECOVERY_STEP_BONUS", "8")
 )
-MAX_PROVE_STEPS_HYBRID = int(
-    os.getenv(
-        "MAX_PROVE_STEPS_HYBRID",
-        str(MAX_PROVE_STEPS + MATHLIB_SYNTHESIS_RECOVERY_STEP_BONUS),
-    )
+MAX_PROVE_STEPS_HYBRID = clamp_int(
+    int(
+        os.getenv(
+            "MAX_PROVE_STEPS_HYBRID",
+            str(MAX_PROVE_STEPS + MATHLIB_SYNTHESIS_RECOVERY_STEP_BONUS),
+        )
+    ),
+    BUDGET_PROFILE.max_prove_steps + MATHLIB_SYNTHESIS_RECOVERY_STEP_BONUS,
 )
-MAX_SEARCH_TOOL_CALLS_HYBRID = int(
-    os.getenv(
-        "MAX_SEARCH_TOOL_CALLS_HYBRID",
-        str(MAX_SEARCH_TOOL_CALLS + MATHLIB_SYNTHESIS_RECOVERY_SEARCH_BONUS),
-    )
+MAX_SEARCH_TOOL_CALLS_HYBRID = clamp_int(
+    int(
+        os.getenv(
+            "MAX_SEARCH_TOOL_CALLS_HYBRID",
+            str(
+                min(
+                    MAX_SEARCH_TOOL_CALLS + MATHLIB_SYNTHESIS_RECOVERY_SEARCH_BONUS,
+                    BUDGET_PROFILE.max_search_tool_calls_hybrid,
+                )
+            ),
+        )
+    ),
+    BUDGET_PROFILE.max_search_tool_calls_hybrid,
 )
 MATHLIB_SYNTHESIS_BEST_OF_N = int(os.getenv("MATHLIB_SYNTHESIS_BEST_OF_N", "1"))
 MATHLIB_SYNTHESIS_HELPER_LEMMA_ENABLED = (

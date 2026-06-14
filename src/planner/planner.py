@@ -432,6 +432,58 @@ class MistralPlannerDriver:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._connectivity_checked_at = 0.0
+        self._connectivity_error: str | None = None
+        self._connectivity_cache_seconds = 60.0
+
+    @property
+    def models_url(self) -> str:
+        return f"{self.base_url}/models"
+
+    def connectivity_status(self) -> tuple[bool, str | None]:
+        now = time.monotonic()
+        if now - self._connectivity_checked_at <= self._connectivity_cache_seconds:
+            return self._connectivity_error is None, self._connectivity_error
+        try:
+            self._check_connectivity()
+            self._connectivity_error = None
+        except Exception as error:
+            self._connectivity_error = self._format_connectivity_error(error)
+        self._connectivity_checked_at = now
+        return self._connectivity_error is None, self._connectivity_error
+
+    def _check_connectivity(self) -> None:
+        if not self.api_key:
+            raise PlannerConnectivityError(
+                "Planner provider unavailable: MISTRAL_API_KEY is required for Mistral planner access."
+            )
+        request = urllib_request.Request(
+            self.models_url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+        timeout = min(float(self.timeout), 5.0)
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        models = payload.get("data")
+        if not isinstance(models, list):
+            raise PlannerConnectivityError(
+                "Planner provider unavailable: Mistral models response was malformed."
+            )
+
+    def _format_connectivity_error(self, error: Exception) -> str:
+        if isinstance(error, PlannerConnectivityError):
+            return str(error)
+        if isinstance(error, urllib_error.HTTPError):
+            reason = error.reason or "HTTP error"
+            return (
+                f"Planner provider unavailable: Mistral request to {self.base_url} failed "
+                f"with HTTP {error.code} ({reason})."
+            )
+        return f"Planner provider unavailable: Mistral endpoint unreachable at {self.base_url} ({error})"
 
     def generate(
         self,
@@ -814,6 +866,8 @@ class Planner:
 
     def connectivity_check(self) -> tuple[bool, str | None]:
         if self.backend.name == "ollama-cloud" and isinstance(self.driver, OllamaPlannerDriver):
+            return self.driver.connectivity_status()
+        if self.backend.name == "mistral-structured" and isinstance(self.driver, MistralPlannerDriver):
             return self.driver.connectivity_status()
         return True, None
 

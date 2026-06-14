@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from src.budget_profiles import BudgetProfile, active_budget_profile
 from src.formalizer.models import FormalizationPacket
 
 SHORTCUT_ATTEMPT_TIMEOUT_SECONDS = 25
@@ -82,6 +83,7 @@ class DirectCloseAttemptSummary:
     claim_type: ClaimType | None
     claim_type_policy: str
     preamble_shortcuts_enabled: bool
+    budget_profile: str | None = None
 
     @property
     def exhausted(self) -> bool:
@@ -95,6 +97,7 @@ class DirectCloseAttemptSummary:
             "claim_type": self.claim_type,
             "claim_type_policy": self.claim_type_policy,
             "preamble_shortcuts_enabled": self.preamble_shortcuts_enabled,
+            "budget_profile": self.budget_profile,
         }
 
 class ProverBudgetMixin:
@@ -107,30 +110,40 @@ class ProverBudgetMixin:
             return claim_type
         return None
 
+    def _current_budget_profile(self) -> BudgetProfile:
+        profile = getattr(self, "_active_budget_profile", None)
+        if isinstance(profile, BudgetProfile):
+            return profile
+        return active_budget_profile()
+
     def _direct_close_policy(self, packet: FormalizationPacket) -> DirectClosePolicy:
         # Keep claim-type handling centralized: mathlib-native claims may use a
         # small compile-checked direct-close budget, but Preamble-derived
         # shortcuts stay disabled so failures honestly reflect missing Mathlib
         # search strategy rather than accidental LeanEcon lemma reuse.
         claim_type = self._normalized_claim_type(packet)
+        profile = self._current_budget_profile()
         if claim_type == "mathlib_native":
             return DirectClosePolicy(
                 claim_type=claim_type,
-                claim_type_policy="mathlib_native_cap_2_no_preamble_shortcuts",
-                attempt_cap=MATHLIB_NATIVE_DIRECT_CLOSE_LIMIT,
+                claim_type_policy=(
+                    f"mathlib_native_cap_{profile.mathlib_native_direct_close_attempt_cap}"
+                    "_no_preamble_shortcuts"
+                ),
+                attempt_cap=profile.mathlib_native_direct_close_attempt_cap,
                 preamble_shortcuts_enabled=False,
             )
         if claim_type == "preamble_definable":
             return DirectClosePolicy(
                 claim_type=claim_type,
                 claim_type_policy="preamble_definable_default",
-                attempt_cap=MAX_DIRECT_CLOSURE_CANDIDATES,
+                attempt_cap=profile.direct_close_attempt_cap,
                 preamble_shortcuts_enabled=True,
             )
         return DirectClosePolicy(
             claim_type=None,
             claim_type_policy="default",
-            attempt_cap=MAX_DIRECT_CLOSURE_CANDIDATES,
+            attempt_cap=profile.direct_close_attempt_cap,
             preamble_shortcuts_enabled=True,
         )
 
@@ -149,11 +162,25 @@ class ProverBudgetMixin:
             MAX_TOTAL_TOOL_CALLS,
         )
 
+        profile = self._current_budget_profile()
         # Restore defaults first so a prior mathlib_native call doesn't leak.
-        self.budget_tracker.max_search_tool_calls = MAX_SEARCH_TOOL_CALLS
-        self.budget_tracker.max_total_tool_calls = MAX_TOTAL_TOOL_CALLS
+        self.budget_tracker.budget_profile = profile.name
+        self.budget_tracker.max_prover_turns = profile.max_prover_turns
+        self.budget_tracker.max_prove_steps = profile.max_prove_steps
+        self.budget_tracker.max_timeout_seconds = profile.max_timeout_seconds
+        self.budget_tracker.max_search_tool_calls = min(
+            MAX_SEARCH_TOOL_CALLS,
+            profile.max_search_tool_calls,
+        )
+        self.budget_tracker.max_total_tool_calls = min(
+            MAX_TOTAL_TOOL_CALLS,
+            profile.max_total_tool_calls,
+        )
         if self._normalized_claim_type(packet) == "mathlib_native":
-            self.budget_tracker.max_search_tool_calls = MAX_SEARCH_TOOL_CALLS_HYBRID
+            self.budget_tracker.max_search_tool_calls = min(
+                MAX_SEARCH_TOOL_CALLS_HYBRID,
+                profile.max_search_tool_calls_hybrid,
+            )
             # Total is "search + everything else"; keep the existing total ceiling
             # but allow the hybrid prove-step extension via the env-overridable
             # constant for callers that consult it directly. (Steps are governed

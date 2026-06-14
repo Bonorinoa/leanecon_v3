@@ -489,16 +489,29 @@ class JobStore:
         with closing(sqlite3.connect(self.db_path)) as connection:
             usage_rows = connection.execute(
                 """
-                SELECT stage, provider, model, input_tokens, output_tokens, estimated_cost_usd, success, error_code
+                SELECT job_id, stage, provider, model, input_tokens, output_tokens,
+                       estimated_cost_usd, latency_ms, success, usage_source, error_code
                 FROM job_stage_usage
                 """
             ).fetchall()
             audit_rows = connection.execute(
                 """
-                SELECT stage, event_type, success, error_code, metadata_json
+                SELECT job_id, stage, event_type, success, error_code, metadata_json
                 FROM job_audit_events
                 """
             ).fetchall()
+            job_rows = connection.execute("SELECT id, result_json FROM jobs").fetchall()
+        job_dimensions: dict[str, dict[str, str]] = {}
+        for job_id, result_json in job_rows:
+            payload = json.loads(str(result_json)) if result_json else {}
+            claim_type = str(payload.get("claim_type") or "unknown")
+            claim_scope = str(payload.get("claim_scope") or "unknown")
+            budget_profile = str(payload.get("budget_profile") or "unknown")
+            job_dimensions[str(job_id)] = {
+                "claim_type": claim_type,
+                "claim_scope": claim_scope,
+                "budget_profile": budget_profile,
+            }
         usage_totals = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -507,16 +520,27 @@ class JobStore:
         }
         usage_by_stage: dict[str, dict[str, Any]] = {}
         usage_by_model: dict[str, dict[str, Any]] = {}
+        usage_by_claim_type: dict[str, dict[str, Any]] = {}
+        usage_by_claim_scope: dict[str, dict[str, Any]] = {}
+        usage_by_source: dict[str, dict[str, Any]] = {}
+        latency_by_stage: dict[str, dict[str, Any]] = {}
         stage_success_counts: dict[str, dict[str, int]] = {}
         for row in usage_rows:
-            stage = str(row[0])
-            provider = str(row[1])
-            model = str(row[2])
-            input_tokens = int(row[3]) if row[3] is not None else 0
-            output_tokens = int(row[4]) if row[4] is not None else 0
-            estimated_cost = float(row[5]) if row[5] is not None else 0.0
-            success = bool(row[6])
-            error_code = str(row[7]) if row[7] is not None else None
+            job_id = str(row[0])
+            stage = str(row[1])
+            provider = str(row[2])
+            model = str(row[3])
+            input_tokens = int(row[4]) if row[4] is not None else 0
+            output_tokens = int(row[5]) if row[5] is not None else 0
+            estimated_cost = float(row[6]) if row[6] is not None else 0.0
+            latency_ms = float(row[7]) if row[7] is not None else 0.0
+            success = bool(row[8])
+            usage_source = str(row[9])
+            error_code = str(row[10]) if row[10] is not None else None
+            dimensions = job_dimensions.get(
+                job_id,
+                {"claim_type": "unknown", "claim_scope": "unknown", "budget_profile": "unknown"},
+            )
 
             usage_totals["input_tokens"] += input_tokens
             usage_totals["output_tokens"] += output_tokens
@@ -555,32 +579,101 @@ class JobStore:
             model_bucket["estimated_cost_usd"] += estimated_cost
             model_bucket["records"] += 1
 
+            for key, target in (
+                (dimensions["claim_type"], usage_by_claim_type),
+                (dimensions["claim_scope"], usage_by_claim_scope),
+            ):
+                bucket = target.setdefault(
+                    key,
+                    {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "estimated_cost_usd": 0.0,
+                        "records": 0,
+                    },
+                )
+                bucket["input_tokens"] += input_tokens
+                bucket["output_tokens"] += output_tokens
+                bucket["estimated_cost_usd"] += estimated_cost
+                bucket["records"] += 1
+
+            source_bucket = usage_by_source.setdefault(
+                usage_source,
+                {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "estimated_cost_usd": 0.0,
+                    "records": 0,
+                },
+            )
+            source_bucket["input_tokens"] += input_tokens
+            source_bucket["output_tokens"] += output_tokens
+            source_bucket["estimated_cost_usd"] += estimated_cost
+            source_bucket["records"] += 1
+
+            latency_bucket = latency_by_stage.setdefault(
+                stage,
+                {"latency_ms_sum": 0.0, "records": 0, "latency_ms_avg": 0.0},
+            )
+            latency_bucket["latency_ms_sum"] += latency_ms
+            latency_bucket["records"] += 1
+
         failure_counts: dict[str, int] = {}
         stage_event_counts: dict[str, int] = {}
         tool_call_distribution: dict[str, int] = {}
+        budget_exhaustion = {
+            "total": 0,
+            "by_reason": {},
+            "by_profile": {},
+        }
         direct_close_stats = {"direct_definable_closure": 0, "trivial_shortcut": 0}
         for row in audit_rows:
-            stage = str(row[0])
-            event_type = str(row[1])
+            job_id = str(row[0])
+            stage = str(row[1])
+            event_type = str(row[2])
             stage_event_key = f"{stage}:{event_type}"
             stage_event_counts[stage_event_key] = stage_event_counts.get(stage_event_key, 0) + 1
-            if row[3] is None:
+            if row[4] is None:
                 pass
             else:
-                code = str(row[3])
+                code = str(row[4])
                 failure_counts[code] = failure_counts.get(code, 0) + 1
             if event_type in direct_close_stats:
                 direct_close_stats[event_type] += 1
-            metadata = json.loads(str(row[4])) if row[4] else {}
+            metadata = json.loads(str(row[5])) if row[5] else {}
             tool_name = metadata.get("tool_name")
             if isinstance(tool_name, str) and tool_name.strip():
                 tool_call_distribution[tool_name] = tool_call_distribution.get(tool_name, 0) + 1
+            reason = str(row[4] or metadata.get("termination_reason") or "")
+            if reason in {
+                "max_turns_exhausted",
+                "tool_budget_exhausted",
+                "budget_exhausted",
+                "lsp_search_exhausted",
+                "timeout",
+            } or reason.endswith("_timeout"):
+                profile = str(
+                    metadata.get("budget_profile")
+                    or job_dimensions.get(job_id, {}).get("budget_profile")
+                    or "unknown"
+                )
+                budget_exhaustion["total"] += 1
+                budget_exhaustion["by_reason"][reason] = budget_exhaustion["by_reason"].get(reason, 0) + 1
+                budget_exhaustion["by_profile"][profile] = budget_exhaustion["by_profile"].get(profile, 0) + 1
 
         usage_totals["estimated_cost_usd"] = round(float(usage_totals["estimated_cost_usd"]), 8)
-        for bucket in usage_by_stage.values():
+        for bucket in (
+            *usage_by_stage.values(),
+            *usage_by_model.values(),
+            *usage_by_claim_type.values(),
+            *usage_by_claim_scope.values(),
+            *usage_by_source.values(),
+        ):
             bucket["estimated_cost_usd"] = round(float(bucket["estimated_cost_usd"]), 8)
-        for bucket in usage_by_model.values():
-            bucket["estimated_cost_usd"] = round(float(bucket["estimated_cost_usd"]), 8)
+        for bucket in latency_by_stage.values():
+            records = int(bucket.get("records") or 0)
+            bucket["latency_ms_sum"] = round(float(bucket["latency_ms_sum"]), 3)
+            bucket["latency_ms_avg"] = round(float(bucket["latency_ms_sum"]) / records, 3) if records else 0.0
         planner_bucket = usage_by_stage.get("planner", {})
         planner_records = int(planner_bucket.get("records") or 0)
         planner_schema_invalids = int((planner_bucket.get("failure_counts") or {}).get("schema_invalid") or 0)
@@ -590,6 +683,11 @@ class JobStore:
             "usage_totals": usage_totals,
             "usage_by_stage": usage_by_stage,
             "usage_by_model": usage_by_model,
+            "usage_by_claim_type": usage_by_claim_type,
+            "usage_by_claim_scope": usage_by_claim_scope,
+            "usage_by_source": usage_by_source,
+            "latency_by_stage": latency_by_stage,
+            "budget_exhaustion": budget_exhaustion,
             "failure_counts": failure_counts,
             "stage_success_counts": stage_success_counts,
             "stage_event_counts": stage_event_counts,

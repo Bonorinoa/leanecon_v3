@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -17,12 +17,14 @@ class PlanRequest(LeanEconModel):
     claim: str = Field(min_length=1)
     context: dict[str, Any] | None = None
     benchmark_mode: bool = False
+    budget_profile: Literal["release", "frontier", "research"] | None = None
 
 
 class FormalizeRequest(LeanEconModel):
     claim: str = Field(min_length=1)
     planner_packet: dict[str, Any] | None = None
     benchmark_mode: bool = False
+    budget_profile: Literal["release", "frontier", "research"] | None = None
 
 
 class ProverTargetTimeoutsRequest(LeanEconModel):
@@ -33,11 +35,12 @@ class ProverTargetTimeoutsRequest(LeanEconModel):
 
 class ProveRequest(LeanEconModel):
     formalization_packet: FormalizationPacket
-    max_turns: int = Field(default=8, ge=1, le=32)
-    timeout: int = Field(default=300, ge=1, le=1800)
+    max_turns: int | None = Field(default=None, ge=1, le=32)
+    timeout: int | None = Field(default=None, ge=1, le=1800)
     target_timeouts: ProverTargetTimeoutsRequest | None = None
     allow_decomposition: bool = True
     benchmark_mode: bool = False
+    budget_profile: Literal["release", "frontier", "research"] | None = None
 
     @field_validator("formalization_packet", mode="before")
     @classmethod
@@ -84,6 +87,11 @@ class MetricsResponse(LeanEconModel):
     usage_totals: dict[str, Any] = Field(default_factory=dict)
     usage_by_stage: dict[str, Any] = Field(default_factory=dict)
     usage_by_model: dict[str, Any] = Field(default_factory=dict)
+    usage_by_claim_type: dict[str, Any] = Field(default_factory=dict)
+    usage_by_claim_scope: dict[str, Any] = Field(default_factory=dict)
+    usage_by_source: dict[str, Any] = Field(default_factory=dict)
+    latency_by_stage: dict[str, Any] = Field(default_factory=dict)
+    budget_exhaustion: dict[str, Any] = Field(default_factory=dict)
     failure_counts: dict[str, int] = Field(default_factory=dict)
     stage_success_counts: dict[str, Any] = Field(default_factory=dict)
     stage_event_counts: dict[str, int] = Field(default_factory=dict)
@@ -91,4 +99,6 @@ class MetricsResponse(LeanEconModel):
     benchmark_category_mix: dict[str, int] = Field(default_factory=dict)
     integrity: dict[str, Any] = Field(default_factory=dict)
     backend_status: dict[str, Any] = Field(default_factory=dict)
+    budget_profile: dict[str, Any] = Field(default_factory=dict)
+    provider_guardrail: dict[str, Any] = Field(default_factory=dict)
     recent: dict[str, Any] = Field(default_factory=dict)

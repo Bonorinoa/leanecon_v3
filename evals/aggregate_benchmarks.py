@@ -159,7 +159,12 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
     latency_rows: list[list[str]] = []
     retrieval_rows: list[list[str]] = []
     scope_rows: list[list[str]] = []
+    cost_dimension_rows: list[list[str]] = []
     overall_scoped_metrics = _empty_scope_metrics()
+    overall_release_total = 0
+    overall_release_passed = 0
+    overall_cost_by_claim_type: Counter[str] = Counter()
+    overall_cost_by_claim_scope: Counter[str] = Counter()
     failure_counts: Counter[str] = Counter()
     failure_by_tier: dict[str, Counter[str]] = {}
 
@@ -178,6 +183,7 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
                 f"{claims_passed_set}/{claims_total_set}",
                 str(int(summary.get("claims_failed") or 0)),
                 _format_usd(_total_cost(summary)),
+                str(summary.get("budget_profile") or "unknown"),
                 path.name,
             ]
         )
@@ -213,12 +219,19 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
             ]
         )
         scoped_metrics = _summary_scope_metrics(claim_set, summary)
+        release_metrics = summary.get("release_reliable_metrics") or scoped_metrics.get("release_reliable", {})
+        overall_release_total += int(release_metrics.get("claims_total") or 0)
+        overall_release_passed += int(release_metrics.get("claims_passed") or 0)
         for scope_name, payload in scoped_metrics.items():
             overall_payload = overall_scoped_metrics[scope_name]
             overall_payload["claims_total"] += int((payload or {}).get("claims_total") or 0)
             overall_payload["claims_passed"] += int((payload or {}).get("claims_passed") or 0)
             overall_payload["claims_failed"] += int((payload or {}).get("claims_failed") or 0)
-        reliable = scoped_metrics.get("release_reliable", {})
+        for key, payload in (summary.get("cost_by_claim_type") or {}).items():
+            overall_cost_by_claim_type[str(key)] += float((payload or {}).get("estimated_cost_usd") or 0.0)
+        for key, payload in (summary.get("cost_by_claim_scope") or {}).items():
+            overall_cost_by_claim_scope[str(key)] += float((payload or {}).get("estimated_cost_usd") or 0.0)
+        reliable = release_metrics
         frontier_total = sum(
             int((scoped_metrics.get(scope) or {}).get("claims_total") or 0)
             for scope in ("supported_attempt", "frontier_collect", "out_of_scope")
@@ -246,6 +259,7 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
             f"{claims_passed}/{claims_total}",
             str(claims_total - claims_passed),
             _format_usd(total_cost),
+            "-",
             "-",
         ]
     )
@@ -279,11 +293,21 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
         total = int(payload.get("claims_total") or 0)
         passed = int(payload.get("claims_passed") or 0)
         payload["pass_at_1"] = round(passed / total, 6) if total else 0.0
-    reliable = overall_scoped_metrics.get("release_reliable", {})
+    reliable = {
+        "claims_total": overall_release_total,
+        "claims_passed": overall_release_passed,
+        "pass_at_1": round(overall_release_passed / overall_release_total, 6) if overall_release_total else 0.0,
+    }
     frontier_total = sum(
         int((overall_scoped_metrics.get(scope) or {}).get("claims_total") or 0)
         for scope in ("supported_attempt", "frontier_collect", "out_of_scope")
     )
+    for label, counter in (
+        ("claim_type", overall_cost_by_claim_type),
+        ("claim_scope", overall_cost_by_claim_scope),
+    ):
+        for key, value in sorted(counter.items()):
+            cost_dimension_rows.append([label, key, _format_usd(round(float(value), 8))])
     frontier_passed = sum(
         int((overall_scoped_metrics.get(scope) or {}).get("claims_passed") or 0)
         for scope in ("supported_attempt", "frontier_collect", "out_of_scope")
@@ -320,7 +344,7 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
         "## Overview",
         "",
         _render_markdown_table(
-            ["Claim Set", "Generated At", "Pass@1", "Passed", "Failed", "Cost USD", "File"],
+            ["Claim Set", "Generated At", "Pass@1", "Passed", "Failed", "Cost USD", "Profile", "File"],
             overview_rows,
         ),
         "",
@@ -347,6 +371,12 @@ def build_markdown_report(items: list[tuple[str, Path, dict[str, Any]]], *, sour
             ["Claim Set", "Avg Tool Calls", "Avg LSP Tool Calls", "Avg Native Search Attempts", "Mathlib Native Mode Uses"],
             tooling_rows,
         ),
+        "",
+        "## Cost By Claim Dimension",
+        "",
+        _render_markdown_table(["Dimension", "Value", "Cost USD"], cost_dimension_rows)
+        if cost_dimension_rows
+        else "No claim-dimension costs recorded.",
         "",
         "## Hybrid Retrieval Metrics",
         "",

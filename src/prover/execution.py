@@ -13,6 +13,12 @@ import re
 import time
 from typing import Any, Callable
 
+from src.budget_profiles import (
+    BudgetProfile,
+    clamp_int,
+    clamp_target_timeouts,
+    resolve_budget_profile,
+)
 from src.config import (
     BENCHMARK_MAX_RECURSION_DEPTH,
     MATHLIB_SYNTHESIS_BEST_OF_N,
@@ -282,6 +288,7 @@ def _assemble_prover_result(
     *,
     status: str,
     packet: FormalizationPacket,
+    budget_profile: BudgetProfile | None = None,
     benchmark_mode: bool,
     verified_via: str = "full_pipeline",
     verified_code: str | None,
@@ -306,6 +313,7 @@ def _assemble_prover_result(
     progress_deltas: list[dict[str, Any]],
     synthesis_events: list[dict[str, Any]],
 ) -> ProverResult:
+    resolved_budget_profile = budget_profile or resolve_budget_profile()
     failure_classification = classify_failure(
         scope=getattr(packet, "claim_scope", None),
         claim_type=getattr(packet, "claim_type", None),
@@ -321,6 +329,8 @@ def _assemble_prover_result(
         claim=packet.claim,
         claim_scope=getattr(packet, "claim_scope", "supported_attempt"),
         claim_type=getattr(packet, "claim_type", None),
+        budget_profile=resolved_budget_profile.name,
+        budget_caps=resolved_budget_profile.public_dict(),
         failure_class=failure_classification.failure_class,
         recommended_next_action=failure_classification.next_action,
         benchmark_mode=benchmark_mode,
@@ -531,8 +541,25 @@ class ProverExecutionMixin:
         target_timeouts: ProverTargetTimeouts | None = None,
         allow_decomposition: bool = True,
         benchmark_mode: bool = False,
+        budget_profile: str | BudgetProfile | None = None,
         on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> ProverResult:
+        profile = (
+            budget_profile
+            if isinstance(budget_profile, BudgetProfile)
+            else resolve_budget_profile(budget_profile)
+        )
+        self._active_budget_profile = profile
+        requested_max_turns = int(max_turns)
+        requested_timeout = int(timeout)
+        max_turns = clamp_int(requested_max_turns, profile.max_prover_turns)
+        timeout = clamp_int(requested_timeout, profile.max_timeout_seconds)
+        if target_timeouts is not None:
+            clamped_target_timeouts = clamp_target_timeouts(
+                target_timeouts.model_dump(mode="json"),
+                profile,
+            )
+            target_timeouts = ProverTargetTimeouts.model_validate(clamped_target_timeouts)
         telemetry = SpanRecorder()
         trace: list[ProverTraceStep] = []
         provider_usage: list[TokenUsage] = []
@@ -546,12 +573,19 @@ class ProverExecutionMixin:
         resolved_target_timeouts = self._resolve_target_timeouts(
             timeout=timeout, target_timeouts=target_timeouts
         )
+        clamped_resolved_timeouts = clamp_target_timeouts(
+            resolved_target_timeouts.model_dump(mode="json"),
+            profile,
+        )
+        resolved_target_timeouts = ProverTargetTimeouts.model_validate(clamped_resolved_timeouts)
         final_compile_timeout = self._final_compile_timeout(resolved_target_timeouts)
         max_recursion_depth = BENCHMARK_MAX_RECURSION_DEPTH if benchmark_mode else 3
         self._extracted_lemmas = 0
         self._reset_budget_tracker()
         # Sprint 23 Task 3: bump budgets for mathlib_native claims (preamble untouched).
         self._apply_budget_limits_for_packet(packet)
+        self.budget_tracker.max_prover_turns = max_turns
+        self.budget_tracker.max_timeout_seconds = timeout
         self._retrieval_events = []
         self._tool_usage_traces = []
         self._state_transitions = []
@@ -792,12 +826,23 @@ class ProverExecutionMixin:
                             "attempted_backends": attempted_backends,
                             "benchmark_mode": benchmark_mode,
                             "target_timeouts": resolved_target_timeouts.model_dump(mode="json"),
+                            "budget_profile": profile.name,
+                            "budget_caps": profile.public_dict(),
+                            "requested_budget": {
+                                "max_turns": requested_max_turns,
+                                "timeout": requested_timeout,
+                            },
+                            "effective_budget": {
+                                "max_turns": max_turns,
+                                "timeout": timeout,
+                            },
                         },
                     )
                 )
                 result = _assemble_prover_result(
                     status="verified",
                     packet=packet,
+                    budget_profile=profile,
                     benchmark_mode=benchmark_mode,
                     verified_via=verified_via,
                     verified_code=working_code,
@@ -879,6 +924,16 @@ class ProverExecutionMixin:
                         "attempted_backends": attempted_backends,
                         "benchmark_mode": benchmark_mode,
                         "target_timeouts": resolved_target_timeouts.model_dump(mode="json"),
+                        "budget_profile": profile.name,
+                        "budget_caps": profile.public_dict(),
+                        "requested_budget": {
+                            "max_turns": requested_max_turns,
+                            "timeout": requested_timeout,
+                        },
+                        "effective_budget": {
+                            "max_turns": max_turns,
+                            "timeout": timeout,
+                        },
                     },
                 )
             )
@@ -886,6 +941,7 @@ class ProverExecutionMixin:
             result = _assemble_prover_result(
                 status="failed",
                 packet=packet,
+                budget_profile=profile,
                 benchmark_mode=benchmark_mode,
                 verified_via="full_pipeline",
                 verified_code=None,
@@ -4452,6 +4508,7 @@ class ProverExecutionMixin:
                     claim_type=policy.claim_type,
                     claim_type_policy=policy.claim_type_policy,
                     preamble_shortcuts_enabled=policy.preamble_shortcuts_enabled,
+                    budget_profile=self._current_budget_profile().name,
                 )
             try:
                 result = _compat_compile_check(candidate_code, timeout=bounded_attempt_timeout)
@@ -4474,6 +4531,7 @@ class ProverExecutionMixin:
                         claim_type=policy.claim_type,
                         claim_type_policy=policy.claim_type_policy,
                         preamble_shortcuts_enabled=policy.preamble_shortcuts_enabled,
+                        budget_profile=self._current_budget_profile().name,
                     ),
                 )
         if attempt_budget is not None and remaining_budget is not None:
@@ -4485,6 +4543,7 @@ class ProverExecutionMixin:
             claim_type=policy.claim_type,
             claim_type_policy=policy.claim_type_policy,
             preamble_shortcuts_enabled=policy.preamble_shortcuts_enabled,
+            budget_profile=self._current_budget_profile().name,
         )
 
     def _target_timeout_failure(
