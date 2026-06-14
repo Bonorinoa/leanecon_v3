@@ -89,5 +89,8 @@ jobs:
       - name: Full Lake build
         run: cd lean_workspace && lake build
 
+      - name: Build local Lean base image
+        run: docker build -f Dockerfile.lean-base -t ghcr.io/bonorinoa/leanecon-lean-base:latest .
+
       - name: Docker release image syntax/build check
         run: docker build --pull=false -t leanecon-v3:ci .

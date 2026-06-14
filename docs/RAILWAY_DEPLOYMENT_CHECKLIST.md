@@ -74,6 +74,15 @@ The Railway image is built from `Dockerfile`. The application stage copies
 needs it, and runs `lean --version`, `lake --version`, and
 `cd /app/lean_workspace && lake env lean LeanEcon.lean` during image build.
 
+The Lean base image is now reproducible from `Dockerfile.lean-base`.
+`Dockerfile.lean-base` installs the Lean toolchain from
+`lean_workspace/lean-toolchain`, copies the Lean workspace into
+`/lean_workspace`, runs `lake exe cache get`, runs `lake build LeanEcon`, and
+asserts `/root/.elan`, `/lean_workspace`, `lean --version`, `lake --version`,
+and `lake env lean LeanEcon.lean`. The manual/push workflow
+`.github/workflows/lean-base-image.yml` publishes
+`ghcr.io/bonorinoa/leanecon-lean-base:latest` and a commit-SHA tag.
+
 The full Lake build remains an infrastructure gate. It is required before
 hosted redeploy, but it is not part of normal edit-loop work. If the release
 image lane has a cold cache, first run `lake exe cache get`; do not delete Lake
@@ -91,13 +100,34 @@ For Sprint 34, keep fresh release-prep artifacts outside canonical benchmark
 history unless the release manager explicitly promotes them:
 
 - local release gate: `/private/tmp/leanecon-s34-tier1`
+- approved one-claim provider sample:
+  `/private/tmp/leanecon-s34-provider-sample` passed `1/1`
+  release-reliable claim for `tier1_core_preamble_definable` with
+  `--budget-profile release`; this is provider reachability evidence, not a
+  replacement for the full 24-claim release denominator.
 - local or hosted API smoke: `/private/tmp/leanecon-s34-api-smoke`
 - Docker/image notes: record either a successful `docker build --pull=false -t
   leanecon-v3:ci .` or the exact reason local Docker could not validate the
   image.
 
-If local Docker is unavailable, the CI release-image lane must prove all of the
-following before hosted alpha deployment:
+Sprint 34 local Docker can reach the daemon. After the deprecated GHCR package
+was deleted, a new local base image was built from `Dockerfile.lean-base` as
+`ghcr.io/bonorinoa/leanecon-lean-base:latest`; it validates `/root/.elan`,
+`/lean_workspace`, `lean --version`, `lake --version`, `lake build LeanEcon`,
+and `lake env lean LeanEcon.lean`. With that base image present locally,
+`docker build --pull=false -t leanecon-v3:ci .` passed and the app image
+validated the Lean/Lake commands during build.
+
+The remaining remote step is to publish
+`ghcr.io/bonorinoa/leanecon-lean-base:latest` through the base-image workflow or
+an authenticated `docker push`. Local image sizes from the first build were
+large: the Lean base image used about 14.4 GB disk / 3.64 GB content, and the
+app image used about 22.2 GB disk / 6.34 GB content. Future base-image work
+should separate release runtime dependencies from local ML/research dependencies
+so the app image does not pull GPU Torch/CUDA wheels for the release path.
+
+Local Docker or the CI release-image lane must prove all of the following
+before hosted alpha deployment:
 
 - the Lean base image has `/root/.elan`
 - the Lean base image has `/lean_workspace`

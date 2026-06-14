@@ -1,0 +1,28 @@
+FROM debian:bookworm-slim AS lean-base
+
+ENV ELAN_HOME=/root/.elan
+ENV PATH="/root/.elan/bin:${PATH}"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl git zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /lean_workspace
+
+COPY lean_workspace/lean-toolchain ./lean-toolchain
+RUN curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+    | sh -s -- -y --default-toolchain "$(cat lean-toolchain)"
+
+COPY lean_workspace/lakefile.toml lean_workspace/lake-manifest.json ./
+RUN lake exe cache get
+
+COPY lean_workspace/LeanEcon ./LeanEcon
+COPY lean_workspace/LeanEcon.lean lean_workspace/Main.lean ./
+COPY lean_workspace/README.md ./
+
+RUN lake build LeanEcon \
+    && test -d /root/.elan \
+    && test -d /lean_workspace \
+    && lean --version \
+    && lake --version \
+    && lake env lean LeanEcon.lean
