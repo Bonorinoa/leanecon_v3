@@ -322,6 +322,13 @@ def _assemble_prover_result(
         termination_reason=termination_reason,
         selected_preamble_entries=getattr(packet, "selected_preamble", []),
         parse_success=getattr(getattr(packet, "parse_check", None), "success", None),
+        synthesis_event_count=len(synthesis_events),
+        candidate_attempt_count=sum(
+            1
+            for step in trace
+            if bool((step.tool_arguments or {}).get("synthesis_candidate_used"))
+        ),
+        retrieval_event_count=len(retrieval_events),
     )
     return ProverResult(
         status=status,

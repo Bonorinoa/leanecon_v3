@@ -804,6 +804,20 @@ def _frontier_records_from_results(results: list[dict[str, Any]]) -> list[dict[s
                 parse_success=_parse_success_from_result(result),
                 proof_result=str(result.get("termination_reason") or result.get("status") or ""),
                 failure=failure,
+                budget_profile=result.get("budget_profile"),
+                failure_code=result.get("failure_code"),
+                termination_reason=result.get("termination_reason"),
+                timing_breakdown=result.get("timing_breakdown") or {},
+                usage_by_stage=result.get("usage_by_stage") or {},
+                tool_budget=result.get("tool_budget") or {},
+                budget_exhaustion=result.get("budget_exhaustion"),
+                synthesis_event_count=len(result.get("synthesis_events") or []),
+                candidate_attempt_count=int(
+                    result.get("candidate_attempt_count")
+                    or _candidate_attempt_count([result])
+                    or 0
+                ),
+                retrieval_event_count=len(result.get("retrieval_events") or []),
             )
         )
     return records
@@ -1776,6 +1790,9 @@ async def _run_claim_set_async(
                 if isinstance(parse_check_payload, dict)
                 else None
             ),
+            synthesis_event_count=len(synthesis_events),
+            candidate_attempt_count=synthesis_candidate_used_count,
+            retrieval_event_count=len(retrieval_events),
         )
         budget_exhaustion = _budget_exhaustion_reason(
             failure_code=failure_code,
@@ -1822,6 +1839,9 @@ async def _run_claim_set_async(
                 "native_search_attempts": native_search_attempts,
                 "mathlib_native_mode_usage": mathlib_native_mode_usage,
                 "synthesis_candidate_used_count": synthesis_candidate_used_count,
+                "candidate_attempt_count": _candidate_attempt_count(
+                    [{"trace_events": trace_events, "progress_events": progress_events}]
+                ),
                 "provider_fallback_count": provider_fallback_count,
                 "decomposition_steps": decomposition_steps,
                 "decomposition_depth": decomposition_depth,

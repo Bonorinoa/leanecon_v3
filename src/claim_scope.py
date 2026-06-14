@@ -13,6 +13,7 @@ FailureClass = Literal[
     "planner_assumption_gap",
     "proof_search_failure",
     "retrieval_premise_gap",
+    "synthesis_tactic_assembly_gap",
     "provider_or_tooling_failure",
     "frontier_collect",
     "out_of_scope",
@@ -24,6 +25,8 @@ NextAction = Literal[
     "improve_planner_assumptions",
     "improve_proof_search",
     "add_retrieval_premise",
+    "improve_synthesis_tactic_assembly",
+    "fix_provider_or_budget_issue",
     "collect_for_finetuning",
     "mark_out_of_scope",
 ]
@@ -222,6 +225,9 @@ def classify_failure(
     termination_reason: str | None = None,
     selected_preamble_entries: list[str] | tuple[str, ...] | None = None,
     parse_success: bool | None = None,
+    synthesis_event_count: int = 0,
+    candidate_attempt_count: int = 0,
+    retrieval_event_count: int = 0,
 ) -> FailureClassification:
     """Map failed/out-of-scope attempts to a roadmap next action."""
 
@@ -229,6 +235,7 @@ def classify_failure(
         return FailureClassification(None, None, "Verified claims do not enter a failure queue.")
     selected = tuple(str(item) for item in (selected_preamble_entries or ()) if str(item).strip())
     code = (failure_code or termination_reason or "").lower()
+    has_synthesis_evidence = synthesis_event_count > 0 or candidate_attempt_count > 0
     if scope == OUT_OF_SCOPE:
         return FailureClassification("out_of_scope", "mark_out_of_scope", "Scope classifier marked the claim out of scope.")
     if "unknown_identifier" in code or "unknown identifier" in code or "missing_definition" in code:
@@ -255,12 +262,44 @@ def classify_failure(
             "improve_planner_assumptions",
             "The failure points to missing or weak assumptions in the planner contract.",
         )
-    if claim_type == "mathlib_native":
-        action: NextAction = "add_retrieval_premise" if "retrieval" in code else "collect_for_finetuning"
-        failure_class: FailureClass = "retrieval_premise_gap" if "retrieval" in code else "frontier_collect"
+    if (not has_synthesis_evidence or "max_turns" not in code) and any(
+        marker in code
+        for marker in (
+            "budget",
+            "exhaust",
+            "timeout",
+            "provider",
+            "tooling",
+            "lsp_unavailable",
+            "auth",
+        )
+    ):
         return FailureClassification(
-            failure_class,
-            action,
+            "provider_or_tooling_failure",
+            "fix_provider_or_budget_issue",
+            "The failure points to infrastructure, provider, or budget limits rather than a theorem gap.",
+        )
+    if claim_type == "mathlib_native":
+        if "retrieval" in code or (
+            retrieval_event_count == 0 and synthesis_event_count == 0 and candidate_attempt_count == 0
+        ):
+            return FailureClassification(
+                "retrieval_premise_gap",
+                "add_retrieval_premise",
+                "Mathlib-native proving did not surface usable premise evidence.",
+            )
+        if (
+            has_synthesis_evidence
+            or any(marker in code for marker in ("compile", "stall", "max_turns", "unsolved"))
+        ):
+            return FailureClassification(
+                "synthesis_tactic_assembly_gap",
+                "improve_synthesis_tactic_assembly",
+                "Retrieved or synthesized proof material was present, but tactic assembly did not verify.",
+            )
+        return FailureClassification(
+            "frontier_collect",
+            "collect_for_finetuning",
             "Mathlib-native failure is collected as frontier data.",
         )
     if selected:
@@ -287,6 +326,16 @@ def build_frontier_record(
     parse_success: bool | None = None,
     proof_result: str | None = None,
     failure: FailureClassification | dict[str, Any] | None = None,
+    budget_profile: str | None = None,
+    failure_code: str | None = None,
+    termination_reason: str | None = None,
+    timing_breakdown: dict[str, Any] | None = None,
+    usage_by_stage: dict[str, Any] | None = None,
+    tool_budget: dict[str, Any] | None = None,
+    budget_exhaustion: dict[str, Any] | str | None = None,
+    synthesis_event_count: int | None = None,
+    candidate_attempt_count: int | None = None,
+    retrieval_event_count: int | None = None,
 ) -> dict[str, Any]:
     scope_payload = scope.to_dict() if isinstance(scope, ScopeClassification) else dict(scope)
     failure_payload = (
@@ -306,6 +355,16 @@ def build_frontier_record(
         "lean_statement": lean_statement,
         "parse_result": {"success": parse_success} if parse_success is not None else None,
         "proof_result": proof_result or status,
+        "budget_profile": budget_profile,
+        "failure_code": failure_code,
+        "termination_reason": termination_reason,
+        "timing_breakdown": dict(timing_breakdown or {}),
+        "usage_by_stage": dict(usage_by_stage or {}),
+        "tool_budget": dict(tool_budget or {}),
+        "budget_exhaustion": budget_exhaustion,
+        "synthesis_event_count": synthesis_event_count,
+        "candidate_attempt_count": candidate_attempt_count,
+        "retrieval_event_count": retrieval_event_count,
         "failure_class": failure_payload.get("failure_class"),
         "recommended_next_action": failure_payload.get("next_action"),
         "failure_reason": failure_payload.get("reason"),

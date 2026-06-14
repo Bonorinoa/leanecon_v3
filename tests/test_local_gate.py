@@ -1047,3 +1047,43 @@ def test_frontier_queue_written_to_explicit_output_dir(tmp_path) -> None:
 
     assert path == tmp_path / "demo.frontier_queue.jsonl"
     assert loaded == records
+
+
+def test_frontier_records_from_results_include_operational_fields() -> None:
+    import evals.local_gate as local_gate_module
+
+    records = local_gate_module._frontier_records_from_results(
+        [
+            {
+                "id": "frontier-1",
+                "raw_claim": "A monotone sequence bounded above converges.",
+                "status": "failed",
+                "claim_scope": "frontier_collect",
+                "claim_type": "mathlib_native",
+                "failure_class": "synthesis_tactic_assembly_gap",
+                "recommended_next_action": "improve_synthesis_tactic_assembly",
+                "failure_reason": "Retrieved premises were present but tactics failed.",
+                "failure_code": "max_turns_exhausted",
+                "termination_reason": "no_progress_stall",
+                "budget_profile": "frontier",
+                "timing_breakdown": {"total_ms": 25.0},
+                "usage_by_stage": {"prover": {"input_tokens": 100}},
+                "tool_budget": {"total_tool_calls": 5},
+                "budget_exhaustion": {"reason": "max_turns_exhausted"},
+                "synthesis_events": [{"event_type": "SynthesisEvent"}],
+                "candidate_attempt_count": 2,
+                "retrieval_events": [{"source": "lean_leansearch"}],
+            }
+        ]
+    )
+
+    assert records[0]["budget_profile"] == "frontier"
+    assert records[0]["failure_code"] == "max_turns_exhausted"
+    assert records[0]["termination_reason"] == "no_progress_stall"
+    assert records[0]["timing_breakdown"]["total_ms"] == 25.0
+    assert records[0]["usage_by_stage"]["prover"]["input_tokens"] == 100
+    assert records[0]["tool_budget"]["total_tool_calls"] == 5
+    assert records[0]["budget_exhaustion"]["reason"] == "max_turns_exhausted"
+    assert records[0]["synthesis_event_count"] == 1
+    assert records[0]["candidate_attempt_count"] == 2
+    assert records[0]["retrieval_event_count"] == 1

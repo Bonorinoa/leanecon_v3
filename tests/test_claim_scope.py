@@ -81,6 +81,21 @@ def test_failure_classifier_recommends_next_actions() -> None:
     assert proof_search.next_action == "improve_proof_search"
 
 
+def test_failure_classifier_separates_mathlib_synthesis_gap() -> None:
+    synthesis_gap = classify_failure(
+        scope="frontier_collect",
+        claim_type="mathlib_native",
+        status="failed",
+        failure_code="max_turns_exhausted",
+        synthesis_event_count=3,
+        candidate_attempt_count=2,
+        retrieval_event_count=4,
+    )
+
+    assert synthesis_gap.failure_class == "synthesis_tactic_assembly_gap"
+    assert synthesis_gap.next_action == "improve_synthesis_tactic_assembly"
+
+
 def test_frontier_record_contains_contract_fields() -> None:
     scope = classify_claim_scope(
         raw_claim="A monotone real sequence bounded above converges.",
@@ -102,6 +117,16 @@ def test_frontier_record_contains_contract_fields() -> None:
         proof_result="failed",
         status="failed",
         failure=failure,
+        budget_profile="frontier",
+        failure_code="retrieval_empty",
+        termination_reason="prover_failed",
+        timing_breakdown={"total_ms": 12.5},
+        usage_by_stage={"prover": {"input_tokens": 42}},
+        tool_budget={"total_tool_calls": 3},
+        budget_exhaustion=None,
+        synthesis_event_count=1,
+        candidate_attempt_count=2,
+        retrieval_event_count=3,
     )
 
     assert record["raw_claim"].startswith("A monotone")
@@ -111,6 +136,27 @@ def test_frontier_record_contains_contract_fields() -> None:
     assert record["parse_result"] == {"success": True}
     assert record["failure_class"] == "retrieval_premise_gap"
     assert record["recommended_next_action"] == "add_retrieval_premise"
+    assert record["budget_profile"] == "frontier"
+    assert record["failure_code"] == "retrieval_empty"
+    assert record["termination_reason"] == "prover_failed"
+    assert record["timing_breakdown"]["total_ms"] == 12.5
+    assert record["usage_by_stage"]["prover"]["input_tokens"] == 42
+    assert record["tool_budget"]["total_tool_calls"] == 3
+    assert record["synthesis_event_count"] == 1
+    assert record["candidate_attempt_count"] == 2
+    assert record["retrieval_event_count"] == 3
+
+
+def test_failure_classifier_marks_provider_and_budget_issues() -> None:
+    blocked = classify_failure(
+        scope="frontier_collect",
+        claim_type="mathlib_native",
+        status="failed",
+        failure_code="lsp_unavailable",
+    )
+
+    assert blocked.failure_class == "provider_or_tooling_failure"
+    assert blocked.next_action == "fix_provider_or_budget_issue"
 
 
 def test_metrics_by_scope_separates_reliable_and_frontier() -> None:
