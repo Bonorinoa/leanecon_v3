@@ -22,9 +22,9 @@ from src.observability import (
     LeanLSPUnavailableError,
     ProverStateTransition,
     build_progress_event,
-    default_lean_lsp_client,
     log_event,
 )
+from src.observability.lean_lsp_client import build_default_lean_lsp_client
 from src.prover.budget import DirectCloseAttemptSummary, DirectClosePolicy, ProverBudgetMixin
 from src.prover.drivers import (
     DriverRegistry,
@@ -167,7 +167,10 @@ class Prover(
         self._proof_synthesizer = ProofSynthesizer()
         self._state_machine = StateMachine()
         self._state_tool_history_start_index = 0
-        self.lsp_client = lsp_client or default_lean_lsp_client
+        if lsp_client is not None:
+            self.lsp_client = lsp_client
+        else:
+            self.lsp_client = build_default_lean_lsp_client()
         self._extracted_lemmas = 0
         self._retrieval_events: list[dict[str, Any]] = []
         self._tool_usage_traces: list[dict[str, Any]] = []

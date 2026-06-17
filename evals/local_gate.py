@@ -12,6 +12,7 @@ from pathlib import Path
 import random
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -48,10 +49,10 @@ from src.claim_scope import (
     scope_counts,
 )
 from src.backend_capabilities import get_backend_capability
-from src.config import BENCHMARK_BASELINE_DIR, BENCHMARK_REQUIRE_PRICING, PROVER_PROVIDER
+from src.config import BENCHMARK_BASELINE_DIR, BENCHMARK_REQUIRE_PRICING, LEAN_WORKSPACE, PROVER_PROVIDER
 from src.evals.metrics_aggregator import append_history_row, benchmark_history_path
 from src.formalizer import DEFAULT_FORMALIZER, FormalizerService
-from src.lean import compile_check
+from src.lean import compile_check, lean_workspace_probe
 from src.observability import (
     StageExecutionError,
     build_progress_event,
@@ -245,6 +246,73 @@ def _release_metrics_for_profile(profile: BudgetProfile, results: list[dict[str,
         "claims_passed": 0,
         "claims_failed": 0,
         "pass_at_1": 0.0,
+    }
+
+
+def _env_flag_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _lean_workspace_preflight() -> dict[str, Any]:
+    """Probe Lean and optionally hydrate Mathlib cache before a benchmark run."""
+
+    initial_probe = lean_workspace_probe()
+    cache_get_requested = _env_flag_enabled("LEANECON_PREBUILD_LEAN")
+    should_run_cache_get = cache_get_requested or not bool(initial_probe.get("available"))
+    cache_get: dict[str, Any] = {
+        "executed": False,
+        "requested": cache_get_requested,
+        "reason": "explicit_request" if cache_get_requested else "probe_failed",
+    }
+
+    if should_run_cache_get and shutil.which("lake") is not None and LEAN_WORKSPACE.exists():
+        timeout = int(os.getenv("LEANECON_PREBUILD_LEAN_TIMEOUT", "180"))
+        started = time.perf_counter()
+        try:
+            result = subprocess.run(
+                ["lake", "exe", "cache", "get"],
+                cwd=str(LEAN_WORKSPACE),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            cache_get.update(
+                {
+                    "executed": True,
+                    "success": result.returncode == 0,
+                    "exit_code": result.returncode,
+                    "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                    "stdout_tail": (result.stdout or "")[-2000:],
+                    "stderr_tail": (result.stderr or "")[-2000:],
+                }
+            )
+        except subprocess.TimeoutExpired as exc:
+            cache_get.update(
+                {
+                    "executed": True,
+                    "success": False,
+                    "exit_code": -1,
+                    "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                    "stderr_tail": f"lake exe cache get timed out after {timeout}s",
+                    "stdout_tail": (exc.stdout or "")[-2000:] if isinstance(exc.stdout, str) else "",
+                }
+            )
+        except FileNotFoundError:
+            cache_get.update(
+                {
+                    "executed": False,
+                    "success": False,
+                    "exit_code": None,
+                    "stderr_tail": "lake executable not found on PATH.",
+                }
+            )
+
+    final_probe = lean_workspace_probe()
+    return {
+        "available": bool(final_probe.get("available")),
+        "initial_probe": initial_probe,
+        "final_probe": final_probe,
+        "cache_get": cache_get,
     }
 
 
@@ -1161,6 +1229,7 @@ def _preflight(
     prover_provider = (
         PROVER_PROVIDER if prover_backend.provider == "huggingface" else prover_backend.provider
     )
+    lean_preflight = _lean_workspace_preflight()
     planner_endpoint_reachable, planner_endpoint_message = planner_service.connectivity_check()
     checks = {
         "planner_provider_configured": (
@@ -1172,6 +1241,7 @@ def _preflight(
         "planner_endpoint_reachable": planner_endpoint_reachable,
         "prover_provider_configured": prover_backend.provider != "huggingface"
         or normalize_huggingface_provider(prover_provider) in {"auto", prover_provider.strip()},
+        "lean_workspace_available": bool(lean_preflight.get("available")),
         "planner_price_known": True,
         "formalizer_price_known": True,
         "prover_price_known": True,
@@ -1206,9 +1276,9 @@ def _preflight(
         checks[blocker] = False
     ready = all(checks.values())
     blockers = [name for name, status in checks.items() if not status]
-    details = (
-        {"planner_endpoint_reachable": planner_endpoint_message} if planner_endpoint_message else {}
-    )
+    details = {"lean_workspace": lean_preflight}
+    if planner_endpoint_message:
+        details["planner_endpoint_reachable"] = planner_endpoint_message
     return {
         "ready": ready,
         "checks": checks,

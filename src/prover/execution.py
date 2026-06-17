@@ -87,6 +87,15 @@ from src.tools import ToolCall, ToolResult
 MIN_TARGET_OPERATION_SECONDS = 1.0
 
 
+def _lsp_tool_error_code(tool_name: str, exc: BaseException) -> str:
+    message = str(exc).lower()
+    if "no results" in message:
+        return "lsp_search_exhausted"
+    if tool_name == "lean_leansearch":
+        return "leansearch_unavailable"
+    return "lsp_unavailable"
+
+
 def _remaining_deadline_seconds(deadline: float | None) -> float | None:
     if deadline is None:
         return None
@@ -3553,11 +3562,7 @@ class ProverExecutionMixin:
             try:
                 payload = callback()
             except LeanLSPUnavailableError as exc:
-                error_code = (
-                    "lsp_search_exhausted"
-                    if "no results" in str(exc).lower()
-                    else "lsp_unavailable"
-                )
+                error_code = _lsp_tool_error_code(tool_name, exc)
                 first_error_code = first_error_code or error_code
                 self._emit_progress(
                     on_progress,

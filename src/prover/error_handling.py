@@ -352,6 +352,8 @@ class ProverErrorHandlingMixin:
 
     def _tool_error_code(self, tool_name: str, content: str) -> str | None:
         lowered = content.lower()
+        if tool_name == "lean_leansearch":
+            return "leansearch_unavailable"
         if tool_name.startswith("lean_") and "unsupported" in lowered:
             return "lsp_unavailable"
         if tool_name.startswith("lean_") and "lsp" in lowered:
