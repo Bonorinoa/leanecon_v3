@@ -681,6 +681,62 @@ def test_sprint25_lsp_heuristics_keep_monotone_candidates_without_leansearch() -
     proofs = [proof for proof, _source, _lemma in candidates]
     assert any("tendsto_atTop_ciSup hmono hbdd" in proof for proof in proofs)
     assert any("⨆ i, u i" in proof for proof in proofs)
+    assert any(
+        source == "local_heuristic" and lemma == "tendsto_atTop_ciSup"
+        for _proof, source, lemma in candidates
+    )
+
+
+def test_mathlib_native_simple_local_candidates_cover_common_tier2_shapes() -> None:
+    from tests.test_prover import _packet
+
+    prover = _make_prover(_ScriptedLSPClient())
+    cases = [
+        (
+            "measure",
+            "import Mathlib\n\n"
+            "theorem t {α : Type*} [MeasurableSpace α] (μ : MeasureTheory.Measure α) :\n"
+            "    μ ∅ = 0 := by\n"
+            "  sorry\n",
+            "MeasureTheory.measure_empty",
+        ),
+        (
+            "cauchy",
+            "import Mathlib\n\n"
+            "theorem t {α : Type*} [MetricSpace α] [CompleteSpace α]\n"
+            "    (x : ℕ → α) (hx : CauchySeq x) :\n"
+            "    ∃ L, Filter.Tendsto x Filter.atTop (nhds L) := by\n"
+            "  sorry\n",
+            "cauchySeq_tendsto_of_complete",
+        ),
+        (
+            "compact product",
+            "import Mathlib\n\n"
+            "theorem t {X Y : Type*} [TopologicalSpace X] [TopologicalSpace Y]\n"
+            "    (hX : IsCompact (Set.univ : Set X)) (hY : IsCompact (Set.univ : Set Y)) :\n"
+            "    IsCompact (Set.univ : Set (X × Y)) := by\n"
+            "  sorry\n",
+            "IsCompact.prod",
+        ),
+    ]
+
+    for name, code, expected_lemma in cases:
+        candidates = prover._mathlib_native_lsp_candidates(
+            packet=_packet(
+                theorem_name="t",
+                claim=name,
+                lean_code=code,
+                claim_type="mathlib_native",
+            ),
+            current_code=code,
+            code_actions=None,
+            search_results=None,
+        )
+
+        assert any(
+            source == "local_heuristic" and lemma == expected_lemma
+            for _proof, source, lemma in candidates
+        ), name
 
 
 def test_sprint25_lsp_heuristics_fallback_on_proposition_shaped_extreme_goal() -> None:

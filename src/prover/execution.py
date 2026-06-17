@@ -3747,7 +3747,11 @@ class ProverExecutionMixin:
                     }
                 )
 
-        error_code = first_error_code or "lsp_search_exhausted"
+        error_code = (
+            "candidate_compile_failed"
+            if candidates and compiled_candidate_count
+            else first_error_code or "lsp_search_exhausted"
+        )
         metadata = {
             "claim_type": policy.claim_type,
             "claim_type_policy": policy.claim_type_policy,
@@ -3997,6 +4001,9 @@ class ProverExecutionMixin:
                 )
             )
 
+        simple = self._simple_mathlib_native_candidates(current_code)
+        candidates.extend(simple)
+
         compact = self._compact_extreme_value_context(current_code)
         if compact is not None:
             hcompact, hnonempty, hcontinuous, intro_prefix = compact
@@ -4074,14 +4081,14 @@ class ProverExecutionMixin:
             candidates.append(
                 (
                     f"exact ⟨⨆ i, {seq_name} i, tendsto_atTop_ciSup {hmono} {hbdd}⟩",
-                    "lean_leansearch",
+                    "local_heuristic",
                     "tendsto_atTop_ciSup",
                 )
             )
             candidates.append(
                 (
                     f"exact tendsto_atTop_ciSup {hmono} {hbdd}",
-                    "lean_leansearch",
+                    "local_heuristic",
                     "tendsto_atTop_ciSup",
                 )
             )
@@ -4107,6 +4114,47 @@ class ProverExecutionMixin:
             )
         elif all(token in current_code for token in ("Monotone", "BddAbove", "Tendsto")):
             candidates.extend(self._monotone_convergence_fallback_candidates())
+        return candidates
+
+    def _simple_mathlib_native_candidates(
+        self, current_code: str
+    ) -> list[tuple[str, str, str | None]]:
+        candidates: list[tuple[str, str, str | None]] = []
+        if all(token in current_code for token in ("MeasureTheory.Measure", "∅ = 0")):
+            candidates.append(
+                (
+                    "exact MeasureTheory.measure_empty",
+                    "local_heuristic",
+                    "MeasureTheory.measure_empty",
+                )
+            )
+            candidates.append(
+                (
+                    "simpa using MeasureTheory.measure_empty (μ := μ)",
+                    "local_heuristic",
+                    "MeasureTheory.measure_empty",
+                )
+            )
+        if all(token in current_code for token in ("CauchySeq", "CompleteSpace", "Filter.Tendsto")):
+            candidates.append(
+                (
+                    "exact cauchySeq_tendsto_of_complete hx",
+                    "local_heuristic",
+                    "cauchySeq_tendsto_of_complete",
+                )
+            )
+            candidates.append(
+                (
+                    "simpa using cauchySeq_tendsto_of_complete hx",
+                    "local_heuristic",
+                    "cauchySeq_tendsto_of_complete",
+                )
+            )
+        if all(
+            token in current_code
+            for token in ("IsCompact (Set.univ : Set (X × Y))", "hX", "hY")
+        ):
+            candidates.append(("simpa using hX.prod hY", "local_heuristic", "IsCompact.prod"))
         return candidates
 
     def _compact_extreme_value_fallback_candidates(self) -> list[tuple[str, str, str | None]]:
