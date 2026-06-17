@@ -55,5 +55,13 @@
   "v3_spne_backward_induction": "preamble_definable",
   "v3_topkis_increasing_differences": "preamble_definable",
   "v3_value_function_monotone": "preamble_definable",
-  "v3_walras_law_excess_demand": "preamble_definable"
+  "v3_walras_law_excess_demand": "preamble_definable",
+  "t2_nash_existence_finite": "preamble_definable",
+  "t2_walras_law": "preamble_definable",
+  "t2_policy_improvement": "preamble_definable",
+  "t2_cost_minimization": "preamble_definable",
+  "t2_measure_zero_empty": "mathlib_native",
+  "t2_cauchy_converges_complete": "mathlib_native",
+  "t2_monotone_convergence": "mathlib_native",
+  "t2_compact_product": "mathlib_native"
 }

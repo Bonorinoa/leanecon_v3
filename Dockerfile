@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl && rm 
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY evals ./evals
-RUN pip install --no-cache-dir uv && pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir uv && pip install --no-cache-dir -e ".[dev]"
 
 COPY --from=lean /root/.elan /root/.elan
 COPY --from=lean /lean_workspace /app/lean_workspace

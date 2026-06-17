@@ -2,7 +2,7 @@
 
 This workspace is the Lean kernel trust boundary for LeanEcon v3. It is pinned by:
 
-- `lean-toolchain`: `leanprover/lean4:v4.28.0`
+- `lean-toolchain`: `leanprover/lean4:v4.31.0`
 - `lakefile.toml`: LeanEcon package and mathlib dependency
 - `lake-manifest.json`: resolved mathlib and transitive dependency revisions
 
