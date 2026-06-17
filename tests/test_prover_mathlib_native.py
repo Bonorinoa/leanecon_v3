@@ -739,6 +739,142 @@ def test_mathlib_native_simple_local_candidates_cover_common_tier2_shapes() -> N
         ), name
 
 
+def test_mathlib_native_simple_local_candidates_use_detected_hypothesis_names() -> None:
+    from tests.test_prover import _packet
+
+    prover = _make_prover(_ScriptedLSPClient())
+    cases = [
+        (
+            "measure",
+            "import Mathlib\n\n"
+            "theorem t {α : Type*} [MeasurableSpace α] (ν : MeasureTheory.Measure α) :\n"
+            "    ν ∅ = 0 := by\n"
+            "  sorry\n",
+            "MeasureTheory.measure_empty (μ := ν)",
+        ),
+        (
+            "cauchy",
+            "import Mathlib\n\n"
+            "theorem t {α : Type*} [MetricSpace α] [CompleteSpace α]\n"
+            "    (seq : ℕ → α) (hseq : CauchySeq seq) :\n"
+            "    ∃ L, Filter.Tendsto seq Filter.atTop (nhds L) := by\n"
+            "  sorry\n",
+            "cauchySeq_tendsto_of_complete hseq",
+        ),
+        (
+            "compact product",
+            "import Mathlib\n\n"
+            "theorem t {A B : Type*} [TopologicalSpace A] [TopologicalSpace B]\n"
+            "    (hAcompact : IsCompact (Set.univ : Set A))\n"
+            "    (hBcompact : IsCompact (Set.univ : Set B)) :\n"
+            "    IsCompact (Set.univ : Set (A × B)) := by\n"
+            "  sorry\n",
+            "hAcompact.prod hBcompact",
+        ),
+    ]
+
+    for name, code, expected_text in cases:
+        candidates = prover._mathlib_native_lsp_candidates(
+            packet=_packet(
+                theorem_name="t",
+                claim=name,
+                lean_code=code,
+                claim_type="mathlib_native",
+            ),
+            current_code=code,
+            code_actions=None,
+            search_results=None,
+        )
+
+        assert any(expected_text in proof for proof, _source, _lemma in candidates), name
+
+
+def test_mathlib_native_lsp_candidates_preserve_fallback_source_labels() -> None:
+    from tests.test_prover import _packet
+
+    prover = _make_prover(_ScriptedLSPClient())
+    candidates = prover._mathlib_native_lsp_candidates(
+        packet=_packet(
+            theorem_name="t",
+            claim="fallback",
+            lean_code="import Mathlib\n\ntheorem t : True := by\n  sorry\n",
+            claim_type="mathlib_native",
+        ),
+        current_code="import Mathlib\n\ntheorem t : True := by\n  sorry\n",
+        code_actions=None,
+        search_results={
+            "lean_leansearch": {"items": []},
+            "lean_local_search": {"matches": [{"name": "True.intro"}]},
+            "lean_loogle": {"results": [{"theorem_name": "trivial"}]},
+        },
+    )
+
+    assert ("exact True.intro", "lean_local_search", "True.intro") in candidates
+    assert ("exact trivial", "lean_loogle", "trivial") in candidates
+
+
+def test_candidate_failure_classifier_distinguishes_typeclass_and_shape() -> None:
+    from src.prover.execution import _classify_candidate_failure
+
+    assert (
+        _classify_candidate_failure("failed to synthesize typeclass instance for SupSet α")
+        == "typeclass_resolution_failed"
+    )
+    assert (
+        _classify_candidate_failure("application type mismatch: h has type A but is expected to have type B")
+        == "lemma_shape_mismatch"
+    )
+    assert _classify_candidate_failure("unknown identifier foo") == "candidate_compile_failed"
+
+
+def test_lsp_tool_error_classifier_distinguishes_service_and_no_results() -> None:
+    from src.observability import LeanLSPToolError, LeanLSPUnavailableError
+    from src.prover.execution import _lsp_tool_error_code
+
+    assert (
+        _lsp_tool_error_code(
+            "lean_leansearch",
+            LeanLSPToolError(
+                "lean_leansearch",
+                "Error executing tool lean_leansearch: HTTP Error 500: Internal Server Error",
+            ),
+        )
+        == "leansearch_service_error"
+    )
+    assert (
+        _lsp_tool_error_code(
+            "lean_loogle",
+            LeanLSPToolError("lean_loogle", "Error executing tool lean_loogle: No results found."),
+        )
+        == "loogle_no_results"
+    )
+    assert (
+        _lsp_tool_error_code(
+            "lean_leansearch",
+            LeanLSPUnavailableError("Timed out waiting for lean-lsp-mcp after 45s."),
+        )
+        == "leansearch_unavailable"
+    )
+
+
+def test_mathlib_native_symbol_search_query_prefers_specific_ident() -> None:
+    prover = _make_prover(_ScriptedLSPClient())
+    code = (
+        "import Mathlib\n\n"
+        "theorem t (x : ℕ → ℝ) : Filter.Tendsto x Filter.atTop (nhds 0) := by\n"
+        "  sorry\n"
+    )
+
+    assert (
+        prover._mathlib_native_symbol_search_query(
+            goals=[],
+            current_code=code,
+            fallback="Filter Tendsto theorem",
+        )
+        == "Tendsto"
+    )
+
+
 def test_sprint25_lsp_heuristics_fallback_on_proposition_shaped_extreme_goal() -> None:
     from tests.test_prover import _packet
 

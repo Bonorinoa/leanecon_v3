@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from src.formalizer.models import FormalizationPacket
 from src.observability import (
     AuditEvent,
+    LeanLSPToolError,
     LeanLSPUnavailableError,
     LeanSearchFailureEvent,
     ProgressDelta,
@@ -42,11 +43,23 @@ def _contains_lsp_unavailable(value: Any) -> bool:
         return any(_contains_lsp_unavailable(child) for child in value)
     return False
 
+
+def _leansearch_exception_error_code(exc: BaseException) -> str:
+    message = str(exc).lower()
+    if isinstance(exc, LeanLSPToolError):
+        if "no results" in message or "returned 0 results" in message:
+            return "leansearch_no_results"
+        return "leansearch_service_error"
+    return "leansearch_unavailable"
+
+
 _MATHLIB_IDENT_RE = re.compile(r"\b([A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*)*)\b")
 
 _MATHLIB_IDENT_STOPWORDS = frozenset(
     {"True", "False", "None", "Type", "Prop", "Sort", "Set", "Nat", "Int", "Real"}
 )
+
+_SYMBOL_SEARCH_STOPWORDS = _MATHLIB_IDENT_STOPWORDS | frozenset({"Filter"})
 
 def _extract_mathlib_idents(text: str) -> list[str]:
     """Return Mathlib-style CamelCase identifiers in *text*, in first-seen order.
@@ -275,16 +288,14 @@ class ProverRetrievalMixin:
                         continue
                     break
 
+        retrieval_error_code: str | None = None
         # Make failures observable with structured event (visible in JSONL/audit)
         if not premises or error is not None:
+            retrieval_error_code = _leansearch_exception_error_code(error) if error else "no_results"
             failure_event = LeanSearchFailureEvent(
                 query=original_query,
                 refined_query=refined_query,
-                error_code=(
-                    "no_results"
-                    if not premises and error is None
-                    else "lsp_error"
-                ),
+                error_code=retrieval_error_code,
                 error_message=str(error) if error else "lean_leansearch returned 0 results",
                 retry_attempted=retry_attempted,
                 hit=bool(premises),
@@ -319,6 +330,7 @@ class ProverRetrievalMixin:
             enriched_count=enriched_count,
             retrieval_pass=retrieval_pass,
             claim_id=claim_id,
+            error_code=retrieval_error_code,
         )
 
     def _get_lsp_cache(self) -> LSPCache:
@@ -505,3 +517,19 @@ class ProverRetrievalMixin:
             return joined[:200]
         chunks = [packet.claim, theorem_goal, *(goals[:1])]
         return " ".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())[:900]
+
+    def _mathlib_native_symbol_search_query(
+        self,
+        *,
+        goals: list[str],
+        current_code: str,
+        fallback: str,
+    ) -> str:
+        theorem_goal = theorem_goal_statement(current_code) or ""
+        ident_source = "\n".join(
+            chunk for chunk in (theorem_goal, *(goals[:1])) if chunk
+        )
+        for ident in _extract_mathlib_idents(ident_source):
+            if ident not in _SYMBOL_SEARCH_STOPWORDS:
+                return ident[:120]
+        return fallback

@@ -7,6 +7,8 @@ import re
 import shutil
 import signal
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -17,6 +19,8 @@ AXIOM_LINE_RE = re.compile(r"uses axioms:\s*(.+)", re.IGNORECASE)
 AXIOM_NAME_RE = re.compile(r"[A-Za-z0-9_.']+")
 STANDARD_AXIOMS = {"propext", "Classical.choice", "Quot.sound"}
 LEAN_TOOLCHAIN_PROBE_TIMEOUT = 15
+LEAN_WORKSPACE_WARM_TIMEOUT = 180
+_LAKE_ENV_LEAN_LOCK = threading.Lock()
 
 
 def _temp_lean_path() -> Path:
@@ -76,6 +80,71 @@ def lean_workspace_probe(*, timeout: int = LEAN_TOOLCHAIN_PROBE_TIMEOUT) -> dict
         "lake_path": lake_path,
         "lean_version": result.stdout.strip() or result.stderr.strip(),
     }
+
+
+def lean_workspace_warm(*, timeout: int = LEAN_WORKSPACE_WARM_TIMEOUT) -> dict[str, Any]:
+    """Run the root Lean import once to hydrate Lake/Mathlib artifacts."""
+
+    if not LEAN_WORKSPACE.exists():
+        return {"success": False, "reason": "Lean workspace directory is missing."}
+    started = time.perf_counter()
+    with _LAKE_ENV_LEAN_LOCK:
+        try:
+            result = subprocess.run(
+                ["lake", "env", "lean", "LeanEcon.lean"],
+                cwd=str(LEAN_WORKSPACE),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "success": False,
+                "exit_code": -1,
+                "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                "stdout_tail": (exc.stdout or "")[-2000:] if isinstance(exc.stdout, str) else "",
+                "stderr_tail": f"lake env lean LeanEcon.lean timed out after {timeout}s",
+            }
+        except FileNotFoundError:
+            return {
+                "success": False,
+                "exit_code": None,
+                "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                "stderr_tail": "lake executable not found on PATH.",
+            }
+    return {
+        "success": result.returncode == 0,
+        "exit_code": result.returncode,
+        "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        "stdout_tail": (result.stdout or "")[-2000:],
+        "stderr_tail": (result.stderr or "")[-2000:],
+    }
+
+
+def is_transient_lake_failure(result: dict[str, Any] | None) -> bool:
+    """Return whether a compile result looks like infrastructure state, not proof failure."""
+
+    if not isinstance(result, dict) or result.get("success"):
+        return False
+    text = "\n".join(
+        str(result.get(key) or "")
+        for key in ("stderr", "stdout", "output", "errors")
+    ).lower()
+    return any(
+        marker in text
+        for marker in (
+            "lake env lean timed out",
+            "lake executable not found",
+            "no such file or directory",
+            "unknown module prefix",
+            "object file",
+            "olean",
+            "failed to build",
+            "failed to compile",
+            "cannot find",
+            "interrupted",
+        )
+    )
 
 
 def _relative_to_workspace(path: Path) -> str:
@@ -140,35 +209,39 @@ def lean_run_code(
     else:
         temp_path = _temp_lean_path()
     temp_path.write_text(lean_code, encoding="utf-8")
+    started = time.perf_counter()
 
     try:
         try:
-            process = subprocess.Popen(
-                ["lake", "env", "lean", _relative_to_workspace(temp_path)],
-                cwd=str(LEAN_WORKSPACE),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-            )
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
+            with _LAKE_ENV_LEAN_LOCK:
+                process = subprocess.Popen(
+                    ["lake", "env", "lean", _relative_to_workspace(temp_path)],
+                    cwd=str(LEAN_WORKSPACE),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
+                )
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    process.kill()
-                stdout, stderr = process.communicate()
-                return {
-                    "success": False,
-                    "stdout": stdout or "",
-                    "stderr": (
-                        (stderr or "").strip()
-                        + ("\n" if stderr else "")
-                        + f"lake env lean timed out after {timeout}s"
-                    ),
-                    "exit_code": -1,
-                }
+                    stdout, stderr = process.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        process.kill()
+                    stdout, stderr = process.communicate()
+                    return {
+                        "success": False,
+                        "stdout": stdout or "",
+                        "stderr": (
+                            (stderr or "").strip()
+                            + ("\n" if stderr else "")
+                            + f"lake env lean timed out after {timeout}s"
+                        ),
+                        "exit_code": -1,
+                        "timed_out": True,
+                        "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                    }
             result = subprocess.CompletedProcess(
                 process.args,
                 process.returncode,
@@ -181,6 +254,8 @@ def lean_run_code(
                 "stdout": "",
                 "stderr": f"lake env lean timed out after {timeout}s",
                 "exit_code": -1,
+                "timed_out": True,
+                "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
             }
         except FileNotFoundError:
             return {
@@ -188,6 +263,8 @@ def lean_run_code(
                 "stdout": "",
                 "stderr": "lake executable not found on PATH",
                 "exit_code": -1,
+                "timed_out": False,
+                "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
             }
 
         return {
@@ -195,6 +272,8 @@ def lean_run_code(
             "stdout": result.stdout,
             "stderr": result.stderr,
             "exit_code": result.returncode,
+            "timed_out": False,
+            "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
         }
     finally:
         temp_path.unlink(missing_ok=True)
@@ -259,6 +338,8 @@ def compile_check(
         "stdout": result["stdout"],
         "stderr": result["stderr"],
         "exit_code": result["exit_code"],
+        "timed_out": bool(result.get("timed_out")),
+        "duration_ms": result.get("duration_ms"),
     }
 
 

@@ -26,9 +26,11 @@ from src.config import (
 )
 from src.formalizer.models import FormalizationPacket
 from src.claim_scope import classify_failure
+from src.lean import is_transient_lake_failure, lean_workspace_warm
 from src.observability import (
     AuditEvent,
     CandidateTacticEvent,
+    LeanLSPToolError,
     LeanLSPUnavailableError,
     PremiseResolutionEvent,
     SpanRecorder,
@@ -89,11 +91,67 @@ MIN_TARGET_OPERATION_SECONDS = 1.0
 
 def _lsp_tool_error_code(tool_name: str, exc: BaseException) -> str:
     message = str(exc).lower()
-    if "no results" in message:
+    if isinstance(exc, LeanLSPToolError):
+        if "no results" in message or "returned 0 results" in message:
+            if tool_name == "lean_leansearch":
+                return "leansearch_no_results"
+            if tool_name == "lean_local_search":
+                return "local_search_no_results"
+            if tool_name == "lean_loogle":
+                return "loogle_no_results"
+            return "lsp_search_no_results"
+        if tool_name == "lean_leansearch":
+            return "leansearch_service_error"
+        if tool_name == "lean_local_search":
+            return "local_search_service_error"
+        if tool_name == "lean_loogle":
+            return "loogle_service_error"
+        return "lsp_tool_error"
+    if "search budget exhausted" in message or "search exhausted" in message:
         return "lsp_search_exhausted"
     if tool_name == "lean_leansearch":
         return "leansearch_unavailable"
+    if tool_name in {"lean_local_search", "lean_loogle"}:
+        return f"{tool_name.removeprefix('lean_')}_unavailable"
     return "lsp_unavailable"
+
+
+def _classify_candidate_failure(error_text: str) -> str:
+    lowered = error_text.lower()
+    if any(
+        token in lowered
+        for token in (
+            "failed to synthesize",
+            "failed to infer",
+            "typeclass instance",
+            "synthesized type class instance",
+            "inferinst",
+        )
+    ):
+        return "typeclass_resolution_failed"
+    if any(
+        token in lowered
+        for token in (
+            "application type mismatch",
+            "type mismatch",
+            "has type",
+            "but is expected to have type",
+            "function expected",
+            "invalid argument",
+        )
+    ):
+        return "lemma_shape_mismatch"
+    return "candidate_compile_failed"
+
+
+def _compile_result_error_code(result: dict[str, Any] | None) -> str | None:
+    if not isinstance(result, dict) or result.get("success"):
+        return None
+    if is_transient_lake_failure(result):
+        return "transient_lake_failure"
+    if result.get("timed_out"):
+        return "compile_timeout"
+    return "compile_failed"
 
 
 def _remaining_deadline_seconds(deadline: float | None) -> float | None:
@@ -3542,6 +3600,7 @@ class ProverExecutionMixin:
         proof_column = self._hover_column_for_line(code, proof_line)
         lsp_payloads: dict[str, Any] = {}
         first_error_code: str | None = None
+        lsp_tool_errors: dict[str, str] = {}
 
         def call_lsp(tool_name: str, callback: Callable[[], Any]) -> Any | None:
             nonlocal first_error_code
@@ -3564,6 +3623,7 @@ class ProverExecutionMixin:
             except LeanLSPUnavailableError as exc:
                 error_code = _lsp_tool_error_code(tool_name, exc)
                 first_error_code = first_error_code or error_code
+                lsp_tool_errors[tool_name] = error_code
                 self._emit_progress(
                     on_progress,
                     "prover_tool",
@@ -3643,17 +3703,114 @@ class ProverExecutionMixin:
                 num_results=MATHLIB_NATIVE_LSP_SEARCH_RESULTS,
             ),
         )
+        leansearch_names = self._extract_search_item_names(lsp_payloads.get("leansearch"))
+        leansearch_error_code = lsp_tool_errors.get("lean_leansearch")
+        symbol_search_query = self._mathlib_native_symbol_search_query(
+            goals=goals,
+            current_code=code,
+            fallback=search_query,
+        )
+        fallback_attempted: list[str] = []
+        fallback_errors: dict[str, str] = {}
+        if not leansearch_names or leansearch_error_code is not None:
+            if hasattr(self.lsp_client, "lean_local_search"):
+                fallback_attempted.append("lean_local_search")
+                lsp_payloads["local_search"] = call_lsp(
+                    "lean_local_search",
+                    lambda: self.lsp_client.lean_local_search(
+                        symbol_search_query,
+                        limit=MATHLIB_NATIVE_LSP_SEARCH_RESULTS,
+                    ),
+                )
+            if hasattr(self.lsp_client, "lean_loogle"):
+                fallback_attempted.append("lean_loogle")
+                lsp_payloads["loogle"] = call_lsp(
+                    "lean_loogle",
+                    lambda: self.lsp_client.lean_loogle(
+                        symbol_search_query,
+                        num_results=MATHLIB_NATIVE_LSP_SEARCH_RESULTS,
+                    ),
+                )
+            fallback_errors = {
+                source: lsp_tool_errors[source]
+                for source in fallback_attempted
+                if source in lsp_tool_errors
+            }
         candidates = self._mathlib_native_lsp_candidates(
             packet=packet,
             current_code=code,
             code_actions=lsp_payloads.get("code_actions"),
-            search_results=lsp_payloads.get("leansearch"),
+            search_results={
+                "lean_leansearch": lsp_payloads.get("leansearch"),
+                "lean_local_search": lsp_payloads.get("local_search"),
+                "lean_loogle": lsp_payloads.get("loogle"),
+            },
         )
+        if fallback_attempted or leansearch_error_code is not None:
+            source_hits = {
+                "lean_leansearch": len(leansearch_names),
+                "lean_local_search": len(
+                    self._extract_search_item_names(lsp_payloads.get("local_search"))
+                ),
+                "lean_loogle": len(self._extract_search_item_names(lsp_payloads.get("loogle"))),
+                "local_heuristic": len(
+                    [candidate for candidate in candidates if candidate[1] == "local_heuristic"]
+                ),
+            }
+            degradation_payload = {
+                "event_type": "MathlibNativeRetrievalDegradationEvent",
+                "claim_id": packet.theorem_name,
+                "target_name": target.name,
+                "search_query": search_query,
+                "fallback_search_query": symbol_search_query,
+                "primary_error_code": leansearch_error_code
+                if leansearch_error_code is not None
+                else ("no_leansearch_hits" if not leansearch_names else None),
+                "attempted_sources": [
+                    "mathlib_rag",
+                    "lean_leansearch",
+                    *fallback_attempted,
+                    "local_heuristic",
+                ],
+                "fallback_errors": dict(fallback_errors),
+                "source_hits": source_hits,
+                "candidate_count": len(candidates),
+                "usable_candidate_sources": sorted(
+                    {source for _proof, source, _lemma in candidates}
+                ),
+            }
+            self._emit_progress(
+                on_progress,
+                "retrieval_degradation",
+                job_id=job_id,
+                stage="prover",
+                status="running_prover",
+                message="Mathlib-native retrieval degraded; continuing with fallback sources.",
+                metadata={
+                    "target_name": target.name,
+                    "tool_name": "mathlib_native_retrieval_degradation",
+                    "success": bool(candidates),
+                    "error_code": degradation_payload["primary_error_code"],
+                    "MathlibNativeRetrievalDegradationEvent": degradation_payload,
+                },
+            )
+            audit_events.append(
+                AuditEvent(
+                    stage="prover",
+                    event_type="MathlibNativeRetrievalDegradationEvent",
+                    provider=backend.provider,
+                    model=backend.model,
+                    success=bool(candidates),
+                    error_code=degradation_payload["primary_error_code"],
+                    metadata={"turn": turn, **degradation_payload},
+                )
+            )
         attempt_timeout = min(timeout, SHORTCUT_ATTEMPT_TIMEOUT_SECONDS)
         theorem_name = self._target_theorem_name(packet, target)
         compiled_candidate_count = 0
         selected_lemma: str | None = None
         candidate_failures: list[dict[str, str | None]] = []
+        candidate_failure_codes: list[str] = []
         for proof, source, lemma_name in candidates[:MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT]:
             remaining = _remaining_deadline_seconds(deadline)
             if remaining is not None and remaining < MIN_TARGET_OPERATION_SECONDS:
@@ -3668,11 +3825,14 @@ class ProverExecutionMixin:
                 )
             except ValueError as exc:
                 if len(candidate_failures) < MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT:
+                    failure_code = _classify_candidate_failure(str(exc))
+                    candidate_failure_codes.append(failure_code)
                     candidate_failures.append(
                         {
                             "proof": proof,
                             "source": source,
                             "lemma_name": lemma_name,
+                            "error_code": failure_code,
                             "error": str(exc),
                         }
                     )
@@ -3683,11 +3843,14 @@ class ProverExecutionMixin:
                 result = _compat_compile_check(candidate_code, timeout=bounded_attempt_timeout)
             except Exception as exc:
                 if len(candidate_failures) < MATHLIB_NATIVE_LSP_CANDIDATE_LIMIT:
+                    failure_code = _classify_candidate_failure(str(exc))
+                    candidate_failure_codes.append(failure_code)
                     candidate_failures.append(
                         {
                             "proof": proof,
                             "source": source,
                             "lemma_name": lemma_name,
+                            "error_code": failure_code,
                             "error": str(exc),
                         }
                     )
@@ -3738,20 +3901,29 @@ class ProverExecutionMixin:
                 error_text = "\n".join(str(item) for item in result.get("errors") or [])
                 if not error_text:
                     error_text = str(result.get("output") or "")[:500]
+                failure_code = _classify_candidate_failure(error_text)
+                candidate_failure_codes.append(failure_code)
                 candidate_failures.append(
                     {
                         "proof": proof,
                         "source": source,
                         "lemma_name": lemma_name,
+                        "error_code": failure_code,
                         "error": error_text[:500],
                     }
                 )
 
-        error_code = (
-            "candidate_compile_failed"
-            if candidates and compiled_candidate_count
-            else first_error_code or "lsp_search_exhausted"
-        )
+        if candidates and compiled_candidate_count:
+            error_code = next(
+                (
+                    code
+                    for code in candidate_failure_codes
+                    if code in {"typeclass_resolution_failed", "lemma_shape_mismatch"}
+                ),
+                "candidate_compile_failed",
+            )
+        else:
+            error_code = first_error_code or "retrieval_empty"
         metadata = {
             "claim_type": policy.claim_type,
             "claim_type_policy": policy.claim_type_policy,
@@ -3763,6 +3935,9 @@ class ProverExecutionMixin:
             "selected_lemma": selected_lemma,
             "search_query": search_query,
             "candidate_failures": candidate_failures,
+            "candidate_failure_codes": candidate_failure_codes,
+            "fallback_attempted": fallback_attempted,
+            "fallback_errors": fallback_errors,
         }
         self._emit_progress(
             on_progress,
@@ -3895,15 +4070,32 @@ class ProverExecutionMixin:
 
     def _extract_search_item_names(self, payload: Any) -> list[str]:
         names: list[str] = []
-        items = payload.get("items") if isinstance(payload, dict) else payload
-        if not isinstance(items, list):
-            return names
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name")
+
+        def add(name: Any) -> None:
             if isinstance(name, str) and name and name not in names:
                 names.append(name)
+
+        def walk(value: Any) -> None:
+            if isinstance(value, dict):
+                for key in (
+                    "name",
+                    "theorem_name",
+                    "declName",
+                    "declaration",
+                    "constant",
+                    "full_name",
+                    "lean_name",
+                ):
+                    add(value.get(key))
+                for key in ("items", "results", "matches", "premises", "declarations"):
+                    child = value.get(key)
+                    if child is not None:
+                        walk(child)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+
+        walk(payload)
         return names
 
     def _mathlib_native_lsp_candidates(
@@ -3915,7 +4107,19 @@ class ProverExecutionMixin:
         search_results: Any,
     ) -> list[tuple[str, str, str | None]]:
         candidates: list[tuple[str, str, str | None]] = []
-        theorem_names = self._extract_search_item_names(search_results)
+        theorem_names_by_source: dict[str, list[str]] = {}
+        if isinstance(search_results, dict):
+            for source, payload in search_results.items():
+                theorem_names_by_source[str(source)] = self._extract_search_item_names(payload)
+        else:
+            theorem_names_by_source["lean_leansearch"] = self._extract_search_item_names(
+                search_results
+            )
+        theorem_names = [
+            name
+            for names in theorem_names_by_source.values()
+            for name in names
+        ]
         candidates.extend(
             self._mathlib_native_heuristic_candidates(
                 current_code=current_code, theorem_names=theorem_names
@@ -3923,9 +4127,10 @@ class ProverExecutionMixin:
         )
         for tactic in self._extract_code_action_tactics(code_actions):
             candidates.append((tactic, "lean_code_actions", None))
-        for name in theorem_names:
-            candidates.append((f"exact {name}", "lean_leansearch", name))
-            candidates.append((f"simpa using {name}", "lean_leansearch", name))
+        for source, names in theorem_names_by_source.items():
+            for name in names:
+                candidates.append((f"exact {name}", source, name))
+                candidates.append((f"simpa using {name}", source, name))
 
         deduped: list[tuple[str, str, str | None]] = []
         seen: set[str] = set()
@@ -4120,7 +4325,8 @@ class ProverExecutionMixin:
         self, current_code: str
     ) -> list[tuple[str, str, str | None]]:
         candidates: list[tuple[str, str, str | None]] = []
-        if all(token in current_code for token in ("MeasureTheory.Measure", "∅ = 0")):
+        measure_name = self._measure_context(current_code)
+        if measure_name is not None:
             candidates.append(
                 (
                     "exact MeasureTheory.measure_empty",
@@ -4130,32 +4336,75 @@ class ProverExecutionMixin:
             )
             candidates.append(
                 (
-                    "simpa using MeasureTheory.measure_empty (μ := μ)",
+                    f"simpa using MeasureTheory.measure_empty (μ := {measure_name})",
                     "local_heuristic",
                     "MeasureTheory.measure_empty",
                 )
             )
-        if all(token in current_code for token in ("CauchySeq", "CompleteSpace", "Filter.Tendsto")):
+        cauchy = self._cauchy_seq_context(current_code)
+        if cauchy is not None:
+            cauchy_hypothesis, _seq_name = cauchy
             candidates.append(
                 (
-                    "exact cauchySeq_tendsto_of_complete hx",
+                    f"exact cauchySeq_tendsto_of_complete {cauchy_hypothesis}",
                     "local_heuristic",
                     "cauchySeq_tendsto_of_complete",
                 )
             )
             candidates.append(
                 (
-                    "simpa using cauchySeq_tendsto_of_complete hx",
+                    f"simpa using cauchySeq_tendsto_of_complete {cauchy_hypothesis}",
                     "local_heuristic",
                     "cauchySeq_tendsto_of_complete",
                 )
             )
-        if all(
-            token in current_code
-            for token in ("IsCompact (Set.univ : Set (X × Y))", "hX", "hY")
-        ):
-            candidates.append(("simpa using hX.prod hY", "local_heuristic", "IsCompact.prod"))
+        compact_product = self._compact_product_context(current_code)
+        if compact_product is not None:
+            hleft, hright = compact_product
+            candidates.append(
+                (f"simpa using {hleft}.prod {hright}", "local_heuristic", "IsCompact.prod")
+            )
         return candidates
+
+    def _measure_context(self, code: str) -> str | None:
+        if "MeasureTheory.Measure" not in code or "∅ = 0" not in code:
+            return None
+        match = re.search(
+            r"\(\s*([^\s:()]+)\s*:\s*MeasureTheory\.Measure\b",
+            code,
+        )
+        return match.group(1) if match is not None else "μ"
+
+    def _cauchy_seq_context(self, code: str) -> tuple[str, str] | None:
+        if not all(token in code for token in ("CauchySeq", "CompleteSpace", "Tendsto")):
+            return None
+        match = re.search(
+            r"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*CauchySeq\s+([A-Za-z_][A-Za-z0-9_']*)\s*\)",
+            code,
+        )
+        if match is None:
+            return None
+        return match.group(1), match.group(2)
+
+    def _compact_product_context(self, code: str) -> tuple[str, str] | None:
+        goal = re.search(
+            r"IsCompact\s+\(Set\.univ\s*:\s*Set\s*\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*×\s*([A-Za-z_][A-Za-z0-9_']*)\s*\)\s*\)",
+            code,
+        )
+        if goal is None:
+            return None
+        left_type, right_type = goal.group(1), goal.group(2)
+        left = re.search(
+            rf"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*IsCompact\s+\(Set\.univ\s*:\s*Set\s+{re.escape(left_type)}\s*\)\s*\)",
+            code,
+        )
+        right = re.search(
+            rf"\(\s*([A-Za-z_][A-Za-z0-9_']*)\s*:\s*IsCompact\s+\(Set\.univ\s*:\s*Set\s+{re.escape(right_type)}\s*\)\s*\)",
+            code,
+        )
+        if left is None or right is None:
+            return None
+        return left.group(1), right.group(1)
 
     def _compact_extreme_value_fallback_candidates(self) -> list[tuple[str, str, str | None]]:
         candidates: list[tuple[str, str, str | None]] = []
@@ -4574,6 +4823,85 @@ class ProverExecutionMixin:
                 result = _compat_compile_check(candidate_code, timeout=bounded_attempt_timeout)
             except Exception:
                 continue
+            error_code = _compile_result_error_code(result)
+            if job_id is not None:
+                self._emit_progress(
+                    on_progress,
+                    "prover_tool",
+                    job_id=job_id,
+                    stage="prover",
+                    status="running_prover",
+                    message=f"Direct closure attempt {index}/{attempt_limit} result.",
+                    metadata={
+                        "target_name": target.name,
+                        "tool_name": "compile_check",
+                        "proof": proof,
+                        "source": source,
+                        "attempt_index": index,
+                        "attempt_limit": attempt_limit,
+                        "compile_timeout_seconds": bounded_attempt_timeout,
+                        "compile_duration_ms": result.get("duration_ms"),
+                        "compile_exit_code": result.get("exit_code"),
+                        "compile_timed_out": bool(result.get("timed_out")),
+                        "success": bool(result.get("success")),
+                        "error_code": error_code,
+                    },
+                )
+            if error_code == "transient_lake_failure":
+                warm_result = lean_workspace_warm(
+                    timeout=max(60, int(bounded_attempt_timeout) * 3)
+                )
+                if job_id is not None:
+                    self._emit_progress(
+                        on_progress,
+                        "prover_tool",
+                        job_id=job_id,
+                        stage="prover",
+                        status="running_prover",
+                        message="Direct closure detected transient Lake state; warmed root import and retried candidate.",
+                        metadata={
+                            "target_name": target.name,
+                            "tool_name": "compile_check",
+                            "proof": proof,
+                            "source": source,
+                            "attempt_index": index,
+                            "attempt_limit": attempt_limit,
+                            "error_code": error_code,
+                            "lake_root_warm": warm_result,
+                        },
+                    )
+                try:
+                    retry_result = _compat_compile_check(
+                        candidate_code, timeout=bounded_attempt_timeout
+                    )
+                except Exception:
+                    continue
+                retry_error_code = _compile_result_error_code(retry_result)
+                if job_id is not None:
+                    self._emit_progress(
+                        on_progress,
+                        "prover_tool",
+                        job_id=job_id,
+                        stage="prover",
+                        status="running_prover",
+                        message=f"Direct closure attempt {index}/{attempt_limit} retry result.",
+                        metadata={
+                            "target_name": target.name,
+                            "tool_name": "compile_check",
+                            "proof": proof,
+                            "source": source,
+                            "attempt_index": index,
+                            "attempt_limit": attempt_limit,
+                            "compile_timeout_seconds": bounded_attempt_timeout,
+                            "compile_duration_ms": retry_result.get("duration_ms"),
+                            "compile_exit_code": retry_result.get("exit_code"),
+                            "compile_timed_out": bool(retry_result.get("timed_out")),
+                            "success": bool(retry_result.get("success")),
+                            "error_code": retry_error_code,
+                            "retry_after_lake_root_warm": True,
+                        },
+                    )
+                result = retry_result
             if result.get("success"):
                 if attempt_budget is not None and remaining_budget is not None:
                     attempt_budget["remaining"] = max(remaining_budget - attempts_used, 0)

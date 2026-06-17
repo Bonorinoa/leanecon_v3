@@ -3,9 +3,11 @@
 from .compiler import (
     compile_check,
     compile_lean_code,
+    is_transient_lake_failure,
     lean_run_code,
     lean_workspace_available,
     lean_workspace_probe,
+    lean_workspace_warm,
 )
 from .error_classifier import (
     ClassifiedError,
@@ -26,9 +28,11 @@ except ModuleNotFoundError:  # pragma: no cover - optional runtime dependency
 __all__ = [
     "compile_check",
     "compile_lean_code",
+    "is_transient_lake_failure",
     "lean_run_code",
     "lean_workspace_available",
     "lean_workspace_probe",
+    "lean_workspace_warm",
     "ClassifiedError",
     "classify_lean_errors",
     "suggested_import_for_identifier",

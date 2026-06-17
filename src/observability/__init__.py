@@ -3,6 +3,7 @@
 from .errors import StageExecutionError, classify_exception
 from .lean_lsp_client import (
     LeanLSPClient,
+    LeanLSPToolError,
     LeanLSPUnavailableError,
     NullLeanLSPClient,
     build_default_lean_lsp_client,
@@ -50,6 +51,7 @@ __all__ = [
     "AuditEvent",
     "CandidateTacticEvent",
     "LeanLSPClient",
+    "LeanLSPToolError",
     "LeanLSPUnavailableError",
     "NullLeanLSPClient",
     "LeanSearchFailureEvent",

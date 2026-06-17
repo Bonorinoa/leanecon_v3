@@ -1223,6 +1223,84 @@ def test_direct_closure_respects_expired_target_deadline(monkeypatch, tmp_path) 
     assert compile_calls == []
 
 
+def test_direct_closure_retries_transient_lake_failure(monkeypatch, tmp_path) -> None:
+    import src.prover.execution as execution_module
+    import src.prover.prover as prover_module
+
+    compile_results = [
+        {
+            "success": False,
+            "stderr": "lake env lean timed out after 25s",
+            "stdout": "",
+            "output": "lake env lean timed out after 25s",
+            "errors": ["lake env lean timed out after 25s"],
+            "exit_code": -1,
+            "timed_out": True,
+            "duration_ms": 25000,
+        },
+        {
+            "success": True,
+            "stderr": "",
+            "stdout": "",
+            "output": "",
+            "errors": [],
+            "exit_code": 0,
+            "timed_out": False,
+            "duration_ms": 1200,
+        },
+    ]
+    warm_calls: list[int] = []
+    progress_events: list[dict] = []
+    prover = Prover(
+        backend="goedel-prover-v2",
+        huggingface_driver=ScriptedDriver({}),
+        mistral_driver=ScriptedDriver({}),
+        file_controller=ProofFileController(workspace_root=tmp_path),
+        trace_store=ProofTraceStore(tmp_path / "memory.db"),
+    )
+    packet = _packet(
+        theorem_name="transient_demo",
+        claim="Transient demo.",
+        lean_code="theorem transient_demo : True := by\n  sorry\n",
+        selected_preamble=["measure"],
+        claim_type="preamble_definable",
+    )
+
+    monkeypatch.setattr(
+        prover,
+        "_direct_candidate_proofs",
+        lambda **_kwargs: [("trivial", "test", "test candidate")],
+    )
+    monkeypatch.setattr(
+        prover_module,
+        "compile_check",
+        lambda *_args, **_kwargs: compile_results.pop(0),
+    )
+    monkeypatch.setattr(
+        execution_module,
+        "lean_workspace_warm",
+        lambda **_kwargs: warm_calls.append(1) or {"success": True, "duration_ms": 5},
+    )
+
+    direct_close, summary = prover._try_direct_definable_closure(
+        packet=packet,
+        target=ProverTarget(name="theorem_body", statement="True", kind="theorem_body"),
+        current_code=packet.lean_code,
+        timeout=30,
+        job_id="test_job",
+        on_progress=lambda _event, payload: progress_events.append(payload),
+    )
+
+    assert direct_close is not None
+    assert direct_close["proof"] == "trivial"
+    assert summary.attempts_used == 1
+    assert warm_calls == [1]
+    assert any(
+        event["metadata"].get("retry_after_lake_root_warm") is True
+        for event in progress_events
+    )
+
+
 @pytest.mark.asyncio
 async def test_provider_timeout_is_clamped_to_target_remaining_budget(monkeypatch, tmp_path) -> None:
     import src.prover.prover as prover_module

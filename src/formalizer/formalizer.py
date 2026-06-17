@@ -629,10 +629,14 @@ class Formalizer:
         self,
         context: FormalizerContext,
     ) -> FormalizerGenerationResponse | None:
-        if context.claim_scope != "release_reliable":
+        template_eligible = context.claim_scope == "release_reliable" or (
+            context.claim_type == "preamble_definable" and bool(context.selected_preamble)
+        )
+        if not template_eligible:
             return None
         for entry in context.preamble_entries:
-            template = (entry.theorem_template or "").strip()
+            planner_template = getattr(entry, "planner_theorem_template", None)
+            template = (planner_template or entry.theorem_template or "").strip()
             if not template:
                 continue
             lemma = entry.proven_lemmas[0] if entry.proven_lemmas else entry.name

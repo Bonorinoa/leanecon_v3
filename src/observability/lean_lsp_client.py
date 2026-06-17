@@ -18,6 +18,14 @@ class LeanLSPUnavailableError(RuntimeError):
     """Raised when the Lean LSP MCP bridge is unavailable."""
 
 
+class LeanLSPToolError(LeanLSPUnavailableError):
+    """Raised when a specific MCP tool reports an execution error."""
+
+    def __init__(self, tool_name: str, message: str) -> None:
+        super().__init__(message)
+        self.tool_name = tool_name
+
+
 class LeanLSPClient:
     def __init__(
         self, *, lean_project_path: Path = LEAN_WORKSPACE, read_timeout_seconds: float | None = None
@@ -184,11 +192,11 @@ class LeanLSPClient:
             raise last_error or LeanLSPUnavailableError("Lean LSP MCP tool call failed.")
         if "error" in response:
             message = response["error"].get("message", "Lean LSP MCP tool call failed.")
-            raise LeanLSPUnavailableError(str(message))
+            raise LeanLSPToolError(name, str(message))
         result = response.get("result", {})
         if result.get("isError"):
             text = self._extract_text(result)
-            raise LeanLSPUnavailableError(text or f"{name} failed.")
+            raise LeanLSPToolError(name, text or f"{name} failed.")
         structured = result.get("structuredContent")
         if structured is not None:
             return structured

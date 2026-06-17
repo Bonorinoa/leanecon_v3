@@ -17,6 +17,7 @@ import pytest
 
 from src.observability.lean_lsp_client import (
     LeanLSPClient,
+    LeanLSPToolError,
     LeanLSPUnavailableError,
     NullLeanLSPClient,
     build_default_lean_lsp_client,
@@ -116,8 +117,9 @@ def test_call_tool_raises_on_jsonrpc_error():
     client, _ = _client_with_fake(
         [{"jsonrpc": "2.0", "id": 1, "error": {"message": "rate limited"}}]
     )
-    with pytest.raises(LeanLSPUnavailableError, match="rate limited"):
+    with pytest.raises(LeanLSPToolError, match="rate limited") as exc_info:
         client.lean_leansearch("q")
+    assert exc_info.value.tool_name == "lean_leansearch"
 
 
 def test_call_tool_raises_on_is_error_flag():
@@ -133,8 +135,9 @@ def test_call_tool_raises_on_is_error_flag():
             }
         ]
     )
-    with pytest.raises(LeanLSPUnavailableError, match="tool blew up"):
+    with pytest.raises(LeanLSPToolError, match="tool blew up") as exc_info:
         client.lean_leansearch("q")
+    assert exc_info.value.tool_name == "lean_leansearch"
 
 
 def test_call_tool_documents_jsonrpc_error_does_not_reset_state():

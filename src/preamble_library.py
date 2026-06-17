@@ -302,6 +302,9 @@ _register(
         definitions=("HasNashEquilibrium",),
         definition_signatures=("(Profile : Type) : Type",),
         proven_lemmas=("nash_exists_of_witness",),
+        theorem_template=(
+            "∀ (Profile : Type) (h : HasNashEquilibrium Profile), ∃ profile, h.isNash profile"
+        ),
         tactic_hint="exact ⟨h.witness, h.is_nash⟩",
         planner_metadata={
             "concepts": ["nash_existence", "nash_equilibrium", "witness_certificate"],
@@ -384,6 +387,10 @@ _register(
             "contraction_fixedPoint_unique",
             "contraction_has_unique_fixedPoint",
         ),
+        theorem_template=(
+            "∀ {α : Type*} [MetricSpace α] [CompleteSpace α] [Nonempty α] "
+            "{f : α → α}, IsContraction f → ∃ x, Function.IsFixedPt f x"
+        ),
         tactic_hint="rcases hf with ⟨K, hK⟩",
         planner_metadata={
             "concepts": ["contraction_mapping", "fixed_point", "recursive_solution"],
@@ -409,6 +416,11 @@ _register(
         definitions=("ValueFunction",),
         definition_signatures=("(T : V → V) (hT : ContractingWith K T) : V",),
         proven_lemmas=("valueFunction_isFixedPt",),
+        theorem_template=(
+            "∀ (V : Type) [MetricSpace V] [CompleteSpace V] [Nonempty V] "
+            "(K : NNReal) (T : V → V) (hT : ContractingWith K T), "
+            "Function.IsFixedPt T (ValueFunction T hT)"
+        ),
         tactic_hint=(
             "simpa [ValueFunction] using ContractingWith.fixedPoint_isFixedPt (f := T) hT"
         ),

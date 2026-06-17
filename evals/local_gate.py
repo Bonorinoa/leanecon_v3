@@ -52,7 +52,7 @@ from src.backend_capabilities import get_backend_capability
 from src.config import BENCHMARK_BASELINE_DIR, BENCHMARK_REQUIRE_PRICING, LEAN_WORKSPACE, PROVER_PROVIDER
 from src.evals.metrics_aggregator import append_history_row, benchmark_history_path
 from src.formalizer import DEFAULT_FORMALIZER, FormalizerService
-from src.lean import compile_check, lean_workspace_probe
+from src.lean import compile_check, lean_workspace_probe, lean_workspace_warm
 from src.observability import (
     StageExecutionError,
     build_progress_event,
@@ -253,6 +253,10 @@ def _env_flag_enabled(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_flag_disabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"0", "false", "no", "off"}
+
+
 def _lean_workspace_preflight() -> dict[str, Any]:
     """Probe Lean and optionally hydrate Mathlib cache before a benchmark run."""
 
@@ -307,12 +311,28 @@ def _lean_workspace_preflight() -> dict[str, Any]:
                 }
             )
 
+    root_warm_requested = not _env_flag_disabled("LEANECON_PREWARM_LEAN_ROOT")
+    root_warm: dict[str, Any] = {
+        "executed": False,
+        "requested": root_warm_requested,
+        "reason": "disabled" if not root_warm_requested else "root_import_hygiene",
+    }
+    if root_warm_requested and shutil.which("lake") is not None and LEAN_WORKSPACE.exists():
+        timeout = int(os.getenv("LEANECON_PREWARM_LEAN_ROOT_TIMEOUT", "180"))
+        root_warm = {
+            "executed": True,
+            "requested": True,
+            "reason": "root_import_hygiene",
+            **lean_workspace_warm(timeout=timeout),
+        }
+
     final_probe = lean_workspace_probe()
     return {
         "available": bool(final_probe.get("available")),
         "initial_probe": initial_probe,
         "final_probe": final_probe,
         "cache_get": cache_get,
+        "root_warm": root_warm,
     }
 
 
@@ -1242,6 +1262,10 @@ def _preflight(
         "prover_provider_configured": prover_backend.provider != "huggingface"
         or normalize_huggingface_provider(prover_provider) in {"auto", prover_provider.strip()},
         "lean_workspace_available": bool(lean_preflight.get("available")),
+        "lean_workspace_root_warm": not bool(
+            (lean_preflight.get("root_warm") or {}).get("executed")
+        )
+        or bool((lean_preflight.get("root_warm") or {}).get("success")),
         "planner_price_known": True,
         "formalizer_price_known": True,
         "prover_price_known": True,

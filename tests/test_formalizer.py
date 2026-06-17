@@ -363,6 +363,68 @@ def test_release_reliable_claim_uses_preamble_template_before_llm() -> None:
     assert RejectingDriver.calls == []
 
 
+def test_nash_supported_attempt_claim_uses_witness_template_before_llm() -> None:
+    class RejectingDriver:
+        calls: list[dict[str, object]] = []
+
+        def generate(self, **kwargs: object) -> object:
+            RejectingDriver.calls.append(kwargs)
+            raise AssertionError("Template-first release reliable claims must not call the driver.")
+
+    planner_packet = PlannerPacket.model_validate(
+        {
+            "claim": "A witness profile satisfying the equilibrium predicate is enough to establish Nash equilibrium existence.",
+            "clarifying_questions": [],
+            "textbook_defaults": ["Assume an explicit witness-based Nash certificate."],
+            "plan_paragraph": "Use the witness-based Nash existence certificate directly.",
+            "subgoals": [
+                "theorem nash_template_subgoal {Profile : Type} (h : HasNashEquilibrium Profile) : ∃ profile, h.isNash profile := by\n  sorry"
+            ],
+            "needs_review": False,
+            "confidence": 0.95,
+            "review_state": "approved",
+            "backend": "test",
+            "model": "test",
+            "selected_preamble": [
+                {
+                    "name": "nash_existence",
+                    "lean_module": "LeanEcon.Preamble.Foundations.Equilibrium.NashExistence",
+                    "score": 10.0,
+                    "description": "Witness-based Nash equilibrium existence certificates.",
+                    "concepts": ["nash_existence", "witness_certificate"],
+                    "proven_lemmas": ["nash_exists_of_witness"],
+                    "tactic_hints": ["exact nash_exists_of_witness h"],
+                    "textbook_source": "MWG Ch. 8",
+                    "related": [],
+                }
+            ],
+            "few_shot_traces": [],
+            "claim_scope": "supported_attempt",
+            "claim_type": "preamble_definable",
+            "required_primitives": ["nash_existence"],
+            "theorem_shape_recommendation": "template_or_stub_direct_closure",
+            "assumption_audit": ["witness_certificate_explicit"],
+            "scope_reason": "Frontier preamble-backed template test.",
+        }
+    )
+    service = FormalizerService(backend="leanstral", mistral_driver=RejectingDriver())
+
+    packet = service.formalize(
+        planner_packet.claim,
+        planner_packet=planner_packet.model_dump(mode="json"),
+        benchmark_mode=True,
+    )
+
+    assert packet.formalization_source == "preamble_template"
+    assert packet.claim_scope == "supported_attempt"
+    assert packet.parse_check.success is True
+    assert "∀ (Profile : Type) (h : HasNashEquilibrium Profile)" in packet.lean_code
+    assert "∃ profile, h.isNash profile" in packet.lean_code
+    assert "HasNashEquilibrium.isNash profile" not in packet.lean_code
+    assert "exact h_nash_existence" in packet.lean_code
+    assert RejectingDriver.calls == []
+
+
 def test_formalizer_routes_goedel_backend_to_huggingface() -> None:
     mistral_driver = RevisingMistralFormalizerDriver()
     hf_driver = RecordingHFFormalizerDriver()
