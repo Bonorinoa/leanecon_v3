@@ -84,7 +84,7 @@ class LeanLSPClient:
             return
         self._terminate_process(process)
 
-    def lean_goal(self, file_path: Path, *, line: int, column: int | None = None) -> Any:
+    def lean_goal(self, file_path: Path | str, *, line: int, column: int | None = None) -> Any:
         arguments: dict[str, Any] = {
             "file_path": self._normalize_file_path(file_path),
             "line": int(line),
@@ -93,13 +93,13 @@ class LeanLSPClient:
             arguments["column"] = int(column)
         return self._call_tool("lean_goal", arguments)
 
-    def lean_code_actions(self, file_path: Path, *, line: int) -> Any:
+    def lean_code_actions(self, file_path: Path | str, *, line: int) -> Any:
         return self._call_tool(
             "lean_code_actions",
             {"file_path": self._normalize_file_path(file_path), "line": int(line)},
         )
 
-    def lean_hover_info(self, file_path: Path, *, line: int, column: int) -> Any:
+    def lean_hover_info(self, file_path: Path | str, *, line: int, column: int) -> Any:
         return self._call_tool(
             "lean_hover_info",
             {
@@ -111,7 +111,7 @@ class LeanLSPClient:
 
     def lean_diagnostic_messages(
         self,
-        file_path: Path,
+        file_path: Path | str,
         *,
         severity: str | None = None,
         start_line: int | None = None,
@@ -138,7 +138,9 @@ class LeanLSPClient:
             {"query": query, "limit": int(limit), "project_root": str(self.lean_project_path)},
         )
 
-    def lean_file_outline(self, file_path: Path, *, max_declarations: int | None = None) -> Any:
+    def lean_file_outline(
+        self, file_path: Path | str, *, max_declarations: int | None = None
+    ) -> Any:
         arguments: dict[str, Any] = {"file_path": self._normalize_file_path(file_path)}
         if max_declarations is not None:
             arguments["max_declarations"] = int(max_declarations)
@@ -417,12 +419,47 @@ class LeanLSPClient:
             return content
         return None
 
-    def _normalize_file_path(self, path: Path) -> str:
+    def _normalize_file_path(self, path: Path | str) -> str:
+        if isinstance(path, str):
+            raw = path.strip()
+            if not raw:
+                return raw
+            if raw.endswith(".lean"):
+                if not Path(raw).is_absolute():
+                    relative_path = raw.replace("\\", "/")
+                    package_path = self._resolve_lake_package_file(relative_path)
+                    if package_path is not None:
+                        return str(package_path)
+                    return relative_path
+                path = Path(raw)
+            elif "/" not in raw and "\\" not in raw and "." in raw:
+                relative_path = raw.replace(".", "/") + ".lean"
+                package_path = self._resolve_lake_package_file(relative_path)
+                if package_path is not None:
+                    return str(package_path)
+                return relative_path
+            else:
+                path = Path(raw)
+
         resolved = path.resolve()
         try:
             return str(resolved.relative_to(self.lean_project_path))
         except ValueError:
             return str(resolved)
+
+    def _resolve_lake_package_file(self, relative_path: str) -> Path | None:
+        package_root = self.lean_project_path / ".lake" / "packages"
+        if not package_root.exists():
+            return None
+        try:
+            packages = list(package_root.iterdir())
+        except OSError:
+            return None
+        for package_dir in packages:
+            candidate = package_dir / relative_path
+            if candidate.exists():
+                return candidate.resolve()
+        return None
 
 
 class NullLeanLSPClient:

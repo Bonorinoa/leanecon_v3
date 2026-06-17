@@ -171,6 +171,43 @@ def test_normalize_file_path_relative_to_workspace(tmp_path):
     assert client._normalize_file_path(nested) == "Mathlib/Topology/Basic.lean"
 
 
+def test_normalize_file_path_accepts_mathlib_module_names(tmp_path):
+    client = LeanLSPClient(lean_project_path=tmp_path)
+
+    assert client._normalize_file_path("Mathlib.Topology.Basic") == (
+        "Mathlib/Topology/Basic.lean"
+    )
+    assert client._normalize_file_path("LeanEcon.Preamble") == "LeanEcon/Preamble.lean"
+
+
+def test_normalize_file_path_resolves_lake_package_sources(tmp_path):
+    package_file = (
+        tmp_path
+        / ".lake"
+        / "packages"
+        / "mathlib"
+        / "Mathlib"
+        / "Topology"
+        / "Basic.lean"
+    )
+    package_file.parent.mkdir(parents=True)
+    package_file.write_text("-- mathlib source", encoding="utf-8")
+    client = LeanLSPClient(lean_project_path=tmp_path)
+
+    assert client._normalize_file_path("Mathlib.Topology.Basic") == str(package_file.resolve())
+    assert client._normalize_file_path("Mathlib/Topology/Basic.lean") == str(
+        package_file.resolve()
+    )
+
+
+def test_normalize_file_path_keeps_relative_lean_paths_relative(tmp_path):
+    client = LeanLSPClient(lean_project_path=tmp_path)
+
+    assert client._normalize_file_path("Mathlib/Topology/Basic.lean") == (
+        "Mathlib/Topology/Basic.lean"
+    )
+
+
 def test_normalize_file_path_outside_workspace_returns_absolute(tmp_path):
     client = LeanLSPClient(lean_project_path=tmp_path / "ws")
     (tmp_path / "ws").mkdir()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,40 @@ from src.guardrails.vacuity import is_vacuous
 from src.prover.repl import ReplToolOrchestrator, run_repl_fast_path, sync_repl_trace
 from src.prover.tools import REPLToolDispatcher
 from src.tools import ToolCall, ToolResult
+
+
+def test_versioned_repl_cache_path_matches_workspace_lean_version(monkeypatch, tmp_path) -> None:
+    import src.lean.repl as lean_repl
+
+    monkeypatch.setattr(lean_repl, "_workspace_lean_version", lambda: "v4.31.0")
+    monkeypatch.setattr(lean_repl, "_repl_revision", lambda: "v1.3.15")
+
+    expected = (
+        tmp_path
+        / "augustepoiroux"
+        / "repl"
+        / "repl_v1.3.15_lean-toolchain-v4.31.0"
+    )
+    assert lean_repl._versioned_repl_cache_path(tmp_path) is None
+
+    expected.mkdir(parents=True)
+    assert lean_repl._versioned_repl_cache_path(tmp_path) == expected
+
+
+def test_shared_repl_config_fails_fast_without_local_cache(monkeypatch, tmp_path) -> None:
+    import src.lean.repl as lean_repl
+
+    lean_repl.shared_repl_config.cache_clear()
+    monkeypatch.delenv("LEANECON_REPL_ALLOW_GIT_SETUP", raising=False)
+    monkeypatch.setattr(lean_repl, "_repl_cache_dir", lambda: Path(tmp_path))
+    monkeypatch.setattr(lean_repl, "_repair_repl_cache", lambda _cache_dir: None)
+    monkeypatch.setattr(lean_repl, "_resolve_local_repl_path", lambda _cache_dir: None)
+    monkeypatch.setattr(lean_repl, "_workspace_lean_version", lambda: "v4.31.0")
+    monkeypatch.setattr(lean_repl, "_repl_revision", lambda: "v1.3.15")
+
+    with pytest.raises(RuntimeError, match="Lean REPL cache is not ready"):
+        lean_repl.shared_repl_config()
+    lean_repl.shared_repl_config.cache_clear()
 
 
 def test_semantic_frame_handles_universal_and_fallback_claims() -> None:

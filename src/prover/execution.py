@@ -5213,7 +5213,8 @@ class ProverExecutionMixin:
                         session.proof_path, line=line, column=column
                     )
             except LeanLSPUnavailableError as exc:
-                return ToolResult(call.id, f"lsp_unavailable: {exc}", is_error=True)
+                error_code = _lsp_tool_error_code(tool.name, exc)
+                return ToolResult(call.id, f"{error_code}: {exc}", is_error=True)
             return ToolResult(call.id, json.dumps(payload, ensure_ascii=True))
         if tool.name in {"lean_leansearch", "lean_loogle", "lean_local_search"}:
             query = str(tool.arguments.get("query", "")).strip()
@@ -5234,6 +5235,7 @@ class ProverExecutionMixin:
                     )
                     payload = self.lsp_client.lean_loogle(query, num_results=num_results)
             except LeanLSPUnavailableError as exc:
-                return ToolResult(call.id, f"lsp_unavailable: {exc}", is_error=True)
+                error_code = _lsp_tool_error_code(tool.name, exc)
+                return ToolResult(call.id, f"{error_code}: {exc}", is_error=True)
             return ToolResult(call.id, json.dumps(payload, ensure_ascii=True))
         return ToolResult(call.id, f"Unknown tool: {tool.name}", is_error=True)

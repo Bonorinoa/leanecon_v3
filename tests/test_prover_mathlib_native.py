@@ -512,6 +512,31 @@ def test_sprint25_resolves_contracting_premises_before_candidate_generation() ->
     assert resolved[1].resolution_method == "already_qualified"
 
 
+def test_mathlib_namespace_resolution_avoids_basic_file_basename_collisions() -> None:
+    from src.prover.synthesizer import ProofSynthesizer
+
+    synthesizer = ProofSynthesizer()
+    resolved = synthesizer.resolve_premises(
+        [
+            {
+                "name": "ofClosed",
+                "statement": "constructor for topologies by closed sets",
+                "file_path": "Mathlib/Topology/Basic.lean",
+            },
+            {
+                "name": "foo",
+                "statement": "unknown declaration",
+                "file_path": "Mathlib/Unknown/Basic.lean",
+            },
+        ]
+    )
+
+    assert resolved[0].lean_name == "TopologicalSpace.ofClosed"
+    assert resolved[0].resolution_method == "mathlib_file_namespace"
+    assert resolved[1].lean_name == "foo"
+    assert resolved[1].resolution_method == "raw_global_candidate"
+
+
 def test_sprint25_candidate_engine_uses_resolved_names_only() -> None:
     from src.prover.synthesizer import ProofSynthesizer
 

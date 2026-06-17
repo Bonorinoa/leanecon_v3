@@ -1534,3 +1534,66 @@ Codex to: (1) fix broken status() + add missing methods + recovery, (2) implemen
 - external `lean_leansearch` availability, now correctly classified as `leansearch_unavailable`;
 - mathlib-native proof synthesis gaps (`unsolved_goals`, `max_turns_exhausted`);
 - full-suite runtime blocked by `lean_interact` REPL cache/update behavior, separate from the LSP client.
+
+---
+
+## Session 39 — June 16-17, 2026 (Root-Cause LSP/Mathlib-Native Audit)
+
+**Type:** Root-cause audit + targeted repairs for remaining mathlib-native and agent-orchestration failures
+
+**Trigger:** After Session 38 removed dominant `lsp_unavailable`, remaining runs still failed on mathlib-native claims. The working hypothesis was that agents were still losing tools/context through Mathlib path handling, namespace formatting, hidden REPL setup, or stale benchmark data.
+
+### Root Causes Found
+- **Mathlib dependency files were passed to LSP with the wrong path.** `LSPCache` supplied strings such as `Mathlib.Topology.Basic` or `Mathlib/Topology/Basic.lean`; the MCP server requires the actual Lake package source path under `lean_workspace/.lake/packages/mathlib/...`.
+- **LSP enrichment silently discarded valid MCP payloads.** `lean_file_outline` returns `start_line`/`start_column` style locations and `lean_hover_info` returns `symbol`/`info`; `LSPCache` only read `line`/`column` and `contents`/`value`.
+- **Mathlib namespace resolution had a basename collision bug.** `_lookup_namespace()` matched any `Basic.lean` against the first table entry ending in `Basic.lean`, so unrelated files could receive bogus namespace prefixes.
+- **LeanInteract still had a hidden Git setup path.** When no v4.31-specific REPL cache existed, `shared_repl_config()` could let `lean_interact` clone/pull/checkout the REPL repo during proving.
+- **`new_tier2_batch` contained invalid/stale theorem stubs.** Failures included nonexistent preamble imports (`LeanEcon.Preamble.GameTheory.Nash`, `LeanEcon.Preamble.Microeconomics.ProducerTheory`), incompatible stale object paths, stale preamble API signatures, unqualified `Measure`, and unqualified `Tendsto`.
+
+### What Changed
+- `src/observability/lean_lsp_client.py`
+  - High-level LSP methods now accept `Path | str`.
+  - Module names such as `Mathlib.Topology.Basic` normalize to Lean file paths.
+  - Installed Lake package files resolve to absolute source paths under `.lake/packages/*` before MCP calls.
+- `src/prover/lsp_cache.py`
+  - Enrichment now accepts MCP outline fields `start_line`/`start_column`.
+  - Hover text now preserves MCP `symbol`/`info` payloads.
+- `src/prover/synthesizer.py`
+  - Namespace lookup no longer matches only by basename.
+  - Added explicit `Mathlib/Topology/Basic.lean -> TopologicalSpace` mapping.
+- `src/prover/execution.py` and `src/prover/repl.py`
+  - Live tool-dispatch paths now classify `lean_leansearch` failures as `leansearch_unavailable` rather than generic `lsp_unavailable`.
+- `src/lean/repl.py`
+  - REPL startup now uses packaged or versioned local cache only by default.
+  - Hidden Git clone/pull setup is opt-in via `LEANECON_REPL_ALLOW_GIT_SETUP=1`.
+- `evals/claim_sets/regressions/new_tier2_batch.jsonl`
+  - Remapped stale preamble-definable stubs to current LeanEcon preamble APIs.
+  - Qualified Mathlib-native `MeasureTheory.Measure` and `Filter.Tendsto`.
+- Added tests covering claim-stub validity, Lake package LSP path resolution, MCP outline/hover schema enrichment, REPL cache fail-fast behavior, and namespace basename collision avoidance.
+
+### Verification
+- `./.venv/bin/python -m pytest tests/test_lsp_cache.py tests/test_lean_lsp_client.py tests/test_repl_helpers.py -q` → **39 passed**.
+- `./.venv/bin/python -m pytest tests/test_claim_sets.py -q` → **1 passed**; all 8 `new_tier2_batch` stubs are Lean-valid up to `sorry`.
+- `./.venv/bin/python -m pytest tests/test_claim_sets.py tests/test_prover_mathlib_native.py tests/test_prover.py tests/test_lsp_cache.py tests/test_lean_lsp_client.py tests/test_repl_helpers.py -q` → **122 passed**.
+- `./.venv/bin/ruff check ...` on touched Python files/tests → **All checks passed**.
+- `./.venv/bin/python -m py_compile ...` on touched Python files/tests → **pass**.
+- `cd lean_workspace && lake env lean --version` → **Lean 4.31.0**.
+- `cd lean_workspace && lake env lean LeanEcon.lean` → **pass**.
+- `./.venv/bin/python scripts/diagnose_lean_lsp_mcp.py` → **initialize_ok=true**, binary `/Users/bonorinoa/.local/bin/lean-lsp-mcp`, server `Lean LSP` 1.26.0.
+- Live Mathlib LSP outline smoke:
+  - `LeanLSPClient().lean_file_outline("Mathlib.Topology.Basic", max_declarations=5)` → **success**, resolved to `.lake/packages/mathlib/Mathlib/Topology/Basic.lean`.
+- Live enrichment smoke:
+  - `LSPCache.enrich_premises([{"name": "ofClosed", "file_path": "Mathlib.Topology.Basic"}])` → **enriched 1**, no LSP errors.
+
+### Regression Results
+- Fresh subset:
+  - Command: `./.venv/bin/python -m evals.local_gate --claim-set new_tier2_batch --budget-profile frontier --limit 2 --sample-seed 17 --output-dir /private/tmp/leanecon-root-audit-new-tier2-limit2-fresh --allow-unready`
+  - Result: **0/2 verified**.
+  - Failure counts: `unsolved_goals: 1`, `max_turns_exhausted: 1`.
+  - Progress error codes: `leansearch_unavailable: 4`.
+  - LSP diagnostic/goal/code-action/hover tools executed successfully; **no final `lsp_unavailable` failure**.
+
+### Decisions / Remaining Work
+- `lsp_unavailable` is no longer the dominant failure mode. Remaining failures are proof-search quality, missing external LeanSearch availability, and theorem-strength/typeclass issues such as monotone convergence needing stronger lattice/order assumptions (`SupSet α` surfaced in candidate failures).
+- `new_tier2_batch` should now be treated as a validated regression input. The same theorem-stub validation should be extended to other mathlib-heavy claim sets, especially `harder_mathlib.jsonl`, which still contains the old unqualified `Tendsto` spelling.
+- The full 8-claim pass-rate target is not yet achieved; the immediate root causes were infrastructure/data validity, and the next layer is deterministic proof synthesis for the remaining mathlib-native theorems.

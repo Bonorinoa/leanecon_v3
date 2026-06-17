@@ -325,7 +325,8 @@ class ReplToolOrchestrator:
         try:
             return callback()
         except LeanLSPUnavailableError as exc:
-            return {"error": f"lsp_unavailable: {exc}", "tool_name": tool_name}
+            error_code = "leansearch_unavailable" if tool_name == "lean_leansearch" else "lsp_unavailable"
+            return {"error": f"{error_code}: {exc}", "tool_name": tool_name}
         finally:
             if self.telemetry is not None:
                 self.telemetry.record_lean(started_at)
@@ -365,7 +366,12 @@ class ReplToolOrchestrator:
             else:
                 return ToolResult(tool_call.id, f"Unknown tool: {tool_call.name}", is_error=True)
         except LeanLSPUnavailableError as exc:
-            return ToolResult(tool_call.id, f"lsp_unavailable: {exc}", is_error=True)
+            error_code = (
+                "leansearch_unavailable"
+                if tool_call.name == "lean_leansearch"
+                else "lsp_unavailable"
+            )
+            return ToolResult(tool_call.id, f"{error_code}: {exc}", is_error=True)
         return ToolResult(tool_call.id, json.dumps(payload, ensure_ascii=True))
 
     def should_finalize(self, tool_name: str | None, content: Any) -> bool:

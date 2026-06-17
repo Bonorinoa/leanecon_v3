@@ -392,24 +392,93 @@ _CONTRACTING_NAMESPACE_NAMES: frozenset[str] = frozenset(
 )
 
 
+# Focused namespace resolution table for high-value Mathlib modules
+# that frequently appear in economic theory frontier claims.
+# This is intentionally small to start. Expand as needed.
+MATHLIB_NAMESPACE_TABLE: dict[str, str] = {
+    # Order / Filter / Convergence
+    "Mathlib/Order/Filter/AtTopBot.lean": "Filter",
+    "Mathlib/Topology/Order/LiminfLimsup.lean": "Tendsto",
+    "Mathlib/Topology/Order/AtTopBot.lean": "Tendsto",
+
+    # Compactness / Extreme value
+    "Mathlib/Topology/Basic.lean": "TopologicalSpace",
+    "Mathlib/Topology/MetricSpace/IsCompact.lean": "IsCompact",
+    "Mathlib/Topology/Compactness.lean": "IsCompact",
+
+    # Continuity
+    "Mathlib/Topology/ContinuousOn.lean": "ContinuousOn",
+    "Mathlib/Topology/Continuous.lean": "Continuous",
+
+    # Monotonicity / Bounds
+    "Mathlib/Order/Monotone.lean": "Monotone",
+    "Mathlib/Order/Bounds/Basic.lean": "BddAbove",
+    "Mathlib/Order/Bounds/Bound.lean": "BddAbove",
+
+    # Contracting / Fixed points (already partially handled)
+    "Mathlib/Topology/MetricSpace/Contracting.lean": "ContractingWith",
+
+    # Analysis / Normed spaces (common in macro)
+    "Mathlib/Analysis/Normed/Order/Basic.lean": "Normed",
+    "Mathlib/Analysis/Normed/Module/Basic.lean": "Normed",
+
+    # Measure Theory (added for t2_measure_zero_empty and future measure claims)
+    "Mathlib/MeasureTheory/Measure/MeasureSpace.lean": "Measure",
+    "Mathlib/MeasureTheory/Measure/NullMeasurable.lean": "NullMeasurable",
+
+    # Metric Space Completeness (added for t2_cauchy_converges_complete)
+    "Mathlib/Topology/MetricSpace/Basic.lean": "Metric",
+    "Mathlib/Topology/MetricSpace/Complete.lean": "CompleteSpace",
+    "Mathlib/Topology/MetricSpace/CauchySeq.lean": "CauchySeq",
+
+    # Product Topology (added for t2_compact_product)
+    "Mathlib/Topology/Product.lean": "Prod",
+}
+
+
+def _lookup_namespace(file_path: str) -> str | None:
+    """Return the Mathlib namespace prefix for a given file_path, if known."""
+    if not file_path:
+        return None
+    path = file_path.replace("\\", "/")
+    for module_path, namespace in MATHLIB_NAMESPACE_TABLE.items():
+        module_suffix = module_path.removeprefix("Mathlib/")
+        if path.endswith(module_path) or path.endswith(module_suffix):
+            return namespace
+    return None
+
+
 def _resolve_premise_name(
     raw_name: str,
     premise: dict[str, Any],
 ) -> tuple[str | None, str, str | None]:
     if "." in raw_name:
         return raw_name, "already_qualified", None
+
     file_path = str(premise.get("file_path") or "")
+
+    # Existing ContractingWith logic (preserve exact behavior)
     if (
         file_path.endswith("Mathlib/Topology/MetricSpace/Contracting.lean")
         or file_path.endswith("Topology/MetricSpace/Contracting.lean")
     ) and raw_name in _CONTRACTING_NAMESPACE_NAMES:
         return f"ContractingWith.{raw_name}", "mathlib_file_namespace", None
+
     if raw_name in {"fixedPoint_isFixedPt", "fixedPoint_unique"}:
         return f"ContractingWith.{raw_name}", "known_mathlib_alias", None
+
     if raw_name.startswith("exists_fixedPoint") or raw_name.startswith("efixedPoint"):
         return f"ContractingWith.{raw_name}", "known_mathlib_alias", None
+
+    # New general namespace lookup
+    namespace = _lookup_namespace(file_path)
+    if namespace:
+        return f"{namespace}.{raw_name}", "mathlib_file_namespace", None
+
+    # Final fallback (original behavior)
     if re.match(r"^[A-Za-z_][A-Za-z0-9_']*$", raw_name):
         return raw_name, "raw_global_candidate", None
+
     return None, "unresolved", "not_a_lean_identifier"
 
 

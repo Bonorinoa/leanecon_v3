@@ -76,6 +76,7 @@ def test_get_hover_normalizes_payload_shapes():
             ("M.A", 2, 0): {"value": "v"},
             ("M.A", 3, 0): "raw text",
             ("M.A", 4, 0): None,
+            ("M.A", 6, 0): {"symbol": "M.A.z : Nat", "info": "doc"},
         }
     )
     cache = LSPCache(client)
@@ -84,6 +85,7 @@ def test_get_hover_normalizes_payload_shapes():
     assert cache.get_hover("M.A", 2, 0) == "v"
     assert cache.get_hover("M.A", 3, 0) == "raw text"
     assert cache.get_hover("M.A", 4, 0) == ""
+    assert cache.get_hover("M.A", 6, 0) == "M.A.z : Nat\ndoc"
 
 
 def test_get_hover_caches_and_swallows_errors():
@@ -129,6 +131,19 @@ def test_enrich_premises_populates_signature_and_location():
     assert premises[0]["full_type_signature"] == "M.X.foo : Nat"
     assert premises[0]["detailed_docstring"] == "M.X.foo : Nat"
     assert premises[0]["declaration_location"] == "M.X:7"
+
+
+def test_enrich_premises_accepts_mcp_outline_location_fields():
+    client = _StubClient(
+        outlines={"M.Y": {"declarations": [{"name": "M.Y.foo", "start_line": 8}]}},
+        hovers={("M.Y", 8, 1): {"symbol": "M.Y.foo : Prop", "info": "doc"}},
+    )
+    cache = LSPCache(client)
+    premises = [{"name": "foo", "file_path": "M.Y", "score": 0.8}]
+
+    assert cache.enrich_premises(premises) == 1
+    assert premises[0]["full_type_signature"] == "M.Y.foo : Prop\ndoc"
+    assert premises[0]["declaration_location"] == "M.Y:8"
 
 
 def test_enrich_premises_skips_when_outline_missing_decl():

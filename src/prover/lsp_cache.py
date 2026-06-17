@@ -74,7 +74,11 @@ class LSPCache:
         try:
             payload = self.lsp_client.lean_hover_info(module, line=line, column=column)
             if isinstance(payload, dict):
-                contents = payload.get("contents") or payload.get("value")
+                contents = (
+                    payload.get("contents")
+                    or payload.get("value")
+                    or _join_hover_fields(payload)
+                )
                 if isinstance(contents, list):
                     text = "\n".join(str(c) for c in contents if c)
                 elif contents is not None:
@@ -123,8 +127,10 @@ class LSPCache:
             decl = self.find_decl(outline, name)
             if decl is None:
                 continue
-            line = _coerce_int(decl.get("line"))
-            column = _coerce_int(decl.get("column"), default=0)
+            line = _coerce_int(decl.get("line")) or _coerce_int(decl.get("start_line"))
+            column = _coerce_int(decl.get("column"))
+            if column is None:
+                column = _coerce_int(decl.get("start_column"), default=1)
             if line is None:
                 continue
             hover_text = self.get_hover(module, line, column)
@@ -135,6 +141,15 @@ class LSPCache:
             premise["declaration_location"] = f"{module}:{line}"
             enriched += 1
         return enriched
+
+
+def _join_hover_fields(payload: dict[str, Any]) -> str:
+    parts = [
+        str(payload[key]).strip()
+        for key in ("symbol", "info")
+        if payload.get(key) is not None and str(payload[key]).strip()
+    ]
+    return "\n".join(parts)
 
 
 __all__ = ["LSPCache"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import shutil
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -63,6 +64,42 @@ def _packaged_local_repl_path() -> Path | None:
     return None
 
 
+def _workspace_lean_version() -> str | None:
+    if not LEAN_WORKSPACE.exists():
+        return None
+    return get_project_lean_version(str(LEAN_WORKSPACE))
+
+
+def _repl_revision() -> str:
+    return str(inspect.signature(LeanREPLConfig).parameters["repl_rev"].default)
+
+
+def _versioned_repl_cache_path(cache_dir: Path) -> Path | None:
+    lean_version = _workspace_lean_version()
+    if not lean_version:
+        return None
+    repl_rev = _repl_revision()
+    local_repl = (
+        cache_dir
+        / "augustepoiroux"
+        / "repl"
+        / f"repl_{repl_rev}_lean-toolchain-{lean_version}"
+    )
+    return local_repl if local_repl.exists() else None
+
+
+def _allow_git_repl_setup() -> bool:
+    value = os.environ.get("LEANECON_REPL_ALLOW_GIT_SETUP", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _resolve_local_repl_path(cache_dir: Path) -> Path | None:
+    packaged_repl = _packaged_local_repl_path()
+    if packaged_repl is not None:
+        return packaged_repl
+    return _versioned_repl_cache_path(cache_dir)
+
+
 def _repair_repl_cache(cache_dir: Path) -> None:
     broken_clean_copy = cache_dir / "augustepoiroux" / "repl" / "repl_clean_copy"
     if broken_clean_copy.exists() and not (broken_clean_copy / ".git").exists():
@@ -79,9 +116,18 @@ def shared_repl_config() -> LeanREPLConfig:
         "project": LocalProject(directory=str(LEAN_WORKSPACE)),
         "cache_dir": cache_dir,
     }
-    packaged_repl = _packaged_local_repl_path()
-    if packaged_repl is not None:
-        config_kwargs["local_repl_path"] = packaged_repl
+    local_repl_path = _resolve_local_repl_path(cache_dir)
+    if local_repl_path is not None:
+        config_kwargs["local_repl_path"] = local_repl_path
+    elif not _allow_git_repl_setup():
+        lean_version = _workspace_lean_version() or "unknown"
+        repl_rev = _repl_revision()
+        raise RuntimeError(
+            "Lean REPL cache is not ready for "
+            f"{repl_rev}_lean-toolchain-{lean_version}. "
+            "Set LEANECON_REPL_ALLOW_GIT_SETUP=1 to allow lean_interact to clone or pull "
+            "the REPL repository, or prebuild the matching cache."
+        )
 
     return LeanREPLConfig(
         **config_kwargs,
