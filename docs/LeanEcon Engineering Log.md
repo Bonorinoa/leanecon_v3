@@ -1839,3 +1839,39 @@ Codex to: (1) fix broken status() + add missing methods + recovery, (2) implemen
 - The main remaining focused failures were not LeanSearch, LSP, or Lake-cache failures. They were deterministic formalizer routing and preamble metadata gaps.
 - The new Lake instrumentation still matters: future cold-start/build-artifact problems now surface as `transient_lake_failure`, `compile_timeout`, or `compile_failed`, instead of being collapsed into undifferentiated proof failure.
 - LeanSearch itself remains as diagnosed in Session 42: the external tool/service returns HTTP 500 when network is available. This session did not hide that with another fallback; it made the unrelated preamble-definable path avoid search entirely when a trusted preamble theorem template already defines the intended statement.
+
+---
+
+## Checkpoint Sprint Conclusion — Mid-June 2026
+
+**Focus:** Root-cause resolution of Tier 2 regression instability + infrastructure hygiene.
+
+### Major Issues Addressed This Sprint
+- `lsp_unavailable` root causes (misconfigured status method, missing high-level methods, error classification).
+- Search error taxonomy and fallback query shaping.
+- Formalizer template coverage for key mathlib-native and preamble shapes.
+- `compile_check` resilience against transient Lake failures.
+- Clarified that LeanSearch unreliability is largely external (HTTP 500s).
+
+### Current System State (as of this checkpoint)
+- **tier2_frontier_mathlib_native**: 100% (3/3)
+- **new_tier2_batch**: 100% (8/8)
+- **tier2_frontier_preamble_definable**: 70–90% depending on run (improved from earlier failures, remaining issues are mostly template/routing gaps)
+- Strong improvement in observability and graceful degradation.
+- Shared LSP client confirmed (no per-claim churn).
+- Git history cleaned of benchmark artifacts.
+
+### Docker / Deployment Status
+- Multi-stage Dockerfile using pre-built lean base image on GHCR.
+- `lean_workspace` is copied into the image.
+- Railway configuration present.
+- No active deployment blockers in code, but GHCR publishing and base image refresh remain operational tasks.
+
+### Next Recommended Milestones
+1. Expand Tier 2 frontier sets to ~12 claims per category (preamble-definable + mathlib-native) for more meaningful public benchmarking.
+2. Continue improving formalizer template coverage.
+3. Consider shared long-lived LSP client + workspace pre-warm for benchmark stability.
+4. Monitor external LeanSearch reliability.
+
+This checkpoint marks the resolution of the major LSP/MCP and retrieval-layer blockers identified at the start of the week. The system is now in a significantly more observable and resilient state.
+
