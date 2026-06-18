@@ -1,6 +1,6 @@
 # Lean Econ v3 Architecture
 **Version:** 3.0.0-alpha  
-**Date:** 27 April 2026  
+**Date:** 17 June 2026  
 **Status:** Authoritative — Single Source of Truth for All Implementation
 
 > Integrity note (April 22, 2026): repository code, tests, and checked-in manifests override any overstated readiness or benchmark claims elsewhere in the docs.
@@ -16,7 +16,7 @@ Natural-language economic claim
         │
         ▼
 ┌──────────────────────────────┐
-│  PLANNER (HILBERT-style)     │  ← Strongest open model (Qwen/DeepSeek 70B+ via HF)
+│  PLANNER (HILBERT-style)     │  ← Mistral-primary release path
 │  • Clarifying questions      │
 │  • Textbook defaults (SLP)   │
 │  • Plan sketch + subgoals    │
@@ -25,7 +25,7 @@ Natural-language economic claim
                │ (approved plan)
                ▼
 ┌──────────────────────────────┐
-│  FORMALIZER                  │  ← Leanstral-2603 or Goedel-Prover-V2-32B
+│  FORMALIZER                  │  ← Leanstral-2603 via Mistral
 │  • Structured Preamble ctx   │
 │  • Semantic faithfulness     │
 │  • Vacuity guard             │
@@ -35,7 +35,7 @@ Natural-language economic claim
                │ (approved stub)
                ▼
 ┌──────────────────────────────┐
-│  PROVER (APOLLO + Leanstral) │  ← Leanstral/Goedel + self-correction
+│  PROVER (APOLLO + Leanstral) │  ← Leanstral + self-correction
 │  • Recursive sub-lemma decomp│
 │  • Lean REPL fast path       │
 │  • mathlib_native_mode       │
@@ -64,7 +64,7 @@ All intelligence lives in **skills/** + **Preamble** + model prompts. Everything
 Python harness is deliberately minimal.
 
 ### Core Modules
-- **src/planner/** — HILBERT informal reasoner (clarifying questions, textbook defaults, plan sketch). Uses strongest HF model.
+- **src/planner/** — HILBERT informal reasoner (clarifying questions, textbook defaults, plan sketch). Release path uses Mistral structured output.
 - **src/formalizer/** — Driver protocol (Leanstral / Goedel-Prover-V2 / future). Structured context builders (role-labeled: defs, lemmas, templates, tactic_hints). New semantic-frame faithfulness scorer.
 - **src/prover/** — Claim-type-aware prover. Preamble-definable claims use bounded direct closure against LeanEcon metadata. Mathlib-native claims enter `mathlib_native_mode`, cap preamble-style direct closure, and invoke bounded `lean-lsp-mcp` inspection/search before provider turns. APOLLO recursive decomposition remains available when the target has a real structural boundary.
 - **src/claim_scope.py** — Scope and failure classifier. It separates `release_reliable`, `supported_attempt`, `frontier_collect`, and `out_of_scope` claims, maps failed attempts to roadmap next actions, and produces frontier queue records for benchmark/local-gate artifacts.
@@ -95,7 +95,7 @@ Python harness is deliberately minimal.
   from release-reliable metrics.
 - `research` is local-only and must not be used for hosted public alpha paths.
 
-**Supported/open path**:
+**Frontier/research override path**:
 - **Planner**: MiniMaxAI/MiniMax-M2.7, arcee-ai/Trinity-Large-Thinking, Qwen/DeepSeek class models, or other strong open informal reasoners via HF.
 - **Formalizer**: `mistralai/Leanstral-2603` — native Lean 4 code agent.
 - **Prover**: `Goedel-LM/Goedel-Prover-V2-32B` remains supported as an open ATP backend; Leanstral is the current mathlib-native proving focus because it is optimized for Lean and `lean-lsp-mcp` workflows.
@@ -103,8 +103,6 @@ Python harness is deliberately minimal.
 **Local Research/Audit (Feynman)**: Ollama with 32B+ class (Qwen2.5-Coder-32B or DeepSeek-R1-32B distilled). Zero cost, full context, perfect for gap analysis vs HILBERT paper.
 
 **Fallback**: Codex CLI → Ollama (same 32B+ model) if token limits hit (rare).
-
-**No Anthropic. No Opus. No rate-limit theater.**
 
 ## 3A. Budget Profiles
 

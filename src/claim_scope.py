@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 ClaimScope = Literal["release_reliable", "supported_attempt", "frontier_collect", "out_of_scope"]

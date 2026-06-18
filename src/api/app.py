@@ -29,7 +29,6 @@ from src.api.models import (
 from src.backend_capabilities import get_backend_capability
 from src.budget_profiles import (
     BudgetProfile,
-    clamp_int,
     clamp_target_timeouts,
     evaluate_provider_guardrail,
     resolve_budget_profile,

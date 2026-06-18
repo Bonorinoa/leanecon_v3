@@ -1,9 +1,8 @@
 # Railway Hobby Deployment Checklist
 
-Sprint 34 deployment work must wait until the local release-candidate audit in
-`docs/SPRINT_30_LOCAL_RC_AUDIT.md` is green. The broader Sprint 30-35 execution
-plan is `docs/SPRINTS_30_35_MASTER_PLAN.md`. The current Sprint 34 no-go
-record is `docs/SPRINT_34_NO_GO_RESULT.md`.
+This checklist is the authoritative deployment gate for LeanEcon v3 hosted
+alpha. Historical sprint plans and no-go records are preserved in
+`docs/LeanEcon Engineering Log.md`; this file describes the current path.
 
 ## Minimum Bar Before Any Readiness Claim
 1. The developer edit-loop gate passes on the deployment branch:
@@ -24,7 +23,8 @@ record is `docs/SPRINT_34_NO_GO_RESULT.md`.
 10. Planner, formalizer, prover, and final compile timeouts are exercised explicitly.
 11. Benchmark artifacts are written to separate directories for `live_pipeline` and `benchmark_mode`.
 12. Historical artifacts under `benchmark_baselines/v3_alpha/` are not presented as release truth.
-13. No public score or production-readiness statement is made until all items above are satisfied.
+13. Tier 2 is presented only as public beta/diagnostic unless a future benchmark decision promotes it.
+14. No public score or production-readiness statement is made until all items above are satisfied.
 
 ## Required Production Budget Posture
 
@@ -38,13 +38,15 @@ LEANECON_PLANNER_MODEL=mistral-large-2512
 LEANECON_FORMALIZER_BACKEND=leanstral
 LEANECON_FORMALIZER_MODEL=labs-leanstral-2603
 LEANECON_PROVER_BACKEND=leanstral
+LEANECON_PROVER_PROVIDER=mistral
+LEANECON_PROVER_MODEL=labs-leanstral-2603
 LEANECON_PROVER_FALLBACK_BACKEND=leanstral
 ```
 
 Do not deploy hosted alpha with `frontier` or `research`. Non-Mistral provider
 paths and cheap fallback exploration are non-release diagnostics only.
 
-## Sprint 30-35 Gate Separation
+## Gate Separation
 
 - Developer edit-loop gate:
   `PYTHONPATH=. ./.venv/bin/python -m pytest -o addopts=''` plus
@@ -94,37 +96,21 @@ mathlib-native frontier path. It is not a release blocker for
 `tier1_core_preamble_definable` unless `/health` or the prover runtime cannot
 report the LSP state cleanly.
 
-## Sprint 34 Release-Prep Record
+## Current Operational Blockers
 
-For Sprint 34, keep fresh release-prep artifacts outside canonical benchmark
-history unless the release manager explicitly promotes them:
+The remaining deployment blockers are operational, not code-policy changes:
 
-- local release gate: `/private/tmp/leanecon-s34-tier1`
-- approved one-claim provider sample:
-  `/private/tmp/leanecon-s34-provider-sample` passed `1/1`
-  release-reliable claim for `tier1_core_preamble_definable` with
-  `--budget-profile release`; this is provider reachability evidence, not a
-  replacement for the full 24-claim release denominator.
-- local or hosted API smoke: `/private/tmp/leanecon-s34-api-smoke`
-- Docker/image notes: record either a successful `docker build --pull=false -t
-  leanecon-v3:ci .` or the exact reason local Docker could not validate the
-  image.
-
-Sprint 34 local Docker can reach the daemon. After the deprecated GHCR package
-was deleted, a new local base image was built from `Dockerfile.lean-base` as
-`ghcr.io/bonorinoa/leanecon-lean-base:latest`; it validates `/root/.elan`,
-`/lean_workspace`, `lean --version`, `lake --version`, `lake build LeanEcon`,
-and `lake env lean LeanEcon.lean`. With that base image present locally,
-`docker build --pull=false -t leanecon-v3:ci .` passed and the app image
-validated the Lean/Lake commands during build.
-
-The remaining remote step is to publish
-`ghcr.io/bonorinoa/leanecon-lean-base:latest` through the base-image workflow or
-an authenticated `docker push`. Local image sizes from the first build were
-large: the Lean base image used about 14.4 GB disk / 3.64 GB content, and the
-app image used about 22.2 GB disk / 6.34 GB content. Future base-image work
-should separate release runtime dependencies from local ML/research dependencies
-so the app image does not pull GPU Torch/CUDA wheels for the release path.
+- Publish or otherwise make available
+  `ghcr.io/bonorinoa/leanecon-lean-base:latest` built from
+  `Dockerfile.lean-base`.
+- Ensure the builder can resolve or already has `python:3.11-slim`; the latest
+  deterministic Docker check found the local Lean base image but timed out while
+  resolving Docker Hub metadata for the Python app-stage base image.
+- Re-run `docker build --pull=false -t leanecon-v3:ci .` after the base image is
+  available to the builder.
+- Run hosted smoke against the deployed URL with real Mistral credentials.
+- Run any live provider benchmark only with explicit approval; deterministic
+  local gates do not replace provider-backed release evidence.
 
 Local Docker or the CI release-image lane must prove all of the following
 before hosted alpha deployment:
@@ -152,7 +138,7 @@ If hosted smoke fails after deploy:
    `LEANECON_BUDGET_PROFILE`, planner, formalizer, prover, and Mistral
    credentials.
 4. Re-run the hosted deployment gate against the rolled-back deployment and
-   save smoke responses under a fresh `/private/tmp/leanecon-s34-api-smoke-*`
+   save smoke responses under a fresh `/private/tmp/leanecon-api-smoke-*`
    directory.
 5. Treat any frontier, mathlib-native, or non-release profile failure as
    diagnostic unless it breaks release-profile health, metrics, queue bounds, or

@@ -629,8 +629,15 @@ class Formalizer:
         self,
         context: FormalizerContext,
     ) -> FormalizerGenerationResponse | None:
+        shape_recommendation = context.theorem_shape_recommendation.lower()
+        explicit_template_route = any(
+            marker in shape_recommendation
+            for marker in ("template", "direct_closure")
+        )
         template_eligible = context.claim_scope == "release_reliable" or (
-            context.claim_type == "preamble_definable" and bool(context.selected_preamble)
+            context.claim_type == "preamble_definable"
+            and bool(context.selected_preamble)
+            and explicit_template_route
         )
         if not template_eligible:
             return None

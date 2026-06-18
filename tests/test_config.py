@@ -8,6 +8,14 @@ import pytest
 from src.config import load_runtime_env, validate_runtime_secrets
 
 
+def test_release_prover_defaults_are_mistral_leanstral() -> None:
+    from src import config
+
+    assert config.PROVER_BACKEND == "leanstral"
+    assert config.PROVER_MODEL == "labs-leanstral-2603"
+    assert config.PROVER_PROVIDER == "mistral"
+
+
 def test_load_runtime_env_local_overrides_existing_env(monkeypatch, tmp_path: Path) -> None:
     env_path = tmp_path / ".env"
     env_path.write_text("HF_TOKEN=hf_from_file\n", encoding="utf-8")

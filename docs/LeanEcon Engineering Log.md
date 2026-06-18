@@ -1875,3 +1875,43 @@ Codex to: (1) fix broken status() + add missing methods + recovery, (2) implemen
 
 This checkpoint marks the resolution of the major LSP/MCP and retrieval-layer blockers identified at the start of the week. The system is now in a significantly more observable and resilient state.
 
+---
+
+## Session 44 — June 18, 2026 (Public MVP Readiness Hardening)
+
+**Type:** Deterministic MVP-readiness cleanup + release posture alignment
+
+**Trigger:** Founder requested a holistic public-facing MVP audit and implementation pass. Scope was explicitly set to: Tier 1 reliable / Tier 2 public beta posture, aggressive stale-doc cleanup, deterministic verification only, and no live provider benchmark calls before commit.
+
+### What Changed
+- Fixed deterministic gate failures:
+  - Removed stale unused imports in `src/api/app.py` and `src/claim_scope.py`.
+  - Tightened formalizer template-first routing so supported-attempt preamble claims only bypass the model when the planner explicitly recommends a template/direct-closure route. `release_reliable` claims remain template-first.
+  - Added regression coverage for hydrated `/plan` -> `/formalize` payloads, supported-attempt template routing, and release prover defaults.
+- Aligned release defaults:
+  - `LEANECON_PROVER_MODEL` now defaults to `labs-leanstral-2603`.
+  - `LEANECON_PROVER_PROVIDER` now defaults to `mistral`.
+  - Goedel/HF remains available only by explicit frontier/research override.
+- Cleaned documentation and generated clutter:
+  - Removed stale sprint planning/no-go/checkpoint docs after preserving current deployment requirements in `docs/RAILWAY_DEPLOYMENT_CHECKLIST.md` and current public posture in `README.md`.
+  - Removed generated PDF artifacts and the obsolete ReportLab PDF generator.
+  - Updated architecture, charter, claim-set docs, and deployment checklist to present Tier 2 as beta/diagnostic, not release reliability.
+
+### Verification Policy
+- This pass used deterministic gates only.
+- Live Mistral benchmark runs, hosted smoke, GHCR publishing, and deployment remain separate operational steps requiring explicit approval and credentials.
+
+### Verification
+- `./.venv/bin/ruff check src tests evals scripts` -> all checks passed.
+- `./.venv/bin/python -m pytest -q` -> 317 passed.
+- `cd lean_workspace && lake env lean LeanEcon.lean` -> passed.
+- `./.venv/bin/python scripts/diagnose_lean_lsp_mcp.py` -> initialize_ok=true, local binary `/Users/bonorinoa/.local/bin/lean-lsp-mcp`, server `Lean LSP` 1.26.0.
+- Optional Docker build:
+  - Local Lean base image exists: `ghcr.io/bonorinoa/leanecon-lean-base:latest`, image id `d3402bde44e0`, size 14.4GB.
+  - `docker build --pull=false -t leanecon-v3:ci .` was attempted in sandbox and with network escalation. Both attempts failed before build execution while resolving `docker.io/library/python:3.11-slim` metadata with `DeadlineExceeded: context deadline exceeded`.
+  - No local `python:3.11-slim` image is present, so the app-image gate remains an operational Docker metadata/base-image availability blocker.
+
+### Outcome
+- Public MVP language is now honest: Tier 1 is the reliable surface; Tier 2 and mathlib-native claims are beta/diagnostic with bounded budgets, failure classes, and traces.
+- The immediate deterministic blockers from the readiness audit are fixed.
+- Remaining deployment blockers are operational: GHCR Lean base image availability, release-image build in the deploy environment, and live hosted smoke with real provider credentials.

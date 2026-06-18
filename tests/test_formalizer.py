@@ -363,6 +363,29 @@ def test_release_reliable_claim_uses_preamble_template_before_llm() -> None:
     assert RejectingDriver.calls == []
 
 
+def test_supported_attempt_without_template_recommendation_uses_formalizer_driver() -> None:
+    driver = RevisingMistralFormalizerDriver()
+    planner_packet = _planner_packet().model_copy(
+        update={
+            "claim_scope": "supported_attempt",
+            "claim_type": "preamble_definable",
+            "theorem_shape_recommendation": "theorem_stub_required_for_release",
+            "scope_reason": "Preamble-backed claim still needs formalizer shaping.",
+        }
+    )
+    service = FormalizerService(backend="leanstral", mistral_driver=driver)
+
+    packet = service.formalize(
+        planner_packet.claim,
+        planner_packet=planner_packet.model_dump(mode="json"),
+        benchmark_mode=True,
+    )
+
+    assert packet.formalization_source == "llm_generation"
+    assert packet.theorem_name == "formalizer_bellman_contraction_claim"
+    assert len(driver.calls) == 2
+
+
 def test_nash_supported_attempt_claim_uses_witness_template_before_llm() -> None:
     class RejectingDriver:
         calls: list[dict[str, object]] = []

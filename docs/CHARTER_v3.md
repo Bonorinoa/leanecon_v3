@@ -63,7 +63,7 @@ We are not chasing IMO gold or frontier research breakthroughs. We are building 
 3. **APOLLO + Leanstral/Goedel Prover** — recursive sub-lemma decomposition + self-correction via Lean compiler feedback. Mathlib-native claims use `mathlib_native_mode` and `lean-lsp-mcp` search before falling back to generic provider turns.
 4. **Semantic Faithfulness 2.0** — econ-concept ontology + frame-based scorer + optional calibrated LLM judge (local).
 5. **Preamble as Open EconLib Mini** — versioned Lean modules + metadata + lightweight retrieval (HF embeddings or local).
-6. **Provider Strategy**: Hugging Face for all production models (Leanstral-2603, Goedel-Prover-V2, Qwen/DeepSeek for Planner). Ollama only for local Feynman research/audit.
+6. **Provider Strategy**: Mistral-primary for public alpha (`mistral-large-2512` planner, `labs-leanstral-2603` formalizer/prover). Hugging Face / Goedel / local models are frontier or research overrides only.
 7. **Human-in-the-Loop as First-Class Feature** — review gates at Plan, Formalization, and Proof stages.
 8. **Benchmark Ratchet** — every PR must improve or maintain local-gate; new PhD-qualifying claim set added monthly. The flywheel tracks pass rate, latency, tool calls, LSP tool calls, native search attempts, and mathlib-native mode usage.
 
@@ -71,7 +71,7 @@ We are not chasing IMO gold or frontier research breakthroughs. We are building 
 
 ## 5. Success Metrics (v3.0 Alpha — 6 Weeks)
 - **Formalizer-only**: tier1_core ≥ 95 % (22/23), tier2_frontier ≥ 65 % (9/13)
-- **End-to-End (with Planner + Prover)**: tier1_core ≥ 90 %, tier2_frontier ≥ 55 %
+- **End-to-End (with Planner + Prover)**: Tier 1 preamble-definable is the reliable surface; Tier 2 is public beta with traces, bounded budgets, and failure classes.
 - **Latency**: p50 < 90 s for core claims, p95 < 180 s for frontier (REPL + warm Lean env)
 - **Faithfulness**: 0 VACUOUS on tier1, semantic score ≥ 4.5/5 on 50-claim calibration set
 - **Human Review Adoption**: ≥ 70 % of production runs go through at least one review gate
@@ -84,7 +84,7 @@ We are not chasing IMO gold or frontier research breakthroughs. We are building 
 1. Keep the canonical benchmark surface split by claim type: `tier1_core_preamble_definable`, `tier2_frontier_preamble_definable`, and `tier2_frontier_mathlib_native`.
 2. Preserve trace quality as a release requirement. Every mathlib-native run must show claim-type policy, `mathlib_native_mode`, LSP tool calls, native search attempts, and final failure/closure reason.
 3. Harden the Railway image with Lean workspace build artifacts, Mistral/Leanstral environment variables, SQLite job storage, and `uvx lean-lsp-mcp` availability.
-4. Gate deployment on `/health`, `/metrics`, `lake build`, focused prover tests, and benchmark-mode local-gate.
+4. Gate deployment on `/health`, `/metrics`, release-image checks, focused prover tests, the release local-gate, and a separate live hosted smoke.
 5. After deployment, use benchmark history and preamble gap reports to decide whether the next sprint should expand EconLib Mini or deepen mathlib-native search.
 
 **We are building the foundation for modern economic theory to become machine-checkable.**  

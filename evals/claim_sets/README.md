@@ -4,14 +4,14 @@ This directory contains the canonical claim sets that drive LeanEcon v3 evaluati
 
 ## Canonical claim sets (drive the release denominator)
 
-These four sets are part of the canonical evaluation surface. They are referenced in `benchmark_baselines/RUNNING_BENCHMARKS.md`, the engineering log, and the alpha checkpoint.
+These four sets are part of the canonical evaluation surface. They are referenced in `benchmark_baselines/RUNNING_BENCHMARKS.md`, the engineering log, and benchmark summaries.
 
 | File | Claims | Scope | Purpose |
 |---|---|---|---|
 | `tier0_smoke.jsonl` | 3 | `release_reliable` | Quick smoke (sub-minute total) — used in CI fast lane. |
 | `tier1_core_preamble_definable.jsonl` | 24 | `release_reliable` | **The release denominator.** Frozen since Session 26. PhD-qualifying preamble-backed claims across consumer theory, DP, optimization, macro primitives. |
 | `tier2_frontier_preamble_definable.jsonl` | 10 | `frontier_collect` | Frontier-tier preamble claims; diagnostic only, not in the release denominator. |
-| `tier2_frontier_mathlib_native.jsonl` | 3 | `frontier_collect` | Mathlib-native frontier claims; diagnostic only. Currently 1/3 across Sprints 20-25; the open synthesis problem. |
+| `tier2_frontier_mathlib_native.jsonl` | 3 | `frontier_collect` | Mathlib-native frontier claims; Tier 2 beta/diagnostic only. |
 
 ## Regression claim set (prover guardrail)
 
@@ -29,7 +29,7 @@ These four sets are part of the canonical evaluation surface. They are reference
 
 ## Archive
 
-The `archive/` subdirectory holds historical claim sets that are no longer part of the canonical benchmark surface (e.g., older `tier1_core.json`, `tier2_frontier.json` mixed-tier sets from Sprint 13-18). They are preserved for audit history and **must not be used to derive release reliability claims** (see `docs/SPRINT_30_LOCAL_RC_AUDIT.md` for the integrity contract).
+The `archive/` subdirectory holds historical claim sets that are no longer part of the canonical benchmark surface (e.g., older `tier1_core.json`, `tier2_frontier.json` mixed-tier sets from Sprint 13-18). They are preserved for audit history and **must not be used to derive release reliability claims**. The current integrity contract is: Tier 1 preamble-definable is release reliability; Tier 2 and mathlib-native sets are public beta/diagnostic unless explicitly promoted by a future benchmark decision.
 
 ## How a claim file should be structured
 
