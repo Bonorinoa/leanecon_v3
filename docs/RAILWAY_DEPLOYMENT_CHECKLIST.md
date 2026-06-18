@@ -73,7 +73,9 @@ The Railway image is built from `Dockerfile`. The application stage copies
 `/root/.elan` and `/lean_workspace` from
 `ghcr.io/bonorinoa/leanecon-lean-base:latest`, puts `/root/.elan/bin` on
 `PATH`, installs `uv` so `uvx lean-lsp-mcp` is available when frontier tooling
-needs it, and runs `lean --version`, `lake --version`, and
+needs it, asserts that the base image's `/lean_workspace/lean-toolchain`
+matches the repository's `lean_workspace/lean-toolchain`, and runs
+`lean --version`, `lake --version`, and
 `cd /app/lean_workspace && lake env lean LeanEcon.lean` during image build.
 
 The Lean base image is now reproducible from `Dockerfile.lean-base`.
@@ -102,21 +104,33 @@ The remaining deployment blockers are operational, not code-policy changes:
 
 - Publish or otherwise make available
   `ghcr.io/bonorinoa/leanecon-lean-base:latest` built from
-  `Dockerfile.lean-base`.
-- Ensure the builder can resolve or already has `python:3.11-slim`; the latest
-  deterministic Docker check found the local Lean base image but timed out while
-  resolving Docker Hub metadata for the Python app-stage base image.
-- Re-run `docker build --pull=false -t leanecon-v3:ci .` after the base image is
-  available to the builder.
+  `Dockerfile.lean-base`. Rebuild and publish the base image after every Lean
+  toolchain or Lean workspace change. The app-image build now fails fast if the
+  base image's `/lean_workspace/lean-toolchain` differs from the repository's
+  `lean_workspace/lean-toolchain`.
+- Ensure the builder can resolve or already has `python:3.11-slim`. The latest
+  local check succeeded after pulling
+  `python:3.11-slim@sha256:ae52c5bef62a6bdd42cd1e8dffef86b9cd284bde9427da79839de7a4b983e7ca`.
+- Re-run `docker build --pull=false -t leanecon-v3:ci .` in the deploy
+  environment after the refreshed base image is available there. The latest
+  local check rebuilt the Lean base at `leanprover/lean4:v4.31.0`, produced
+  `ghcr.io/bonorinoa/leanecon-lean-base:latest` image `8552fcb5da58`, built
+  `leanecon-v3:ci` image `ae921f431b21`, and verified container runtime
+  `lean --version`, `lake --version`, and
+  `cd /app/lean_workspace && lake env lean LeanEcon.lean`.
 - Run hosted smoke against the deployed URL with real Mistral credentials.
-- Run any live provider benchmark only with explicit approval; deterministic
-  local gates do not replace provider-backed release evidence.
+- Run live provider benchmarks only with explicit approval. The latest approved
+  local live gate verified Tier 1 at 100.0% (24/24), focused Tier 2 preamble at
+  66.7% (6/9), and Tier 2 mathlib-native at 100.0% (3/3), but hosted smoke is
+  still required before public deployment.
 
 Local Docker or the CI release-image lane must prove all of the following
 before hosted alpha deployment:
 
 - the Lean base image has `/root/.elan`
 - the Lean base image has `/lean_workspace`
+- the Lean base image's `/lean_workspace/lean-toolchain` matches this repo's
+  `lean_workspace/lean-toolchain`
 - the app image can run `lean --version`
 - the app image can run `lake --version`
 - the app image can run `cd /app/lean_workspace && lake env lean LeanEcon.lean`

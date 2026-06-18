@@ -12,8 +12,17 @@ RUN pip install --no-cache-dir uv && pip install --no-cache-dir -e ".[dev]"
 
 COPY --from=lean /root/.elan /root/.elan
 COPY --from=lean /lean_workspace /app/lean_workspace
+COPY lean_workspace/lean-toolchain /tmp/repo-lean-toolchain
 ENV PATH="/root/.elan/bin:${PATH}"
-RUN lean --version && lake --version && cd /app/lean_workspace && lake env lean LeanEcon.lean
+RUN test "$(cat /app/lean_workspace/lean-toolchain)" = "$(cat /tmp/repo-lean-toolchain)" \
+    || (echo "Lean base image toolchain does not match repository lean_workspace/lean-toolchain" >&2; \
+        echo "base: $(cat /app/lean_workspace/lean-toolchain)" >&2; \
+        echo "repo: $(cat /tmp/repo-lean-toolchain)" >&2; \
+        exit 1) \
+    && lean --version \
+    && lake --version \
+    && cd /app/lean_workspace \
+    && lake env lean LeanEcon.lean
 COPY docs ./docs
 COPY skills ./skills
 COPY benchmark_baselines ./benchmark_baselines

@@ -1915,3 +1915,67 @@ This checkpoint marks the resolution of the major LSP/MCP and retrieval-layer bl
 - Public MVP language is now honest: Tier 1 is the reliable surface; Tier 2 and mathlib-native claims are beta/diagnostic with bounded budgets, failure classes, and traces.
 - The immediate deterministic blockers from the readiness audit are fixed.
 - Remaining deployment blockers are operational: GHCR Lean base image availability, release-image build in the deploy environment, and live hosted smoke with real provider credentials.
+
+---
+
+## Session 45 — June 18, 2026 (Docker And Live Provider Readiness Follow-Up)
+
+**Type:** Local Docker proof + approved live provider diagnostics
+
+**Trigger:** Founder approved continuing beyond the deterministic-only pass to answer Docker readiness and live MVP behavior.
+
+### Docker Findings
+- Found a real deployment risk: the local `ghcr.io/bonorinoa/leanecon-lean-base:latest` image booted Lean `v4.28.0`, while the repository is pinned to `leanprover/lean4:v4.31.0`.
+- Patched `Dockerfile` so the app image fails fast when the base image's `/lean_workspace/lean-toolchain` does not match the repository's `lean_workspace/lean-toolchain`.
+- Rebuilt the local Lean base image from `Dockerfile.lean-base`:
+  - New local base image: `ghcr.io/bonorinoa/leanecon-lean-base:latest`, image `8552fcb5da58`, size 15.2GB.
+  - Base build installed Lean `v4.31.0`, downloaded/decompressed the mathlib cache, ran `lake build LeanEcon`, and verified `lake env lean LeanEcon.lean`.
+- Rebuilt the local app image:
+  - App image: `leanecon-v3:ci`, image `ae921f431b21`, size 14.6GB.
+  - Build-time guard passed, then `lean --version`, `lake --version`, and `cd /app/lean_workspace && lake env lean LeanEcon.lean` passed inside the image.
+- Container API smoke:
+  - `docker run --rm -p 8002:8000 leanecon-v3:ci` booted Uvicorn successfully.
+  - `/health`, `/metrics`, and `/openapi.json` returned 200.
+  - `/health` reported release-compliant provider guardrails and Lean `v4.31.0`; provider credentials were absent in the container, as expected for this deterministic container smoke.
+
+### Live Provider Results
+- `tier1_core_preamble_definable`, release profile, full set:
+  - Pass@1: 100.0% (24/24)
+  - Average total latency: 24.3s
+  - Total cost: $0.0149
+  - Output: `/private/tmp/leanecon-live-tier1-20260617/tier1_core_preamble_definable.json`
+- `tier2_frontier_preamble_definable`, frontier profile, focused sample:
+  - Pass@1: 66.7% (6/9)
+  - Average total latency: 42.9s
+  - Total cost: $0.0057
+  - Failure classes: `compile_failed` (2), `unsolved_goals` (1)
+  - Output: `/private/tmp/leanecon-live-tier2-preamble-20260617/tier2_frontier_preamble_definable.json`
+- `tier2_frontier_mathlib_native`, frontier profile, full set:
+  - Pass@1: 100.0% (3/3)
+  - Average total latency: 113.9s
+  - Total cost: $0.0019
+  - Output: `/private/tmp/leanecon-live-tier2-mathlib-20260617/tier2_frontier_mathlib_native.json`
+
+### Verification
+- `./.venv/bin/ruff check src tests evals scripts` -> all checks passed.
+- `./.venv/bin/python -m pytest -q` -> 317 passed in 276.46s.
+- `cd lean_workspace && lake env lean LeanEcon.lean` -> passed.
+- `./.venv/bin/python scripts/diagnose_lean_lsp_mcp.py` -> initialize_ok=true, local binary `/Users/bonorinoa/.local/bin/lean-lsp-mcp`, server `Lean LSP` 1.26.0.
+- `docker build --pull=false -f Dockerfile.lean-base -t ghcr.io/bonorinoa/leanecon-lean-base:latest .` -> passed locally after mathlib cache hydration.
+- `docker build --pull=false -t leanecon-v3:ci .` -> passed locally against the refreshed Lean base.
+- `docker run --rm leanecon-v3:ci lean --version` -> Lean `v4.31.0`.
+- `docker run --rm leanecon-v3:ci lake --version` -> Lake for Lean `v4.31.0`.
+- `docker run --rm leanecon-v3:ci sh -c 'cd /app/lean_workspace && lake env lean LeanEcon.lean'` -> passed.
+- Container API smoke on local port 8002 -> `/health`, `/metrics`, and `/openapi.json` returned 200.
+
+### Interpretation
+- Public MVP release value proposition is now supported by live evidence: LeanEcon can reliably handle the curated Tier 1 undergraduate economics theorem surface with Lean kernel verification, bounded release budgets, low observed cost, and traceable stages.
+- Tier 2 preamble-definable claims remain beta. The failures were not LSP startup or Lake cache failures; they were proof synthesis/template gaps surfaced as compile failures or unsolved goals.
+- Tier 2 mathlib-native is viable as a diagnostic/frontier lane, but not as release reliability. It closed all three claims in this live run, but prover latency averaged 101.9s and traces showed LeanSearch service errors with fallback to local/Loogle retrieval.
+- Observability and the data flywheel are in place for agentic debugging: progress JSONL records include planner/formalizer/prover stages, direct-close attempts, compile durations, LSP tool events, retrieval degradation, premise resolution, candidate tactic failures, and frontier queues.
+
+### Remaining Deployment Work
+- Publish the refreshed Lean base image to GHCR from the current `Dockerfile.lean-base`/Lean workspace state.
+- Re-run the app-image build in the deployment environment after GHCR publish.
+- Run hosted smoke against the deployed URL with real Mistral credentials: `/health`, `/metrics`, `/metrics/prometheus`, bounded job acceptance, job polling, SSE, review transitions, and one release-profile proof smoke.
+- The large local images (15.2GB base, 14.6GB app) are an infrastructure bottleneck. They are acceptable for proof of readiness, but registry transfer/deploy time should be treated as an operational risk.
