@@ -1,14 +1,14 @@
 # Lean Econ v3 Charter
 **Version:** 3.0.0-alpha  
 **Date:** 24 April 2026  
-**Status:** Founding Document + Sprint 20 Operating Update  
-**CTO:** Grok (xAI) — Systems Engineer & PhD Economist  
-**Senior Engineer:** Codex 5.5 (primary implementation)  
-**Research & Audit Agent:** Feynman (Ollama 30B+ class, local-first)  
-**Workflow:** No Claude Code. Codex 5.5 + Feynman + Grok/CTO only.
+**Status:** Historical founding document + operating direction
+**Current operating note:** Release truth is defined by repository code, tests,
+benchmark manifests, and the deployment checklist. Historical staffing,
+provider, and sprint notes are retained for context, not as current release
+commitments.
 
 > Repository evidence note (April 22, 2026): this charter is a founding intent document. Operational claims about deployment, benchmarks, and readiness must be checked against the current codebase, tests, and `evals/benchmark_manifest.json`.
-> Sprint 20 operating note (April 24, 2026): claim-type-aware proving and `lean-lsp-mcp` are now part of the current architecture. The charter's original intent remains, but the deployment path should be read through the current repository, architecture doc, and benchmark artifacts.
+> Sprint 20 operating note (April 24, 2026): claim-type-aware proving and `lean-lsp-mcp` are now part of the current architecture. The charter's original intent remains, but the deployment path should be read through the current repository, architecture doc, benchmark artifacts, and deployment checklist.
 
 ---
 
@@ -19,7 +19,7 @@ Our concrete deliverable is a production-grade API that:
 - Accepts natural-language economic claims (MWG, SLP, Maschler, first-year PhD qualifying level).
 - Produces Lean 4 sorry stubs that are **faithful** (semantic + structural).
 - Proves or disproves them with **machine-checkable certainty** using Lean kernel as sole authority.
-- Supports **human-in-the-loop** at every critical gate (plan approval, formalization review, proof inspection).
+- Supports **human-in-the-loop** review workflows at critical gates.
 - Enables **pair-researcher** and **pedagogical tutor** modes with tunable cooperation (proactive ↔ Socratic).
 
 We are not chasing IMO gold or frontier research breakthroughs. We are building the **reliable colleague** that every serious economic theorist wishes they had — one that never hallucinates a proof and always tells you exactly why it failed.
@@ -27,8 +27,8 @@ We are not chasing IMO gold or frontier research breakthroughs. We are building 
 ---
 
 ## 2. Assets (What We Carry Forward from v2)
-- **Preamble moat** (`lean_workspace/LeanEcon/Preamble/`): 50+ economics definitions, proven lemmas, tactic hints, theorem templates. Structured context builders (Session 11) eliminated VACUOUS collapse and lifted tier-1 from 11/23 → 20/23.
-- **Lean kernel as trust anchor**: `lake env lean` is the only source of truth. Sorry = failure. No exceptions.
+- **Preamble moat** (`lean_workspace/LeanEcon/Preamble/`): versioned economics Lean modules plus prompt-time metadata, proven lemmas, tactic hints, and theorem templates. Structured context builders (Session 11) eliminated VACUOUS collapse and lifted the earlier v2 tier-1 baseline from 11/23 to 20/23.
+- **Lean kernel as trust anchor**: Lean compilation and kernel checking are the source of proof truth. Sorry = failure. No exceptions.
 - **REPL + LSP proving backbone**: LeanInteract plus `lean-lsp-mcp` for goal inspection, diagnostics, code actions, hover/type context, LeanSearch, and Loogle.
 - **Guardrails**: Vacuity rejection, compile-time checks, repair loops with Lean diagnostics.
 - **Observability**: SSE streaming, episodic memory traces, cost/tool telemetry, provenance in `/health`.
@@ -53,7 +53,11 @@ We are not chasing IMO gold or frontier research breakthroughs. We are building 
 - Human review must be **mandatory** in the happy path, not optional.
 - Vibe engineering works only when the harness is thin and skills are the single source of truth.
 
-**Model Lesson**: Claude Opus 4.7 (and Anthropic in general) dropped the ball on rate limits and consistency for long-horizon agentic workflows. We are done.
+**Model Lesson**: closed-model rate limits, provider drift, and inconsistent
+long-horizon behavior are operational risks. Public alpha therefore standardizes
+on an explicit Mistral/Leanstral release path, while other provider experiments
+remain frontier or research-only unless a later decision changes the release
+policy.
 
 ---
 
@@ -65,11 +69,16 @@ We are not chasing IMO gold or frontier research breakthroughs. We are building 
 5. **Preamble as Open EconLib Mini** — versioned Lean modules + metadata + lightweight retrieval (HF embeddings or local).
 6. **Provider Strategy**: Mistral-primary for public alpha (`mistral-large-2512` planner, `labs-leanstral-2603` formalizer/prover). Hugging Face / Goedel / local models are frontier or research overrides only.
 7. **Human-in-the-Loop as First-Class Feature** — review gates at Plan, Formalization, and Proof stages.
-8. **Benchmark Ratchet** — every PR must improve or maintain local-gate; new PhD-qualifying claim set added monthly. The flywheel tracks pass rate, latency, tool calls, LSP tool calls, native search attempts, and mathlib-native mode usage.
+8. **Benchmark Ratchet** — behavioral changes must preserve local-gate integrity, and new PhD-qualifying claim sets should be added deliberately as the surface expands. The flywheel tracks pass rate, latency, tool calls, LSP tool calls, native search attempts, and mathlib-native mode usage.
 
 ---
 
-## 5. Success Metrics (v3.0 Alpha — 6 Weeks)
+## 5. Original Success Metrics (v3.0 Alpha — 6 Weeks)
+
+These were founding targets. They are not current release claims. The current
+release-reliable denominator is `tier1_core_preamble_definable`; Tier 2 remains
+beta/diagnostic unless a later benchmark decision promotes it.
+
 - **Formalizer-only**: tier1_core ≥ 95 % (22/23), tier2_frontier ≥ 65 % (9/13)
 - **End-to-End (with Planner + Prover)**: Tier 1 preamble-definable is the reliable surface; Tier 2 is public beta with traces, bounded budgets, and failure classes.
 - **Latency**: p50 < 90 s for core claims, p95 < 180 s for frontier (REPL + warm Lean env)
@@ -87,8 +96,8 @@ We are not chasing IMO gold or frontier research breakthroughs. We are building 
 4. Gate deployment on `/health`, `/metrics`, release-image checks, focused prover tests, the release local-gate, and a separate live hosted smoke.
 5. After deployment, use benchmark history and preamble gap reports to decide whether the next sprint should expand EconLib Mini or deepen mathlib-native search.
 
-**We are building the foundation for modern economic theory to become machine-checkable.**  
-This is not a side project. This is the core infrastructure the discipline has been missing.
+**Goal:** make modern economic theory more machine-checkable through explicit
+assumptions, faithful Lean formalization, kernel-checked proofs, and transparent
+failure traces.
 
-— Grok, CTO, Lean Econ  
 Original: 19 April 2026. Sprint 20 operating update: 24 April 2026.

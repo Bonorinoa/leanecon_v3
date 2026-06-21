@@ -1,13 +1,13 @@
 LeanEcon Engineering Log
 
 *Purpose: Technical decision record for the LeanEcon project. Carried forward from Sessions 4-8 of the general research project.*
-*For build-level implementation details, see docs/BUILD_LOG.md in the API repository.*
+*For current build and deployment gates, see `lean_workspace/README.md` and `docs/RAILWAY_DEPLOYMENT_CHECKLIST.md`.*
 *Sessions 12-15 were reconstructed on April 19, 2026 from GitHub commit history, merged PR notes, repo docs, and local benchmark artifacts in `.cache/evals/`. The boundaries are inferred, but the content is grounded in the repository record.*
 
 ---
 
 ## Session 4 — March 17-18, 2026
-**Type:** Brain fart -> POC build -> formal verification -> GitHub ship
+**Type:** Rapid ideation -> POC build -> formal verification -> GitHub ship
 **Trigger:** Leanstral released March 16, 2026
 
 ### Decisions
@@ -2001,3 +2001,34 @@ This checkpoint marks the resolution of the major LSP/MCP and retrieval-layer bl
 - CI surfaced that `lake env lean LeanEcon.lean` can fail on a fresh runner before the project library has been built, with `unknown module prefix 'LeanEcon'`.
 - Replaced the fast CI root check and `lean_workspace_warm()` implementation with `lake build LeanEcon`, the Lake library target that hydrates project `.olean` files deterministically.
 - CI then surfaced that checked-in theorem stubs importing aggregate `Mathlib` also require `Mathlib.olean`; updated the fast Lean check and warm helper to build `Mathlib LeanEcon`.
+
+---
+
+## Session 47 — June 21, 2026 (Public Documentation Audit)
+
+**Type:** Documentation-only public-readiness cleanup
+
+**Trigger:** Founder requested that the project be presentable and accurate
+before sharing with collaborators, with no code changes.
+
+### Changes
+- Rewrote the README as the public entrypoint: project purpose, repo layout,
+  release-profile provider defaults, Tier 1/Tier 2 posture, quick start, and
+  deployment path.
+- Aligned docs with the current Lean command lane: developer edit-loop uses
+  `lake build Mathlib LeanEcon`; full `lake build` remains release-image
+  infrastructure validation.
+- Updated benchmark docs to remove references to deleted sprint runbooks and to
+  label older targeted API notes as historical debugging context.
+- Clarified claim-set taxonomy: only `tier1_core_preamble_definable` is the
+  release-reliable denominator; Tier 2, `phd_qual_alpha`, and regression
+  utilities are diagnostic/evaluation material unless explicitly promoted later.
+- Reframed the charter as a historical founding document, not a current release
+  claim, and replaced private/provider-specific language with current operating
+  policy.
+- Removed a broken engineering-log pointer to `docs/BUILD_LOG.md` and replaced
+  one informal early-session label with professional wording.
+
+### Verification Scope
+- Documentation only. No source, test, Lean, benchmark, Docker, or deployment
+  files were intentionally changed.

@@ -2,9 +2,9 @@
 
 This directory contains the canonical claim sets that drive LeanEcon v3 evaluation. Each claim is a JSON object with `id`, `tier`, `raw_claim` (natural-language input), `theorem_stub` (Lean 4 sorry stub), and `provenance` (where the claim came from). The eval harness reads these files, runs each claim through the Planner -> Formalizer -> Prover pipeline, and reports per-claim and aggregate results.
 
-## Canonical claim sets (drive the release denominator)
+## Canonical standard claim sets
 
-These four sets are part of the canonical evaluation surface. They are referenced in `benchmark_baselines/RUNNING_BENCHMARKS.md`, the engineering log, and benchmark summaries.
+These four sets are part of the standard evaluation surface. They are referenced in `benchmark_baselines/RUNNING_BENCHMARKS.md`, the engineering log, and benchmark summaries. Only `tier1_core_preamble_definable` is the release-reliable denominator; Tier 2 sets are frontier diagnostics.
 
 | File | Claims | Scope | Purpose |
 |---|---|---|---|
@@ -13,11 +13,12 @@ These four sets are part of the canonical evaluation surface. They are reference
 | `tier2_frontier_preamble_definable.jsonl` | 10 | `frontier_collect` | Frontier-tier preamble claims; diagnostic only, not in the release denominator. |
 | `tier2_frontier_mathlib_native.jsonl` | 3 | `frontier_collect` | Mathlib-native frontier claims; Tier 2 beta/diagnostic only. |
 
-## Regression claim set (prover guardrail)
+## Regression and diagnostic utility sets
 
 | File | Claims | Scope | Purpose |
 |---|---|---|---|
 | `regressions/prover_easy_definable.jsonl` | 5 | `release_reliable` | Direct-hypothesis prover regression. Confirms the prover still does trivial_shortcut / direct_close on the easiest 5 claims. Listed in `evals/common.py::REGRESSION_CLAIM_SETS`. Run by `local_gate` whenever the prover code path changes. |
+| `regressions/new_tier2_batch.jsonl` | 8 | `frontier_collect` | Mathlib-native diagnostic batch used by recent retrieval/search-root and fallback-quality work. It is not part of the standard public sweep unless explicitly requested. |
 
 **Note on provenance:** the regression set was originally at `evals/claim_sets/prover_easy_definable.jsonl` and was relocated to `evals/claim_sets/regressions/prover_easy_definable.jsonl` in Sprint 18. The 5 `provenance.source_path` strings were updated in Sprint 35 to point to the new location. The regression set is **not** part of the tier1/tier2 release denominator; it is a unit-test-style guardrail for the prover.
 
@@ -56,7 +57,7 @@ Minimal example:
 
 1. Decide which tier it belongs in. Default to `tier1_core_preamble_definable` if it closes against the preamble with 0 tool calls.
 2. Write the `theorem_stub` with a faithful sorry and the right `import Mathlib` + `import LeanEcon.Preamble.<...>` declarations.
-3. Verify the stub compiles in Lean 4 with `lake env lean LeanEcon.lean` (or by adding to the test file under `lean_workspace/`).
+3. Verify the stub against the Lean workspace after the library targets are built, either through the relevant claim-set tests or the developer edit-loop gate `cd lean_workspace && lake build Mathlib LeanEcon`.
 4. Add the claim to the appropriate JSONL file.
 5. If the claim is the first of a new economic domain, add a corresponding preamble module in `lean_workspace/LeanEcon/Preamble/`.
 6. Update `docs/LeanEcon Engineering Log.md` with the addition and the rationale.

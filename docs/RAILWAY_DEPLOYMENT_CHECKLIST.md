@@ -7,9 +7,9 @@ alpha. Historical sprint plans and no-go records are preserved in
 ## Minimum Bar Before Any Readiness Claim
 1. The developer edit-loop gate passes on the deployment branch:
    `PYTHONPATH=. ./.venv/bin/python -m pytest -o addopts=''` and
-   `cd lean_workspace && lake env lean LeanEcon.lean`.
+   `cd lean_workspace && lake build Mathlib LeanEcon`.
 2. The local release-candidate gate passes for the release denominator:
-   `PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --claim-set tier1_core_preamble_definable --output-dir /private/tmp/leanecon-alpha-tier1 --allow-unready`.
+   `PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --claim-set tier1_core_preamble_definable --budget-profile release --output-dir /private/tmp/leanecon-alpha-tier1 --allow-unready`.
 3. The release-image gate passes before any hosted redeploy:
    `cd lean_workspace && lake exe cache get`, `cd lean_workspace && lake build`,
    and `docker build --pull=false -t leanecon-v3:ci .`.
@@ -50,11 +50,13 @@ paths and cheap fallback exploration are non-release diagnostics only.
 
 - Developer edit-loop gate:
   `PYTHONPATH=. ./.venv/bin/python -m pytest -o addopts=''` plus
-  `cd lean_workspace && lake env lean LeanEcon.lean`. This is the ordinary
-  developer and PR CI lane; it deliberately avoids full `lake build`.
+  `cd lean_workspace && lake build Mathlib LeanEcon`. This is the ordinary
+  developer and PR CI lane; it builds the aggregate Mathlib and LeanEcon library
+  targets needed by checked-in theorem stubs while avoiding a raw full
+  `lake build`.
 - Local release-candidate gate:
   the developer edit-loop gate plus
-  `PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --claim-set tier1_core_preamble_definable --output-dir /private/tmp/leanecon-alpha-tier1 --allow-unready`.
+  `PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --claim-set tier1_core_preamble_definable --budget-profile release --output-dir /private/tmp/leanecon-alpha-tier1 --allow-unready`.
   This is the release denominator only.
 - Release-image gate:
   `cd lean_workspace && lake exe cache get`, `cd lean_workspace && lake build`,

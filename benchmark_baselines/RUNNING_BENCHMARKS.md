@@ -7,10 +7,11 @@ should be written to profile-specific directories under
 claim set, plus a combined `local_gate.json` for that profile run.
 
 For Sprint 30 local release-candidate work, use the audit runbook in
-`docs/SPRINT_30_LOCAL_RC_AUDIT.md` and write temporary artifacts under
-`/private/tmp/leanecon-s30-*` rather than overwriting canonical benchmark
-baselines. The full Sprint 30-35 planning context is in
-`docs/SPRINTS_30_35_MASTER_PLAN.md`.
+`docs/LeanEcon Engineering Log.md` and write temporary artifacts under
+`/private/tmp/leanecon-*` rather than overwriting canonical benchmark baselines.
+Older sprint-specific runbooks were removed during public-MVP documentation
+cleanup; the current deployment gate lives in
+`docs/RAILWAY_DEPLOYMENT_CHECKLIST.md`.
 
 ## Canonical Claim Sets
 
@@ -190,9 +191,12 @@ The aggregation report shows:
 - average latency by stage
 - failure breakdown across the loaded summaries
 
-## Targeted API Checks
+## Historical Targeted API Checks
 
-Three targeted API checks were run against the local FastAPI server while debugging the planner path:
+Three targeted API checks were run against the local FastAPI server while
+debugging the planner path. These notes are retained as debugging history; the
+current hosted-readiness gate is the checklist in
+`docs/RAILWAY_DEPLOYMENT_CHECKLIST.md`.
 
 - `t1_bellman_rhs_monotone_discount`
 - `t1_expected_payoff_pure_strategy_11`

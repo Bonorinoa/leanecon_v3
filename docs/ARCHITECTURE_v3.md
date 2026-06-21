@@ -1,6 +1,6 @@
 # Lean Econ v3 Architecture
 **Version:** 3.0.0-alpha  
-**Date:** 17 June 2026  
+**Date:** 21 June 2026
 **Status:** Authoritative — Single Source of Truth for All Implementation
 
 > Integrity note (April 22, 2026): repository code, tests, and checked-in manifests override any overstated readiness or benchmark claims elsewhere in the docs.
@@ -197,7 +197,9 @@ The harness emits `SynthesisEvent` after each mathlib-native `apply_tactic`, rec
 4. All model-facing tool calls go through `ToolSpec` registry with budget enforcement.
 5. Human review gates are **not optional** in alpha — enforced in API state machine.
 6. Every benchmark run must preserve claim-type observability: claim-type policy, LSP tool calls, native search attempts, mathlib-native mode usage, and — for mathlib-native turns — `RetrievalEvent`, `ToolUsageTrace`, `StateTransition`, `ProgressDelta`, and `SynthesisEvent` payloads must be visible in summaries/history.
-7. Every PR updates `benchmark_baselines/` and must not regress local-gate.
+7. PRs that change prover, formalizer, planner, claim-set, or benchmark behavior
+   must preserve local-gate integrity and update benchmark artifacts when the
+   behavioral baseline changes.
 
 ---
 
@@ -240,5 +242,4 @@ The harness emits `SynthesisEvent` after each mathlib-native `apply_tactic`, rec
 
 This architecture is deliberately **simple enough to reason about** and **powerful enough to hit PhD-qualifying coverage**.
 
-— User, Founder and Grok, CTO  
 Original: 19 April 2026. Sprint 20 operating update: 24 April 2026. Sprint 24 operating update: 27 April 2026.
