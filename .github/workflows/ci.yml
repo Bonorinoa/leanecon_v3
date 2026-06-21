@@ -43,11 +43,13 @@ jobs:
       - name: Fetch mathlib cache
         run: cd lean_workspace && lake exe cache get
 
-      - name: Run focused tests
-        run: python -m pytest -o addopts=''
-
       - name: Fast Lean root check
         run: cd lean_workspace && lake env lean LeanEcon.lean
+
+      - name: Run focused tests
+        env:
+          LEAN_TIMEOUT: "180"
+        run: python -m pytest -o addopts=''
 
       - name: Run local-gate scaffold
         run: python -m evals.local_gate --claim-set tier0_smoke --limit 0 --output-dir /tmp/leanecon-local-gate-ci

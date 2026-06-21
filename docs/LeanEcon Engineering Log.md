@@ -1979,3 +1979,20 @@ This checkpoint marks the resolution of the major LSP/MCP and retrieval-layer bl
 - Re-run the app-image build in the deployment environment after GHCR publish.
 - Run hosted smoke against the deployed URL with real Mistral credentials: `/health`, `/metrics`, `/metrics/prometheus`, bounded job acceptance, job polling, SSE, review transitions, and one release-profile proof smoke.
 - The large local images (15.2GB base, 14.6GB app) are an infrastructure bottleneck. They are acceptable for proof of readiness, but registry transfer/deploy time should be treated as an operational risk.
+
+---
+
+## Session 46 — June 21, 2026 (CI Cold Lean Test Stabilization)
+
+**Type:** Deterministic CI test fix
+
+**Trigger:** Fast-edit-loop pytest failures in `test_claim_sets`, `test_formalizer`, and `test_local_gate`.
+
+### Findings
+- The affected pytest paths use fake planner/formalizer/prover drivers and do not make live provider or LeanSearch API calls.
+- The failing behavior was consistent with cold Lean workspace compilation timing out in CI, especially theorem-stub and formalizer parse checks that import Mathlib/Preamble modules.
+
+### Changes
+- Warm the Lean root before pytest in the fast-edit-loop CI job and set `LEAN_TIMEOUT=180` for the pytest step.
+- Added a session-scoped `warm_lean_workspace` fixture and applied it to Lean-backed claim-set/formalizer tests.
+- Raised the regression claim-set theorem-stub compile timeout from 30s to 120s.

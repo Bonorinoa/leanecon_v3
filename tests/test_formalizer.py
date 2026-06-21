@@ -11,6 +11,9 @@ from src.formalizer.formalizer import (
 from src.planner import PlannerPacket
 
 
+pytestmark = pytest.mark.usefixtures("warm_lean_workspace")
+
+
 def _planner_packet() -> PlannerPacket:
     return PlannerPacket.model_validate(
         {

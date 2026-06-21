@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from src.lean.compiler import compile_check
+
+
+pytestmark = pytest.mark.usefixtures("warm_lean_workspace")
 
 
 def test_new_tier2_batch_theorem_stubs_are_lean_valid() -> None:
@@ -14,7 +19,7 @@ def test_new_tier2_batch_theorem_stubs_are_lean_valid() -> None:
     for line in claim_path.read_text(encoding="utf-8").splitlines():
         claim = json.loads(line)
         theorem_stub = str(claim.get("theorem_stub") or "")
-        result = compile_check(theorem_stub, timeout=30)
+        result = compile_check(theorem_stub, timeout=120)
         errors = result.get("errors") or []
         if result.get("exit_code") != 0 or errors:
             failures.append(
