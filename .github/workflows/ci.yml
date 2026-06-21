@@ -44,7 +44,7 @@ jobs:
         run: cd lean_workspace && lake exe cache get
 
       - name: Fast Lean library check
-        run: cd lean_workspace && lake build LeanEcon
+        run: cd lean_workspace && lake build Mathlib LeanEcon
 
       - name: Run focused tests
         env:

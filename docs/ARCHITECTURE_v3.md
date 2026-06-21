@@ -8,7 +8,7 @@
 > Sprint 24 update (April 27, 2026): The cumulative hybrid retrieval pipeline is described across §4A (Sprint 20 LSP surface + Sprint 22 LeanSearch merge) and §4B (Sprints 21–24: harness RAG, semantic embedding, seed expansion, enrichment, stall recovery, observable failures, rescue retrieval). Headline `tier2_frontier_mathlib_native` pass rate has held at 1/3 across Sprints 20–24 — the synthesis bottleneck is now isolated and the Sprint 25 work plan attacks it from the prover side.
 > Alpha checkpoint update (June 13, 2026): The alpha release denominator is frozen to `tier1_core_preamble_definable` scoped as `release_reliable`. `tier2_frontier_mathlib_native` and `tier2_frontier_preamble_definable` remain standard benchmark artifacts, but they are frontier/attempt surfaces and are excluded from `release_reliable_metrics`.
 > Sprint 31 update (June 14, 2026): `release`, `frontier`, and `research` budget profiles are first-class execution policy. Public/API release paths default to `release`; frontier/research runs are explicitly non-release and cannot contribute to release-reliable metrics.
-> Sprint 32 update (June 14, 2026): Lean infrastructure now has explicit command lanes. Developer and PR checks use focused Python tests plus `lake build LeanEcon`; full `lake build` is a release-image/infrastructure gate with cache pre-warm expectations, not ordinary edit-loop work.
+> Sprint 32 update (June 14, 2026): Lean infrastructure now has explicit command lanes. Developer and PR checks use focused Python tests plus `lake build Mathlib LeanEcon`; full `lake build` is a release-image/infrastructure gate with cache pre-warm expectations, not ordinary edit-loop work.
 
 ## 1. High-Level Flow (Matches Your Hand-Drawn Sketch)
 ```
@@ -204,9 +204,9 @@ The harness emits `SynthesisEvent` after each mathlib-native `apply_tactic`, rec
 ## 6. Deployment & CI
 - **Developer edit-loop gate**: focused Python tests with
   `PYTHONPATH=. ./.venv/bin/python -m pytest -o addopts=''` and the fast Lean
-  library check `cd lean_workspace && lake build LeanEcon`. This is the
-  default local/PR lane and avoids the raw-file import search-path failure that
-  can happen on a fresh CI cache.
+  library check `cd lean_workspace && lake build Mathlib LeanEcon`. This is the
+  default local/PR lane and avoids fresh-cache import failures for both
+  aggregate `Mathlib` theorem stubs and the project root.
 - **Local release-candidate gate**: the developer gate plus
   `tier1_core_preamble_definable` through `evals.local_gate`. This is the only
   alpha release-reliable denominator.

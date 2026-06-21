@@ -12,15 +12,16 @@ Use the lightest lane that matches the decision you are making.
 
 | Lane | Purpose | Commands | Expected Use |
 | --- | --- | --- | --- |
-| Developer edit-loop gate | Check ordinary code/proof edits quickly. | `PYTHONPATH=. ./.venv/bin/python -m pytest -o addopts=''` from repo root, then `cd lean_workspace && lake build LeanEcon`. | Before/after focused local changes and on PR CI. |
+| Developer edit-loop gate | Check ordinary code/proof edits quickly. | `PYTHONPATH=. ./.venv/bin/python -m pytest -o addopts=''` from repo root, then `cd lean_workspace && lake build Mathlib LeanEcon`. | Before/after focused local changes and on PR CI. |
 | Local release-candidate gate | Decide whether the narrow alpha release denominator is locally green. | Developer edit-loop gate plus `PYTHONPATH=. ./.venv/bin/python -m evals.local_gate --claim-set tier1_core_preamble_definable --output-dir /private/tmp/leanecon-alpha-tier1 --allow-unready`. | Sprint 30/Sprint 34 local RC decisions. |
 | Release-image gate | Prove the image/cache state can support deployment. | `cd lean_workspace && lake exe cache get`, `cd lean_workspace && lake build`, and `docker build --pull=false -t leanecon-v3:ci .` from repo root. | Main-branch/manual CI and before any hosted redeploy. |
 | Hosted deployment gate | Validate the already-built image in production. | Production `/health`, `/metrics`, `/metrics/prometheus`, bounded job/SSE smoke, and one release-profile proof smoke. | Sprint 34 hosted deployment only. |
 
-The developer edit-loop uses the explicit `lake build LeanEcon` library target
-rather than raw `lake env lean LeanEcon.lean`. That target works on a fresh CI
-cache because Lake builds the project source tree before checking the root
-module imports.
+The developer edit-loop uses explicit `lake build Mathlib LeanEcon` library
+targets rather than raw `lake env lean LeanEcon.lean`. Those targets work on a
+fresh CI cache because Lake materializes the aggregate `Mathlib.olean` required
+by checked-in theorem stubs and builds the project source tree before checking
+root module imports.
 
 ## Full Lake Build Policy
 

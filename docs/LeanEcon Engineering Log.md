@@ -2000,3 +2000,4 @@ This checkpoint marks the resolution of the major LSP/MCP and retrieval-layer bl
 ### Follow-Up
 - CI surfaced that `lake env lean LeanEcon.lean` can fail on a fresh runner before the project library has been built, with `unknown module prefix 'LeanEcon'`.
 - Replaced the fast CI root check and `lean_workspace_warm()` implementation with `lake build LeanEcon`, the Lake library target that hydrates project `.olean` files deterministically.
+- CI then surfaced that checked-in theorem stubs importing aggregate `Mathlib` also require `Mathlib.olean`; updated the fast Lean check and warm helper to build `Mathlib LeanEcon`.

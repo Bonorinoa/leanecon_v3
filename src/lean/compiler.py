@@ -83,7 +83,7 @@ def lean_workspace_probe(*, timeout: int = LEAN_TOOLCHAIN_PROBE_TIMEOUT) -> dict
 
 
 def lean_workspace_warm(*, timeout: int = LEAN_WORKSPACE_WARM_TIMEOUT) -> dict[str, Any]:
-    """Build the LeanEcon library target once to hydrate Lake/Mathlib artifacts."""
+    """Build aggregate Mathlib and LeanEcon targets before snippet compilation."""
 
     if not LEAN_WORKSPACE.exists():
         return {"success": False, "reason": "Lean workspace directory is missing."}
@@ -91,7 +91,7 @@ def lean_workspace_warm(*, timeout: int = LEAN_WORKSPACE_WARM_TIMEOUT) -> dict[s
     with _LAKE_ENV_LEAN_LOCK:
         try:
             result = subprocess.run(
-                ["lake", "build", "LeanEcon"],
+                ["lake", "build", "Mathlib", "LeanEcon"],
                 cwd=str(LEAN_WORKSPACE),
                 capture_output=True,
                 text=True,
@@ -103,7 +103,7 @@ def lean_workspace_warm(*, timeout: int = LEAN_WORKSPACE_WARM_TIMEOUT) -> dict[s
                 "exit_code": -1,
                 "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
                 "stdout_tail": (exc.stdout or "")[-2000:] if isinstance(exc.stdout, str) else "",
-                "stderr_tail": f"lake build LeanEcon timed out after {timeout}s",
+                "stderr_tail": f"lake build Mathlib LeanEcon timed out after {timeout}s",
             }
         except FileNotFoundError:
             return {
@@ -135,6 +135,7 @@ def is_transient_lake_failure(result: dict[str, Any] | None) -> bool:
         for marker in (
             "lake env lean timed out",
             "lake build leanecon timed out",
+            "lake build mathlib leanecon timed out",
             "lake executable not found",
             "no such file or directory",
             "unknown module prefix",
