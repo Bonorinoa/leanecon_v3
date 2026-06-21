@@ -1996,3 +1996,7 @@ This checkpoint marks the resolution of the major LSP/MCP and retrieval-layer bl
 - Warm the Lean root before pytest in the fast-edit-loop CI job and set `LEAN_TIMEOUT=180` for the pytest step.
 - Added a session-scoped `warm_lean_workspace` fixture and applied it to Lean-backed claim-set/formalizer tests.
 - Raised the regression claim-set theorem-stub compile timeout from 30s to 120s.
+
+### Follow-Up
+- CI surfaced that `lake env lean LeanEcon.lean` can fail on a fresh runner before the project library has been built, with `unknown module prefix 'LeanEcon'`.
+- Replaced the fast CI root check and `lean_workspace_warm()` implementation with `lake build LeanEcon`, the Lake library target that hydrates project `.olean` files deterministically.

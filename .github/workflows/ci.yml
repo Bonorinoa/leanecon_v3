@@ -43,8 +43,8 @@ jobs:
       - name: Fetch mathlib cache
         run: cd lean_workspace && lake exe cache get
 
-      - name: Fast Lean root check
-        run: cd lean_workspace && lake env lean LeanEcon.lean
+      - name: Fast Lean library check
+        run: cd lean_workspace && lake build LeanEcon
 
       - name: Run focused tests
         env:
