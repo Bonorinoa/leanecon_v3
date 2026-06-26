@@ -750,18 +750,44 @@ def build_preamble_imports(entries: list[PreambleEntry]) -> list[str]:
     return imports
 
 
-def get_preamble_entries(names: list[str]) -> list[PreambleEntry]:
-    """Look up preamble entries by name. Silently skips unknown names."""
+def unknown_preamble_names(names: list[str]) -> list[str]:
+    """Return unknown preamble names after trimming and de-duplicating input."""
+    unknown: list[str] = []
+    seen_names: set[str] = set()
+    for raw_name in names:
+        name = str(raw_name).strip()
+        if not name or name in seen_names:
+            continue
+        seen_names.add(name)
+        if name not in PREAMBLE_LIBRARY:
+            unknown.append(name)
+    return unknown
+
+
+def get_preamble_entries(names: list[str], *, strict: bool = False) -> list[PreambleEntry]:
+    """Look up preamble entries by name.
+
+    By default this preserves the historical lenient behavior. Use
+    ``strict=True`` at contract boundaries where silently dropping names would
+    hide planner/formalizer drift.
+    """
     entries: list[PreambleEntry] = []
     seen_names: set[str] = set()
-    for name in names:
+    unknown: list[str] = []
+    for raw_name in names:
+        name = str(raw_name).strip()
+        if not name:
+            continue
         if name in seen_names:
             continue
         entry = PREAMBLE_LIBRARY.get(name)
         if entry is None:
+            unknown.append(name)
             continue
         entries.append(entry)
         seen_names.add(name)
+    if strict and unknown:
+        raise ValueError(f"Unknown preamble entries: {', '.join(unknown)}")
     return entries
 
 

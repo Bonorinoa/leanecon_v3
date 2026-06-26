@@ -33,6 +33,7 @@ from src.guardrails import semantic_faithfulness_score, vacuity_report
 from src.lean import lean_run_code
 from src.observability.models import ProviderCallMetadata
 from src.planner.models import PlannerPacket
+from src.preamble_library import build_preamble_imports, get_preamble_entries
 from src.providers import normalize_huggingface_provider
 from src.utils.json_extraction import extract_json_object
 
@@ -582,6 +583,9 @@ class Formalizer:
             stderr=str(parse_result.get("stderr", "")),
         )
         vacuity = vacuity_report(lean_code)
+        selected_entries = get_preamble_entries(preamble_names, strict=True)
+        selected_preamble = [entry.name for entry in selected_entries]
+        selected_imports = build_preamble_imports(selected_entries)
         faithfulness = FaithfulnessAssessment.model_validate(
             {
                 "score": 5.0,
@@ -603,18 +607,18 @@ class Formalizer:
             lean_code=lean_code,
             theorem_with_sorry=lean_code,
             theorem_name=parsed.theorem_name,
-            claim_scope="release_reliable" if preamble_names else "supported_attempt",
-            claim_type="preamble_definable" if preamble_names else None,
-            required_primitives=list(preamble_names),
+            claim_scope="release_reliable" if selected_preamble else "supported_attempt",
+            claim_type="preamble_definable" if selected_preamble else None,
+            required_primitives=list(selected_preamble),
             theorem_shape_recommendation="authoritative_stub_direct_closure",
             assumption_audit=["explicit_stub_supplied"],
             scope_reason="Authoritative theorem stub supplied to formalizer.",
             formalization_source="theorem_stub",
             imports=list(parsed.imports),
-            selected_imports=list(parsed.imports),
+            selected_imports=selected_imports,
             open_statements=list(parsed.open_statements),
             subgoals=[],
-            selected_preamble=list(preamble_names),
+            selected_preamble=selected_preamble,
             vacuity=vacuity,
             faithfulness=faithfulness,
             parse_check=parse_check,

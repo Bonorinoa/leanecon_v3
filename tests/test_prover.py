@@ -15,6 +15,7 @@ from src.prover.file_controller import ProofFileController
 from src.prover.models import ProverFailure, ProverTarget, ProverTraceStep
 from src.observability import SpanRecorder, TokenUsage
 from src.prover.repl import ReplToolOrchestrator
+from src.prover.synthesis import ProverSynthesisMixin
 from src.tools import ToolCall
 from src.prover.tactics import should_decompose
 
@@ -59,6 +60,21 @@ def _packet(
             "model": "labs-leanstral-2603",
         }
     )
+
+
+def test_selected_preamble_entries_reject_unknown_names() -> None:
+    class DummySynthesis(ProverSynthesisMixin):
+        pass
+
+    packet = _packet(
+        theorem_name="unknown_selected_preamble",
+        claim="Reject unknown selected preamble names.",
+        lean_code="import Mathlib\n\ntheorem unknown_selected_preamble : True := by\n  sorry\n",
+        selected_preamble=["measure", "missing_entry"],
+    )
+
+    with pytest.raises(ValueError, match="Unknown selected preamble entries: missing_entry"):
+        DummySynthesis()._selected_preamble_entries(packet)
 
 
 def test_assemble_prover_result_preserves_terminal_payload_shape() -> None:

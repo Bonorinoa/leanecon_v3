@@ -48,7 +48,7 @@ class FormalizerContextBuilder:
     def _resolve_entries(self, claim: str, planner_packet: PlannerPacket | None) -> list:
         if planner_packet and planner_packet.selected_preamble:
             names = [hit.name for hit in planner_packet.selected_preamble]
-            entries = get_preamble_entries(names)
+            entries = get_preamble_entries(names, strict=True)
             if entries:
                 return entries
         return find_matching_preambles(claim)[:5]

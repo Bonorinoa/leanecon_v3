@@ -4614,9 +4614,12 @@ class ProverExecutionMixin:
 
         expressions.sort(key=lambda expression: (-len(expression.split()), len(expression)))
         deduped: list[str] = []
+        seen: set[str] = set()
         for expression in expressions:
-            if expression not in deduped:
-                deduped.append(expression)
+            if expression in seen:
+                continue
+            seen.add(expression)
+            deduped.append(expression)
         return deduped
 
     def _direct_candidate_proofs(

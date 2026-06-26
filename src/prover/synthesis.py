@@ -140,13 +140,18 @@ class ProverSynthesisMixin:
     """Mixin extracted from the legacy Prover monolith."""
 
     def _selected_preamble_entries(self, packet: FormalizationPacket) -> list[Any]:
-        from src.preamble_library import PREAMBLE_LIBRARY
+        from src.preamble_library import PREAMBLE_LIBRARY, unknown_preamble_names
+
+        unknown_names = unknown_preamble_names(list(packet.selected_preamble))
+        if unknown_names:
+            raise ValueError(f"Unknown selected preamble entries: {', '.join(unknown_names)}")
 
         entries: list[Any] = []
         for name in packet.selected_preamble:
             entry = PREAMBLE_LIBRARY.get(name)
-            if entry is not None:
-                entries.append(entry)
+            if entry is None:
+                continue
+            entries.append(entry)
         return entries
 
     def _memory_examples(self, packet: FormalizationPacket) -> list[dict[str, Any]]:
@@ -441,12 +446,14 @@ class ProverSynthesisMixin:
         from src.planner.retrieval import _entry_tactic_hints, _load_metadata
 
         hints: list[str] = []
+        seen: set[str] = set()
         for entry in self._selected_preamble_entries(packet):
             metadata = _load_metadata(entry)
             for hint in _entry_tactic_hints(entry, metadata):
                 normalized = hint.strip()
-                if normalized and normalized not in hints:
+                if normalized and normalized not in seen:
                     hints.append(normalized)
+                    seen.add(normalized)
         return hints
 
     def _first_turn_hints(self, packet: FormalizationPacket) -> list[str]:

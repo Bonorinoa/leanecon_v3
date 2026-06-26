@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import pytest
 
+from pydantic import ValidationError
+
 from src.formalizer import FormalizerGenerationResponse, FormalizerService, FormalizerSubgoal
+from src.formalizer.context_builder import FormalizerContextBuilder
 from src.formalizer.formalizer import (
     FormalizerDriverError,
     ParsedTheoremStub,
     parse_theorem_stub,
 )
+from src.formalizer.models import FaithfulnessAssessment, FormalizationPacket, ParseCheck
+from src.observability.errors import StageExecutionError
 from src.planner import PlannerPacket
 
 
@@ -298,10 +303,81 @@ def test_formalizer_stub_authoritative_skips_llm_and_preserves_stub() -> None:
         "Mathlib",
         "LeanEcon.Preamble.Foundations.Primitives.Measure",
     ]
+    assert packet.selected_imports == ["LeanEcon.Preamble.Foundations.Primitives.Measure"]
     assert packet.selected_preamble == ["measure"]
     assert packet.faithfulness.passes_gate is True
     assert packet.faithfulness.score == 5.0
     assert RejectingDriver.calls == []
+
+
+def test_formalizer_stub_rejects_unknown_preamble_name() -> None:
+    service = FormalizerService(backend="leanstral", mistral_driver=object())
+    stub = "import Mathlib\n\ntheorem unknown_stub : True := by\n  sorry\n"
+
+    with pytest.raises(StageExecutionError, match="Unknown preamble entries: missing_entry"):
+        service.formalize(
+            "A stub with an invalid selected preamble.",
+            theorem_stub=stub,
+            preamble_names=["missing_entry"],
+            benchmark_mode=True,
+        )
+
+
+def test_context_builder_rejects_unknown_planner_selected_preamble() -> None:
+    payload = _planner_packet().model_dump(mode="json")
+    payload["selected_preamble"][0]["name"] = "missing_entry"
+    planner_packet = PlannerPacket.model_validate(payload)
+
+    with pytest.raises(ValueError, match="Unknown preamble entries: missing_entry"):
+        FormalizerContextBuilder().build(planner_packet.claim, planner_packet)
+
+
+def test_formalization_packet_normalizes_contract_lists_and_requires_metadata() -> None:
+    packet = FormalizationPacket.model_validate(
+        {
+            "claim": "Normalize packet metadata.",
+            "lean_code": "import Mathlib\n\ntheorem normalize_packet : True := by\n  sorry\n",
+            "theorem_with_sorry": "import Mathlib\n\ntheorem normalize_packet : True := by\n  sorry\n",
+            "theorem_name": "normalize_packet",
+            "imports": [" Mathlib ", "Mathlib", ""],
+            "selected_imports": [" LeanEcon.Preamble.Tools ", "LeanEcon.Preamble.Tools"],
+            "open_statements": [" Classical ", "Classical", ""],
+            "subgoals": [],
+            "selected_preamble": [" measure ", "measure", ""],
+            "planner_textbook_defaults": [" default ", "default"],
+            "planner_subgoals": [" subgoal ", "subgoal"],
+            "vacuity": {"is_vacuous": False},
+            "faithfulness": FaithfulnessAssessment(
+                score=5.0,
+                coverage=1.0,
+                structural_isomorphism=1.0,
+                primitive_faithfulness=1.0,
+                claim_frame={},
+                stub_frame={},
+                needs_human_review=False,
+                passes_gate=True,
+                feedback=[],
+            ),
+            "parse_check": ParseCheck(success=True, exit_code=0),
+            "review_state": " approved ",
+            "backend": " leanstral ",
+            "provider": " mistral ",
+            "model": " labs-leanstral-2603 ",
+        }
+    )
+
+    assert packet.imports == ["Mathlib"]
+    assert packet.selected_imports == ["LeanEcon.Preamble.Tools"]
+    assert packet.open_statements == ["Classical"]
+    assert packet.selected_preamble == ["measure"]
+    assert packet.planner_textbook_defaults == ["default"]
+    assert packet.planner_subgoals == ["subgoal"]
+    assert packet.review_state == "approved"
+
+    invalid = packet.model_dump(mode="json")
+    invalid["provider"] = " "
+    with pytest.raises(ValidationError, match="metadata values must be non-empty"):
+        FormalizationPacket.model_validate(invalid)
 
 
 def test_release_reliable_claim_uses_preamble_template_before_llm() -> None:

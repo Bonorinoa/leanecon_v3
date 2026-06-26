@@ -7,6 +7,18 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+def _normalize_unique_strings(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        normalized.append(item)
+        seen.add(item)
+    return normalized
+
+
 class FormalizerModel(BaseModel):
     """Strict base model for formalizer data."""
 
@@ -58,6 +70,19 @@ class FormalizerContext(FormalizerModel):
     imports: list[str] = Field(default_factory=list)
     open_statements: list[str] = Field(default_factory=list)
     preamble_entries: list[PreambleContextEntry] = Field(default_factory=list)
+
+    @field_validator(
+        "textbook_defaults",
+        "planner_subgoals",
+        "selected_preamble",
+        "required_primitives",
+        "assumption_audit",
+        "imports",
+        "open_statements",
+    )
+    @classmethod
+    def _normalize_string_lists(cls, values: list[str]) -> list[str]:
+        return _normalize_unique_strings(values)
 
 
 class FormalizerGenerationResponse(FormalizerModel):
@@ -135,3 +160,25 @@ class FormalizationPacket(FormalizerModel):
     backend: str
     provider: str
     model: str
+
+    @field_validator(
+        "required_primitives",
+        "assumption_audit",
+        "imports",
+        "selected_imports",
+        "open_statements",
+        "selected_preamble",
+        "planner_textbook_defaults",
+        "planner_subgoals",
+    )
+    @classmethod
+    def _normalize_string_lists(cls, values: list[str]) -> list[str]:
+        return _normalize_unique_strings(values)
+
+    @field_validator("review_state", "backend", "provider", "model")
+    @classmethod
+    def _validate_non_empty_metadata(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Formalization packet metadata values must be non-empty.")
+        return cleaned
